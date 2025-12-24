@@ -91,6 +91,8 @@ class CMakeBuildCommand(Command):
         This file `setup.py` and the CMakeLists.txt are in the same directory.
         Use -j16 by default to speed up compilation.
         """
+        cpu_count = os.cpu_count() or 2
+        num_jobs = str(cpu_count)
         # Get Torch and Torch NPU paths
         import torch
         TORCH_CMAKE_PATH = torch.utils.cmake_prefix_path
@@ -113,7 +115,7 @@ class CMakeBuildCommand(Command):
                                 f'-DNPU_ARCH={NPU_ARCH}'
                                 ]
         subprocess.check_call(cmake_config_command, cwd=os.getcwd())
-        subprocess.check_call(['cmake', '--build', build_temp, '--config', 'Release', '--', '-j16'], cwd=os.getcwd())
+        subprocess.check_call(['cmake', '--build', build_temp, '--config', 'Release', '--parallel', num_jobs], cwd=os.getcwd())
         print("CMake extensions built successfully.")
 
 
