@@ -76,6 +76,7 @@ add_library(_C SHARED
     ${OBJECTS_LIST}
 )
 set_target_properties(_C PROPERTIES
+    LINK_DEPENDS_NO_SHARED ON
     POSITION_INDEPENDENT_CODE ON
     PREFIX ""
     SUFFIX ".abi3.so"

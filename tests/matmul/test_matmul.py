@@ -61,6 +61,7 @@ DTYPES = [
 
 
 @pytest.mark.skipif(not torch.npu.is_available(), reason="NPU device not found")
+@pytest.mark.skipif(not torch.npu.get_device_name().startswith('Ascend910_95') , reason="Only support Ascend910_95")
 @pytest.mark.parametrize("shape", SHAPES)
 @pytest.mark.parametrize("dtype", DTYPES)
 def test_matmul_operator(shape, dtype):

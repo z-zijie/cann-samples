@@ -58,7 +58,7 @@ DTYPES = [
 ]
 
 
-# TODO: modify the skipif condition `not torch.npu.is_available()`
+@pytest.mark.skipif(not torch.npu.is_available(), reason="NPU device not found")
 @pytest.mark.parametrize("shape", SHAPES)
 @pytest.mark.parametrize("dtype", DTYPES)
 def test_add_operator(shape, dtype):
