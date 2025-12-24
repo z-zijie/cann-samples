@@ -3,7 +3,7 @@
 set -e
 # Install dependencies
 echo "Installing dependencies..."
-pip install -r requirements.txt
+python3 -m pip install -r requirements.txt
 
 # Build the project
 echo "Building the project..."

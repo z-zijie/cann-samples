@@ -24,8 +24,8 @@ include(cmake/torch.cmake)
 include(cmake/torch_npu.cmake)
 include(cmake/func.cmake)
 
-# set NPU architecture, default to arch35
-set(NPU_ARCH "ascend910b" CACHE STRING "NPU architecture")
+# set NPU architecture, default to ascend910_95
+set(NPU_ARCH "ascend910_95" CACHE STRING "NPU architecture")
 # set EXTENSION_MODULE_NAME to `x`
 set(EXTENSION_MODULE_NAME "x" CACHE STRING "Extension module name")
 
