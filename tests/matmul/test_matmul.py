@@ -4,6 +4,8 @@ import x
 import pytest
 
 
+@pytest.mark.skipif(not torch.npu.is_available(), reason="NPU device not found")
+@pytest.mark.skipif(not torch.npu.get_device_name().startswith('Ascend910_95') , reason="Only support Ascend910_95")
 def test_matmul_interface_exist():
     """
     Test that the 'x.matmul' operator is present in torch.ops.
