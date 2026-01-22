@@ -1,1 +1,2 @@
 add_subdirectory(vector_function)
+add_subdirectory(hif8)
