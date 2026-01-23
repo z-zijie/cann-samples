@@ -73,8 +73,6 @@ struct MatmulRunInfo {
     uint64_t nL1 = 1UL;
     uint64_t kL1 = 1UL;
     uint64_t singleCoreK = 1UL;
-    uint64_t mTailCnt = 1UL;
-    uint64_t nTailCnt = 1UL;
     uint8_t l1BufferNum = 2UL;
     uint8_t l0cDB = 0UL;
 };
