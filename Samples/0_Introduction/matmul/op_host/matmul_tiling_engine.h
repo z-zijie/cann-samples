@@ -28,14 +28,12 @@ class MatmulTilingEngine {
 public:
     MatmulTilingEngine() {};
     virtual ~MatmulTilingEngine() {};
-    void GetTiling(const at::Tensor& input, const at::Tensor& weight, bool transA, bool transB,
+    void GetTiling(uint32_t m, uint32_t k, uint32_t n, bool transA, bool transB,
                    MatmulTilingData& tilingData, MatmulTplValue& tplValue);
     void InitCompileInfo();
-    void InitShapeArgs(const at::Tensor& input, const at::Tensor& weight, bool transA, bool transB);
+    void InitShapeArgs(uint32_t m, uint32_t k, uint32_t n, bool transA, bool transB);
     void InitRunInfo();
     void FormulateBasicBlock();
-    void CalcBasicBlock();
-    void CalcTailBasicBlock();
     void CalL1Tiling();
     void PostTiling(MatmulTilingData& tilingData, MatmulTplValue& tplValue);
 
