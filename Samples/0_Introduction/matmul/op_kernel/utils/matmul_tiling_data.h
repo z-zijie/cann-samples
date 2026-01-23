@@ -36,8 +36,6 @@ struct MatmulTilingData {
     uint32_t baseN = 0;
     uint32_t baseK = 0;
     uint32_t skSingleCoreK = 0;
-    uint32_t mTailCnt = 0;
-    uint32_t nTailCnt = 0;
     uint8_t l1BufferNum = 0;
     uint8_t l0cDB = 1; // 默认不开db为1
 };
