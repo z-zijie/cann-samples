@@ -34,8 +34,6 @@ public:
     void InitShapeArgs(const at::Tensor& input, const at::Tensor& weight, bool transA, bool transB);
     void InitRunInfo();
     void FormulateBasicBlock();
-    void CalcBasicBlock();
-    void CalcTailBasicBlock();
     void CalL1Tiling();
     void PostTiling(MatmulTilingData& tilingData, MatmulTplValue& tplValue);
 
