@@ -13,7 +13,6 @@
  * \file matmul_tiling_engine.cpp
  * \brief
  */
-#include <ATen/Tensor.h>
 #include <cstdio>
 
 #include "matmul_tiling_engine.h"
@@ -26,10 +25,10 @@ void PrintTilingData(const MatmulTilingData& tilingData)
 {
     printf(">>>>>>>>>> MatmulTilingData <<<<<<<<<<\n");
     printf("usedCoreNum: %u, m: %u, n: %u, k: %u, mL1: %u, nL1: %u, kL1: %u, baseM: %u, baseN: %u, baseK: %u, "
-           "skSingleCoreK: %u, mTailCnt: %u, nTailCnt: %u, l1BufferNum: %u, l0cDB: %u\n",
+           "skSingleCoreK: %u, l1BufferNum: %u, l0cDB: %u\n",
            tilingData.usedCoreNum, tilingData.m, tilingData.n, tilingData.k, tilingData.mL1, tilingData.nL1,
            tilingData.kL1, tilingData.baseM, tilingData.baseN, tilingData.baseK, tilingData.skSingleCoreK,
-           tilingData.mTailCnt, tilingData.nTailCnt, tilingData.l1BufferNum, tilingData.l0cDB);
+           tilingData.l1BufferNum, tilingData.l0cDB);
 }
 
 void MatmulTilingEngine::InitCompileInfo()
@@ -53,23 +52,13 @@ void MatmulTilingEngine::InitCompileInfo()
            compileInfo_.l0BSize, compileInfo_.l0CSize, compileInfo_.l2Size, compileInfo_.btSize);
 }
 
-void MatmulTilingEngine::InitShapeArgs(const at::Tensor& input, const at::Tensor& weight, bool transA, bool transB)
+void MatmulTilingEngine::InitShapeArgs(uint32_t m, uint32_t k, uint32_t n, bool transA, bool transB)
 {
-    if (input.scalar_type() == at::ScalarType::Half) {
-        args_.dtype = DataType::FLOAT16;
-        args_.dtypeSize = DATA_SIZE_FP16;
-    } else if (input.scalar_type() == at::ScalarType::BFloat16) {
-        args_.dtype = DataType::BFLOAT16;
-        args_.dtypeSize = DATA_SIZE_FP16;
-    } else {
-        args_.dtype = DataType::FLOAT;
-        args_.dtypeSize = DATA_SIZE_FP32;
-    }
     args_.transA = transA;
     args_.transB = transB;
-    args_.m = transA ? input.size(1) : input.size(0);
-    args_.k = transA ? input.size(0) : input.size(1);
-    args_.n = transB ? weight.size(0) : weight.size(1);
+    args_.m = transA ? k : m;
+    args_.k = transA ? m : k;
+    args_.n = transB ? k : n;
 
     printf(">>>>>>>>>> MatmulArgs <<<<<<<<<<\n");
     printf("m: %lu, k: %lu, n: %lu, dtype: %u, dtypeSize: %u, transA: %d, transB: %d\n", args_.m, args_.k, args_.n,
@@ -90,82 +79,20 @@ void MatmulTilingEngine::InitRunInfo()
     runInfo_.singleCoreK = args_.k;
 }
 
-void MatmulTilingEngine::CalcBasicBlock()
-{
-    // rebalance basic block to use full core
-    uint64_t mCore = TilingUtil::CeilDivision(args_.m, runInfo_.baseM);
-    uint64_t nCore = TilingUtil::CeilDivision(args_.n, runInfo_.baseN);
-    if (mCore == 0UL || nCore == 0UL) {
-        return;
-    }
-    if (mCore <= nCore) {
-        runInfo_.baseM = TilingUtil::CeilAlign(TilingUtil::CeilDivision(args_.m, mCore), BASIC_BLOCK_SIZE_16);
-        mCore = TilingUtil::CeilDivision(args_.m, runInfo_.baseM);
-        nCore = runInfo_.usedCoreNum / mCore;
-        runInfo_.baseN = TilingUtil::CeilAlign(TilingUtil::CeilDivision(args_.n, nCore), BASIC_BLOCK_SIZE_16);
-    } else {
-        runInfo_.baseN = TilingUtil::CeilAlign(TilingUtil::CeilDivision(args_.n, nCore), BASIC_BLOCK_SIZE_16);
-        nCore = TilingUtil::CeilDivision(args_.n, runInfo_.baseN);
-        mCore = runInfo_.usedCoreNum / nCore;
-        runInfo_.baseM = TilingUtil::CeilAlign(TilingUtil::CeilDivision(args_.m, mCore), BASIC_BLOCK_SIZE_16);
-    }
-
-    while (runInfo_.baseN >= runInfo_.baseM * NUM_TWO && nCore < runInfo_.usedCoreNum / NUM_TWO) {
-        nCore = nCore * NUM_TWO;
-        mCore = runInfo_.usedCoreNum / nCore;
-        runInfo_.baseM = TilingUtil::CeilAlign(TilingUtil::CeilDivision(args_.m, mCore), BASIC_BLOCK_SIZE_16);
-        runInfo_.baseN = TilingUtil::CeilAlign(TilingUtil::CeilDivision(args_.n, nCore), BASIC_BLOCK_SIZE_16);
-        mCore = TilingUtil::CeilDivision(args_.m, static_cast<uint64_t>(runInfo_.baseM));
-        nCore = TilingUtil::CeilDivision(args_.n, static_cast<uint64_t>(runInfo_.baseN));
-    }
-
-    while (runInfo_.baseM >= runInfo_.baseN * NUM_TWO && mCore < runInfo_.usedCoreNum / NUM_TWO) {
-        mCore = mCore * NUM_TWO;
-        nCore = runInfo_.usedCoreNum / mCore;
-        runInfo_.baseM = TilingUtil::CeilAlign(TilingUtil::CeilDivision(args_.m, mCore), BASIC_BLOCK_SIZE_16);
-        runInfo_.baseN = TilingUtil::CeilAlign(TilingUtil::CeilDivision(args_.n, nCore), BASIC_BLOCK_SIZE_16);
-        mCore = TilingUtil::CeilDivision(args_.m, static_cast<uint64_t>(runInfo_.baseM));
-        nCore = TilingUtil::CeilDivision(args_.n, static_cast<uint64_t>(runInfo_.baseN));
-    }
-}
-
 void MatmulTilingEngine::FormulateBasicBlock()
 {
+    runInfo_.baseM = std::min(TilingUtil::CeilAlign(args_.m, BASIC_BLOCK_SIZE_16), runInfo_.baseM);
+    runInfo_.baseN = std::min(TilingUtil::CeilAlign(args_.n, BASIC_BLOCK_SIZE_16), runInfo_.baseN);
+
     uint64_t mCore = TilingUtil::CeilDivision(args_.m, runInfo_.baseM);
     uint64_t nCore = TilingUtil::CeilDivision(args_.n, runInfo_.baseN);
-    if (mCore * nCore >= compileInfo_.aicNum) {
-        runInfo_.baseM = std::min(TilingUtil::CeilAlign(args_.m, BASIC_BLOCK_SIZE_16), runInfo_.baseM);
-        runInfo_.baseN = std::min(TilingUtil::CeilAlign(args_.n, BASIC_BLOCK_SIZE_16), runInfo_.baseN);
-        return;
-    }
-    CalcBasicBlock();
-    mCore = TilingUtil::CeilDivision(args_.m, runInfo_.baseM);
-    nCore = TilingUtil::CeilDivision(args_.n, runInfo_.baseN);
+    
     runInfo_.usedCoreNum = mCore * nCore;
     uint64_t kValueAlign = TilingUtil::CeilAlign(static_cast<uint64_t>(args_.k), BASIC_BLOCK_SIZE_16);
     uint64_t kValueMax = TilingUtil::FloorAlign(compileInfo_.l0ASize / DB_SIZE / args_.dtypeSize /
                                                     std::max(runInfo_.baseM, runInfo_.baseN),
                                                 BASIC_BLOCK_SIZE_16);
     runInfo_.baseK = std::min(kValueAlign, kValueMax);
-}
-
-void MatmulTilingEngine::CalcTailBasicBlock()
-{
-    // rebalance tail round basic block to use full core
-    uint64_t mCnt = TilingUtil::CeilDivision(args_.m, runInfo_.baseM);
-    uint64_t nCnt = TilingUtil::CeilDivision(args_.n, runInfo_.baseN);
-    uint64_t mnCnt = mCnt * nCnt;
-    uint64_t tailCnt = mnCnt <= compileInfo_.aicNum ? 0UL : mnCnt % compileInfo_.aicNum;
-    runInfo_.mTailCnt = 1UL;
-    runInfo_.nTailCnt = 1UL;
-    if (tailCnt != 0UL) {
-        while ((runInfo_.mTailCnt + 1UL) * runInfo_.nTailCnt * tailCnt <= compileInfo_.aicNum) {
-            runInfo_.mTailCnt += 1UL;
-            if (runInfo_.mTailCnt * (runInfo_.nTailCnt + 1UL) * tailCnt <= compileInfo_.aicNum) {
-                runInfo_.nTailCnt += 1UL;
-            }
-        }
-    }
 }
 
 void MatmulTilingEngine::CalL1Tiling()
@@ -200,8 +127,6 @@ void MatmulTilingEngine::PostTiling(MatmulTilingData& tilingData, MatmulTplValue
     tilingData.baseN = runInfo_.baseN;
     tilingData.baseK = runInfo_.baseK;
     tilingData.skSingleCoreK = runInfo_.singleCoreK;
-    tilingData.mTailCnt = runInfo_.mTailCnt;
-    tilingData.nTailCnt = runInfo_.nTailCnt;
     tilingData.l1BufferNum = runInfo_.l1BufferNum;
     tilingData.l0cDB = runInfo_.l0cDB;
 
@@ -209,15 +134,14 @@ void MatmulTilingEngine::PostTiling(MatmulTilingData& tilingData, MatmulTplValue
     tplValue.copyOutMode = MATMUL_FIXPIPE_CUBE;
 }
 
-void MatmulTilingEngine::GetTiling(const at::Tensor& input, const at::Tensor& weight, bool transA, bool transB,
+void MatmulTilingEngine::GetTiling(uint32_t m, uint32_t k, uint32_t n, bool transA, bool transB,
                                    MatmulTilingData& tilingData, MatmulTplValue& tplValue)
 {
     InitCompileInfo();
-    InitShapeArgs(input, weight, transA, transB);
+    InitShapeArgs(m, k, n, transA, transB);
     InitRunInfo();
 
     FormulateBasicBlock();
-    CalcTailBasicBlock();
     CalL1Tiling();
     PostTiling(tilingData, tplValue);
 

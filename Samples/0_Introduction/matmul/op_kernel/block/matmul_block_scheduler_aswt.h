@@ -37,9 +37,6 @@ public:
     int64_t k_{0};
     int64_t tailL1M_{0};
     int64_t tailL1N_{0};
-    int64_t mTailCnt_{1};
-    int64_t nTailCnt_{1};
-    int64_t tailCnt_{1};
     int64_t tileNum_{1};
     int64_t mainWindow_{1};
     int64_t mainRow_{1};
@@ -47,8 +44,6 @@ public:
     int64_t mTileIdx_{1};
     int64_t nTileIdx_{1};
     int64_t lastTileIdx_{-1};
-    int64_t nSplitOffset_{0};
-    int64_t mSplitOffset_{0};
     int64_t mL1_{0};
     int64_t nL1_{0};
     int64_t kL1_{0};
@@ -88,14 +83,6 @@ public:
         int64_t tailTileNum = tileNum_ % blockNum_;
         tailL1M_ = shape.m - (mTileNum_ - 1) * params.tilingData->mL1;
         tailL1N_ = shape.n - (nTileNum_ - 1) * params.tilingData->nL1;
-        mTailCnt_ = params.tilingData->mTailCnt;
-        nTailCnt_ = params.tilingData->nTailCnt;
-        int64_t mTailSplit = CeilDiv(tailL1M_, mTailCnt_);
-        int64_t nTailSplit = CeilDiv(tailL1N_, nTailCnt_);
-        mTailCnt_ = CeilDiv(tailL1M_, mTailSplit);
-        nTailCnt_ = CeilDiv(tailL1N_, nTailSplit);
-        tailCnt_ = mTailCnt_ * nTailCnt_;
-        tileNum_ += (tailCnt_ - 1) * tailTileNum;
 
         mainWindow_ = WINDOW_LEN < mTileNum_ ? WINDOW_LEN : mTileNum_;
         mainRow_ = mTileNum_ / mainWindow_ - 1;
@@ -134,34 +121,20 @@ public:
         int64_t blkN = nTileIdx_ == (nTileNum_ - 1) ? tailL1N_ : nL1_;
         int64_t mL0 = blkM;
         int64_t nL0 = blkN;
-        if (tileIdx / blockNum_ != (perCoreBlockNum_ - 1) || tailCnt_ == 1) {
+        if (tileIdx / blockNum_ != (perCoreBlockNum_ - 1)) {
             // mL1, nL1, k, mL0, nL0
             mL0 = AscendC::Std::min(baseM_, blkM);
             nL0 = AscendC::Std::min(baseN_, blkN);
             return {blkM, blkN, k_, mL0, nL0};
         }
-        // SplitM and SplitN
-        int64_t splitBlkM = CeilDiv(blkM, mTailCnt_);
-        int64_t splitBlkN = CeilDiv(blkN, nTailCnt_);
-        int64_t mSplitIdx = (blockIdx_ % tailCnt_) % mTailCnt_;
-        int64_t nSplitIdx = (blockIdx_ % tailCnt_) / mTailCnt_;
-        mSplitOffset_ = mSplitIdx * splitBlkM;
-        nSplitOffset_ = nSplitIdx * splitBlkN;
-        if (mSplitOffset_ >= blkM || nSplitOffset_ >= blkN) {
-            return {0, 0, k_, 0, 0};
-        }
-        splitBlkM = AscendC::Std::min(blkM - mSplitOffset_, splitBlkM);
-        splitBlkN = AscendC::Std::min(blkN - nSplitOffset_, splitBlkN);
-        mL0 = AscendC::Std::min(baseM_, splitBlkM);
-        nL0 = AscendC::Std::min(baseN_, splitBlkN);
-        return {splitBlkM, splitBlkN, k_, mL0, nL0};
+        return {blkM, blkN, k_, mL0, nL0};
     }
 
     __aicore__ inline BlockCoord GetBlockCoord(int tileIdx)
     {
         UpdateMNTileIdx(tileIdx);
-        int64_t mOffset = mTileIdx_ * mL1_ + mSplitOffset_;
-        int64_t nOffset = nTileIdx_ * nL1_ + nSplitOffset_;
+        int64_t mOffset = mTileIdx_ * mL1_;
+        int64_t nOffset = nTileIdx_ * nL1_;
         return {mOffset, nOffset};
     }
 
@@ -174,9 +147,6 @@ private:
         lastTileIdx_ = tmpIdx;
 
         int64_t tileIdx = tmpIdx % tileNum_;
-        if (tileIdx / blockNum_ == (perCoreBlockNum_ - 1) && tailCnt_ > 1) {
-            tileIdx = (perCoreBlockNum_ - 1) * blockNum_ + blockIdx_ / tailCnt_;
-        }
         int64_t rowIdx = tileIdx / nTileNum_ / mainWindow_;
         if (rowIdx < mainRow_) {
             mTileIdx_ = rowIdx * mainWindow_ + tileIdx % mainWindow_;
