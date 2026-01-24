@@ -104,8 +104,12 @@ GeLU（高斯误差线性单元）是Transformer架构中的核心激活函数�
 
 - 不使用Vector Function的传统实现
   ```cpp
-  __aicore__ void gelu_compute(const AscendC::LocalTensor<float> &xLocal, const   AscendC::LocalTensor<float> &yLocal,
-      const AscendC::LocalTensor<float> &xCube, const AscendC::LocalTensor<float> &tLocal, int64_t n)
+  __aicore__ void gelu_compute(
+    const AscendC::LocalTensor<float> &xLocal, 
+    const AscendC::LocalTensor<float> &yLocal,
+    const AscendC::LocalTensor<float> &xCube,
+    const AscendC::LocalTensor<float> &tLocal,
+    int64_t n)
   {
       const float NEG_SQRT_EIGHT_OVER_PI = -1.595769121 * 0.044715;
       const float TANH_APPROX_FACTOR = 1 / 0.044715;
@@ -134,8 +138,12 @@ GeLU（高斯误差线性单元）是Transformer架构中的核心激活函数�
   
 - 使用Vector Function的优化实现
   ```cpp
-  __aicore__ void gelu_compute(const AscendC::LocalTensor<float> &xLocal, const   AscendC::LocalTensor<float> &yLocal,
-      const AscendC::LocalTensor<float> &xCube, const AscendC::LocalTensor<float> &tLocal, int64_t n)
+  __aicore__ void gelu_compute(
+    const AscendC::LocalTensor<float> &xLocal,
+    const AscendC::LocalTensor<float> &yLocal,
+    const AscendC::LocalTensor<float> &xCube,
+    const AscendC::LocalTensor<float> &tLocal,
+    int64_t n)
   {
       const float NEG_SQRT_EIGHT_OVER_PI = -1.595769121 * 0.044715;
       const float TANH_APPROX_FACTOR = 1 / 0.044715;
