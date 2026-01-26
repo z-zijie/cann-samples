@@ -125,7 +125,7 @@ int32_t main() {
     CHECK_ACL(aclrtSynchronizeStream(stream));
     CHECK_ACL(aclrtMemcpy(yHost, outputSize, yDevice, outputSize, ACL_MEMCPY_DEVICE_TO_HOST));
 
-    std::cout << "The " << showNum << " rows of input are as followed: ";
+    std::cout << "The " << showNum << " elements of input are as followed: ";
     for (auto i =0; i < showNum; i++) {
         std::cout << inputData[i] << " ";
     }
@@ -137,7 +137,7 @@ int32_t main() {
     }
     std::cout << std::endl;
 
-    std::cout << "The " << showNum << " rows of output are as followed: ";
+    std::cout << "The " << showNum << " elements of output are as followed: ";
     for (auto i =0; i < showNum; i++) {
         std::cout << *((dataType *)(yHost) + i) << " ";
     }
