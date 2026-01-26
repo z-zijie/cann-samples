@@ -40,7 +40,51 @@ Normal和Denormal场景编码方式不同，Denormal场景Mantissa作为指数�
 - HIF8在数值绝对值靠近1的时候，精度高；远离1时，精度逐渐降低。精度不存在跳变，都是1bit渐变。
 - HIF8综合阶码范围达到[-22, 15]，和FP16的[-25, 15]接近，共38个binades（powers of 2）
 
+### 舍入方式
+在Float8混合精度训练和推理中，高精度浮点格式（如FP32）需要转换为低精度的Float8格式，然后输入到GEMM（通用矩阵乘法）运算中，这一过程涉及舍入操作。
+
+由于Float8的精度相对低于BF16和FP16，舍入方法对神经网络训练的收敛性和准确性极为敏感。经过理论分析和大量实验，我们得出结论：HiF8将支持两种舍入方法——“向远离零舍入”（rounding half to away from zero）和“混合舍入”（hybrid rounding）。在将高精度数据转换为HiF8时，我们仅在前向传播中使用“向远离零舍入”，而在反向传播中使用“向远离零舍入”或“混合舍入”。此外，为了满足某些AI算法的要求，HiF8还提供了两种选项：溢出时饱和到边界值，以及将NaN饱和到零。
+
+#### 1. Round模式
+向最接近值舍入（rounding to nearest）的误差为0.5个ulp（最小精度单位），通常可以分为“向偶数舍入”（TE, rounding half to even）和“向远离零舍入”（TA, rounding half to away）[14]。从技术上讲，如果被舍去的位的最高有效位（MSB）为1，且其他被舍去的位均为0，则TE会通过进位或不进位来确保舍入后数值的最低有效位（LSB）为偶数。否则，只要被舍去的位的MSB为1，TE和TA都会进行进位。尽管TA在硬件实现上更为简单，但TE在大多数论文和商业产品中默认使用，因为它最大化了无偏性[22]。事实上，在从高精度格式转换为HiF8的过程中，TE特殊案例的发生概率极低。例如，如果HiF8保留3位尾数，则从FP32到HiF8的转换过程中，TE特殊案例的发生概率仅为 
+ 。
+
+Float8在AI中的最大挑战是其有限的数据分辨率能力。分析结果表明，TA的数据分辨率能力略高于TE。考虑一个TE特殊案例，涉及三个具有连续整数位的3位数：00.1、01.1和10.1。TE的舍入结果为：TE(00.1) = 00，TE(01.1) = 10，TE(10.1) = 10，得到两个不同的结果。而TA的舍入结果为：TA(00.1) = 01，TA(01.1) = 10，TA(10.1) = 11，得到三个不同的结果。因此，在TE特殊案例中，TA使Float8的数据分辨率能力略高于TE。HiF8的仿真实验也证实了这一点：基于TA的训练准确率平均比基于TE的训练准确率高0.06%（ResNet50[31]）和0.11%（MobileNet_V2[32]）。
+
+由于TA在硬件实现上更简单且训练准确率更高，因此在从高精度格式（包括FP32、FP16和BF16）转换为HiF8时，HiF8支持TA舍入方法。
+
+#### 2. Hybrid模式
+大规模HiF8混合精度训练实验表明，全局“向远离零舍入”（TA rounding）对几乎所有神经网络都表现良好。但对于YoLo-V3-Tiny[33]，损失曲线的某些部分出现了崩溃，最终准确率比FP32基线低了1.67%。经过广泛的研究和多次实验，除了全局TA舍入方法外，我们还提出了一种新的HiF8训练舍入方法：前向传播使用TA舍入，反向传播使用混合舍入（Hybrid Rounding，HR）。这使得YoLo-V3-Tiny的训练准确率接近基线值。因此，HiF8支持TA舍入和混合舍入（HR）。实际上，HR本质上是标准随机舍入[34]的优化版本，其电路实现更为简单，并且在训练精度上略高。
+
+
+
+随机舍入（SR）的误差为1个ulp（最小精度单位）。与TA相比，SR在批量处理数据时具有显著优势。具体来说，在SR中，需要随机生成一个均匀分布的随机数作为阈值T（T ∈ [0, 1)），并将所有被舍去的位视为小数部分，标记为F（F ∈ [0, 1)）。如果F ≥ T，则将1加到保留的位K上，否则将0加到保留的位K上。由于阈值T是均匀分布的，SR后的期望值可以表示为： 
+
+
+
+显然，SR能够最大化批量数据舍入过程中整体均值的不变性。然而，深度学习需要并行生成大量均匀分布的随机数，这使得SR在软硬件实现上都遇到了性能瓶颈[35]。
+
+
+
+为了解决这一瓶颈，我们提出了一个简化的SR硬件解决方案。理论分析和实验表明，浮点数的尾数低位服从均匀分布。因此，对于FP32源数据，我们将源格式的14位最低有效位（LSB）设为阈值T14，并将被舍去的14位最高有效位（MSB）设为小数部分F14。然而，对于FP16和BF16源数据，被舍去的位数不足以合理划分为相关性较弱的阈值和小数部分。为了解决这一难题，我们将源格式的最低有效位（LSB）与固定值1组合，形成一个特殊的2位阈值T2，并将被舍去的2位最高有效位设为小数部分F2。如图2所示，我们为FP32设计了一个14位SR（SR14），为FP16和BF16设计了一个2位SR（SR2），无需通过复杂算法生成随机数。SR14与标准SR非常相似，具有相同的1个ulp舍入误差。SR2是一种弱随机舍入，仅有两个阈值0.25和0.75，但其舍入误差较小，为0.75个ulp。通过比较F14/F2与T14/T2，简化的SR可以在硬件中实现。
+
 ### 使用方式
+```c++
+// 支持创建数据类型为 hifloat8_t 的 GM 和 UB
+AscendC::GlobalTensor<hifloat8_t> yGm;
+yGm.SetGlobalBuffer((__gm__ hifloat8_t *)y, TOTAL_LENGTH);
+
+AscendC::LocalTensor<hifloat8_t> yLocal = outQueueY.AllocTensor<hifloat8_t>();
+AscendC::LocalTensor<float> tmpLocal = tmpCalc.Get<float>();
+
+// 直接使用 AscendC::Cast API 进行类型转换，无需额外操作
+AscendC::Cast<hifloat8_t, float>(yLocal, tmpLocal, AscendC::RoundMode::CAST_ROUND, TOTAL_LENGTH);
+
+// DataCopy时按照 1 Byte 计算搬运量，正常搬出即可
+outQueueY.EnQue<hifloat8_t>(yLocal);
+AscendC::LocalTensor<hifloat8_t> yOutput = outQueueY.DeQue<hifloat8_t>();
+AscendC::DataCopy(yGm, yOutput, TOTAL_LENGTH);
+```
 - 在代码中，数据类型支持 hifloat8_t
 - 直接使用 AscendC::Cast API 进行类型转换，无需额外操作
 
