@@ -14,7 +14,7 @@ target_compile_options(simt PRIVATE
     "-xcce"
     "--npu-arch=dav-3101"
     "-w"
-    "-O1"
+    "-O3"
 )
 target_link_libraries(simt
     PRIVATE
