@@ -84,9 +84,9 @@ int32_t main() {
     aclrtStream stream = nullptr;
     CHECK_ACL(aclrtCreateStream(&stream));
 
-    std::vector<size_t> inputShape = {100, 5, 3, 4};
+    std::vector<size_t> inputShape = {8, 5, 3, 4};
     std::vector<size_t> indicesShape = {3, };
-    std::vector<size_t> outputShape = {100, 3, 3, 4};
+    std::vector<size_t> outputShape = {8, 3, 3, 4};
 
     size_t gatherDim = 1;
     size_t inputEleNum = segmentProduct(inputShape, 0, inputShape.size());
@@ -115,13 +115,15 @@ int32_t main() {
     dataType *yHost;
     dataType *yDevice;
 
+    int64_t numBlock = static_cast<int64_t>(outerDimSize);
+
     CHECK_ACL(aclrtMalloc((void **)&xDevice, inputSize, ACL_MEM_MALLOC_HUGE_FIRST));
     CHECK_ACL(aclrtMalloc((void **)&indicesDevice, indicesSize, ACL_MEM_MALLOC_HUGE_FIRST));
     CHECK_ACL(aclrtMalloc((void **)&yDevice, outputSize, ACL_MEM_MALLOC_HUGE_FIRST));
     CHECK_ACL(aclrtMallocHost((void **)&yHost, outputSize));
     CHECK_ACL(aclrtMemcpy(xDevice, inputSize, inputData.data(), inputSize, ACL_MEMCPY_HOST_TO_DEVICE));
     CHECK_ACL(aclrtMemcpy(indicesDevice, indicesSize, indicesData.data(), indicesSize, ACL_MEMCPY_HOST_TO_DEVICE));
-    gather<dataType, indicesType><<<8, 0, stream>>>(xDevice, indicesDevice, yDevice, outerDimSize, gatherDimSize, innerDimSize, indicesDimSize);
+    gather<dataType, indicesType><<<numBlock, 0, stream>>>(xDevice, indicesDevice, yDevice, outerDimSize, gatherDimSize, innerDimSize, indicesDimSize);
     CHECK_ACL(aclrtSynchronizeStream(stream));
     CHECK_ACL(aclrtMemcpy(yHost, outputSize, yDevice, outputSize, ACL_MEMCPY_DEVICE_TO_HOST));
 
