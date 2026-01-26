@@ -16,7 +16,7 @@
    cmake --build build --target help
    ```
 
-3. 执行编译
+3. 执行编译安装
 
    - 选项A: 编译指定的Target(部分构建)
    
@@ -25,16 +25,16 @@
      cmake --build build --target <target_name>
      ```
 
-   - 选项B: 编译所有Target(全量构建)
+   - 选项B: 编译所有Target(推荐，全量构建)
      
      支持多线程加速：
      ```sh
      cmake --build build --parallel
      ```
+     
+     安装编译产物：
 
-4. 安装编译产物
-
-   执行安装命令，将编译生成的二进制文件整理到`build_out`文件夹下：
-   ```sh
-   cmake --install build --prefix ./build_out
-   ```
+     执行安装命令，将编译生成的二进制文件整理到`build_out`文件夹下：
+     ```sh
+     cmake --install build --prefix ./build_out
+     ```
