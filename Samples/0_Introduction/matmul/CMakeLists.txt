@@ -17,7 +17,7 @@ set(CMAKE_C_COMPILER ${BISHENG})
 set(CMAKE_CXX_COMPILER ${BISHENG})
 set(CMAKE_LINKER ${BISHENG})
 
-add_executable(matmul matmul.cpp op_host/matmul_tiling_engine.cpp)
+add_executable(matmul matmul.cpp)
 
 target_include_directories(matmul PRIVATE ${ASCEND_INCLUDE_DIRS})
 target_link_directories(matmul PRIVATE ${ASCEND_DIR}/lib64)
