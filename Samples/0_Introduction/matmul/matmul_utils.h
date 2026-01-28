@@ -19,10 +19,8 @@
 
 #include "kernel_operator.h"
 
-namespace x {
 namespace matmul {
 
-constexpr static uint16_t ND_DIM = 2;
 constexpr static uint16_t TWO_ALIGN = 2;
 constexpr static uint64_t DOUBLE_BUFFER_COUNT = 2;
 // buffer size
@@ -60,6 +58,5 @@ __aicore__ inline constexpr static int32_t GetC0Size()
 }
 
 } // namespace matmul
-} // namespace x
 
 #endif // MATMUL_UTILS_H

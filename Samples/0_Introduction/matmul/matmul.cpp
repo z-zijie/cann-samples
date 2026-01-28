@@ -22,9 +22,9 @@
 #include "acl/acl.h"
 
 #include "tiling/platform/platform_ascendc.h"
+#include "matmul_golden.h"
 #include "matmul_utils.h"
 
-namespace x {
 namespace matmul {
 
 template <typename T>
@@ -149,8 +149,7 @@ __aicore__ inline void CopyOut(const AscendC::GlobalTensor<T>& cGlobal, const As
 }
 
 template <typename T>
-__global__ __aicore__ void MatmulKernel(__gm__ uint8_t* aGm, __gm__ uint8_t* bGm, __gm__ uint8_t* cGm, uint32_t m,
-                                        uint32_t k, uint32_t n)
+__global__ __aicore__ void MatmulKernel(GM_ADDR aGm, GM_ADDR bGm, GM_ADDR cGm, uint32_t m, uint32_t k, uint32_t n)
 {
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIC_ONLY);
 
@@ -256,18 +255,13 @@ __global__ __aicore__ void MatmulKernel(__gm__ uint8_t* aGm, __gm__ uint8_t* bGm
 }
 
 } // namespace matmul
-} // namespace x
 
-#define CHECK_RET(cond, return_expr)                                                                                   \
+#define CHECK_COND(cond, message, return_expr)                                                                         \
     do {                                                                                                               \
         if (!(cond)) {                                                                                                 \
+            std::cerr << message << std::endl;                                                                         \
             return_expr;                                                                                               \
         }                                                                                                              \
-    } while (0)
-
-#define LOG_PRINT(message, ...)                                                                                        \
-    do {                                                                                                               \
-        printf(message, ##__VA_ARGS__);                                                                                \
     } while (0)
 
 // 打印使用说明
@@ -322,54 +316,6 @@ void Finalize(int32_t deviceId, aclrtStream stream)
     aclFinalize();
 }
 
-namespace golden {
-template <typename Element>
-void FillRandomData(std::vector<Element>& data, Element min, Element max)
-{
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    if constexpr (std::is_integral<Element>::value) {
-        std::uniform_int_distribution<Element> dist(min, max);
-        for (auto& elem : data) elem = dist(gen);
-    } else if constexpr (std::is_floating_point<Element>::value) {
-        std::uniform_real_distribution<Element> dist(min, max);
-        for (auto& elem : data) elem = dist(gen);
-    }
-}
-
-template <typename Element>
-void ComputeGolden(int m, int k, int n, std::vector<Element>& hostInput, std::vector<Element>& hostWeight,
-                   std::vector<Element>& goldenOutput)
-{
-    for (uint32_t row = 0; row < m; ++row) {
-        for (uint32_t col = 0; col < n; ++col) {
-            size_t offsetGolden = row * n + col;
-            Element sum = 0;
-            for (uint32_t iter = 0; iter < k; ++iter) {
-                size_t offsetInput = row * k + iter;
-                size_t offsetWeight = iter * n + col;
-                sum += hostInput[offsetInput] * hostWeight[offsetWeight];
-            }
-            goldenOutput[offsetGolden] = sum;
-        }
-    }
-}
-template <typename Element>
-std::vector<uint64_t> Compare(std::vector<Element>& hostOutput, std::vector<Element>& goldenOutput)
-{
-    std::vector<uint64_t> errorIndices;
-    const float rtol = 1.0f / 256;
-    for (uint64_t i = 0; i < hostOutput.size(); ++i) {
-        Element actualValue = hostOutput[i];
-        Element expectValue = goldenOutput[i];
-        Element diff = std::fabs(actualValue - expectValue);
-        if (diff > rtol * std::max(1.0f, std::fabs(expectValue))) {
-            errorIndices.push_back(i);
-        }
-    }
-    return errorIndices;
-}
-} // namespace golden
 int main(int argc, char* argv[])
 {
     int m, k, n;
@@ -390,39 +336,45 @@ int main(int argc, char* argv[])
     std::vector<float> hostWeight(k * n, 0);
     std::vector<float> hostOutput(m * n, 0);
     std::vector<float> goldenOutput(m * n, 0);
-    golden::FillRandomData<float>(hostInput, -2.0f, 2.0f);
-    golden::FillRandomData<float>(hostWeight, -2.0f, 2.0f);
+    matmul::FillRandomData<float>(hostInput, -2.0f, 2.0f);
+    matmul::FillRandomData<float>(hostWeight, -2.0f, 2.0f);
 
-    void* deviceInput = nullptr;
-    void* deviceWeight = nullptr;
-    void* deviceOutput = nullptr;
+    GM_ADDR deviceInput = nullptr;
+    GM_ADDR deviceWeight = nullptr;
+    GM_ADDR deviceOutput = nullptr;
     auto sizeInput = hostInput.size() * sizeof(float);
     auto sizeWeight = hostWeight.size() * sizeof(float);
     auto sizeOutput = hostOutput.size() * sizeof(float);
-    aclrtMalloc(&deviceInput, sizeInput, ACL_MEM_MALLOC_HUGE_FIRST);
-    aclrtMalloc(&deviceWeight, sizeWeight, ACL_MEM_MALLOC_HUGE_FIRST);
-    aclrtMalloc(&deviceOutput, sizeOutput, ACL_MEM_MALLOC_HUGE_FIRST);
+    auto ret = aclrtMalloc((void**)&deviceInput, sizeInput, ACL_MEM_MALLOC_HUGE_FIRST);
+    CHECK_COND(ret == ACL_SUCCESS, "aclrtMalloc deviceInput failed.", return 1);
+    ret = aclrtMalloc((void**)&deviceWeight, sizeWeight, ACL_MEM_MALLOC_HUGE_FIRST);
+    CHECK_COND(ret == ACL_SUCCESS, "aclrtMalloc deviceWeight failed.", return 1);
+    ret = aclrtMalloc((void**)&deviceOutput, sizeOutput, ACL_MEM_MALLOC_HUGE_FIRST);
+    CHECK_COND(ret == ACL_SUCCESS, "aclrtMalloc deviceOutput failed.", return 1);
 
-    aclrtMemcpy(deviceInput, sizeInput, hostInput.data(), sizeInput, ACL_MEMCPY_HOST_TO_DEVICE);
-    aclrtMemcpy(deviceWeight, sizeWeight, hostWeight.data(), sizeWeight, ACL_MEMCPY_HOST_TO_DEVICE);
+    ret = aclrtMemcpy(deviceInput, sizeInput, hostInput.data(), sizeInput, ACL_MEMCPY_HOST_TO_DEVICE);
+    CHECK_COND(ret == ACL_SUCCESS, "aclrtMemcpy deviceInput failed.", return 1);
+    ret = aclrtMemcpy(deviceWeight, sizeWeight, hostWeight.data(), sizeWeight, ACL_MEMCPY_HOST_TO_DEVICE);
+    CHECK_COND(ret == ACL_SUCCESS, "aclrtMemcpy deviceWeight failed.", return 1);
 
     auto ascendcPlatform = platform_ascendc::PlatformAscendCManager::GetInstance();
+    CHECK_COND(ascendcPlatform != nullptr, "get ascendcPlatform failed.", return 1);
     uint32_t blockDim = ascendcPlatform->GetCoreNumAic();
-    x::matmul::MatmulKernel<float><<<blockDim, nullptr, stream>>>(
-        (__gm__ uint8_t*)deviceInput, (__gm__ uint8_t*)deviceWeight, (__gm__ uint8_t*)deviceOutput, m, k, n);
+    matmul::MatmulKernel<float><<<blockDim, nullptr, stream>>>(deviceInput, deviceWeight, deviceOutput, m, k, n);
 
-    auto ret = aclrtSynchronizeStream(stream);
-    CHECK_RET(ret == ACL_SUCCESS, LOG_PRINT("aclrtSynchronizeStream failed. ERROR: %d\n", ret); return ret);
+    ret = aclrtSynchronizeStream(stream);
+    CHECK_COND(ret == ACL_SUCCESS, "aclrtSynchronizeStream failed.", return 1);
 
-    aclrtMemcpy(hostOutput.data(), sizeOutput, deviceOutput, sizeOutput, ACL_MEMCPY_DEVICE_TO_HOST);
-    golden::ComputeGolden<float>(m, k, n, hostInput, hostWeight, goldenOutput);
+    ret = aclrtMemcpy(hostOutput.data(), sizeOutput, deviceOutput, sizeOutput, ACL_MEMCPY_DEVICE_TO_HOST);
+    CHECK_COND(ret == ACL_SUCCESS, "aclrtMemcpy deviceOutput failed.", return 1);
+    matmul::ComputeGolden<float>(m, k, n, hostInput, hostWeight, goldenOutput);
 
-    std::vector<uint64_t> errorIndices = golden::Compare<float>(hostOutput, goldenOutput);
+    std::vector<uint64_t> errorIndices = matmul::Compare<float>(hostOutput, goldenOutput);
     if (errorIndices.size() == 0) {
         std::cout << "run success!" << std::endl;
     } else {
-        for (auto i : errorIndices) {
-            errIdx = errorIndices[i];
+        for (uint64_t i : errorIndices) {
+            uint64_t errIdx = errorIndices[i];
             std::cout << "error index: " << errIdx << ", output: " << hostOutput[errIdx]
                       << ", golden: " << goldenOutput[errIdx] << std::endl;
         }
