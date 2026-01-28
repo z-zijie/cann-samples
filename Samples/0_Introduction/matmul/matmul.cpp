@@ -400,14 +400,14 @@ int main(int argc, char* argv[])
     matmul::ComputeGolden<float>(m, k, n, hostInput, hostWeight, goldenOutput);
     std::vector<uint64_t> errorIndices = matmul::Compare<float>(hostOutput, goldenOutput);
     if (errorIndices.size() == 0) {
-        std::cout << "run success!" << std::endl;
+        std::cout << "matmul run successfully!" << std::endl;
     } else {
         for (uint64_t i : errorIndices) {
             uint64_t errIdx = errorIndices[i];
             std::cout << "error index: " << errIdx << ", output: " << hostOutput[errIdx]
                       << ", golden: " << goldenOutput[errIdx] << std::endl;
         }
-        std::cout << "run failed!" << std::endl;
+        std::cout << "matmul run failed!" << std::endl;
     }
 
     // 资源释放
