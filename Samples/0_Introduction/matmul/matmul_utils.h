@@ -23,15 +23,16 @@ namespace matmul {
 
 constexpr static uint16_t TWO_ALIGN = 2;
 constexpr static uint64_t DOUBLE_BUFFER_COUNT = 2;
-// buffer size
+// 设置BufferSize
 constexpr static int64_t L1_SIZE = 512 * 1024;
 constexpr static int64_t L0A_SIZE = 64 * 1024;
 constexpr static int64_t L0B_SIZE = 64 * 1024;
 constexpr static int64_t L0C_SIZE = 256 * 1024;
-// sync flag
+// 设置同步Flag
 constexpr static uint16_t ZERO_FLAG = 0;
 constexpr static uint16_t FIRST_FLAG = 1;
-// c0 size
+// 设置C0 Size，C0需满足32 Byte对齐，因此
+// FP16/BF16 C0为16，FP32 C0为8
 constexpr static int64_t B16_C0_SIZE = 16;
 constexpr static int64_t B32_C0_SIZE = 8;
 
