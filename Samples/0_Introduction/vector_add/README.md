@@ -1,40 +1,48 @@
 # Vector Add
 
 ## 描述
-本样例展示如何在NPU的VectorCore硬件单元上使用AscendC编程语言实现向量加法操作。
 
-NPU包含多种专用计算单元，其中VectorCore专门负责向量和标量运算。与通用CPU的SIMD指令集不同，VectorCore是专门的硬件单元，具有更高的并行度和计算效率。
+本样例展示了如何在昇腾AI处理器的VectorCore硬件单元上使用AscendC编程语言实现向量加法操作。
 
-## 关键概念
+## 关键特性
 
-### VectorCore硬件单元
+- 流水并行：具备DoubleBuffer能力开启流水并行
+- 参数可配：支持自定义向量长度进行测试
+- 精度对比：提供标准的CPU实现作为精度基准
 
-VectorCore是AI Core中的专用向量处理单元，每个AI Core包含多个VectorCore，每个VectorCore能够：
-  - 并行处理多个数据元素
-  - 支持多种数据类型（int8, int16, int32, float16, float32等）
-  - 执行向量加法、乘法、比较等基本运算
-  - 通过Local Memory（UB）实现低延迟数据访问
+## 支持架构
 
-### AI Core架构
+NPU ARCH 3510
 
-NPU的核心计算单元，包含：
-  - VectorCore: 负责向量/标量运算
-  - CubeCore: 负责矩阵乘法运算
+## 参数说明
 
-### 核函数（Kernel Function）
-使用AscendC编写的设备端函数，通过`__global__ __aicore__`关键字修饰，在AI Core的VectorCore上执行。核函数是使能VectorCore硬件的主要方式。
+- totalLength: 向量长度
 
-### Global Memroy 与 Local Memroy
-  - Global Memroy: AI Core间共享的内存，容量大但访问延迟高
-  - Local  Memroy: 每个VectorCore私有的高速缓存，容量有限但访问速度极快
-
-### 任务切分(Tiling)
-根据VectorCore的硬件特性将大规模计算划分为小任务：
-  - 基于可用VectorCore数量进行并行化
-  - 根据LocalMemory（UB）容量确定分块大小
-  - 尽可能的让每个VectorCore负载均衡
+算子Kernel支持Dtype模板参数，目前支持FLOAT32
 
 ## 编译运行
 
-从项目根目录构建, 参考项目根目录README.md
+1. 编译样例
 
+从项目根目录启动构建，参考项目[README.md](../../../README.md)
+
+指定vector_add的编译命令：
+```shell
+cmake --build build --target vector_add
+```
+
+2. 运行样例
+
+切换到可执行目录文件的所在目录`build/Samples/0_Introduction/vector_add/`, 使用可执行文件直接执行算子用例。
+```shell
+cd ./build/Samples/0_Introduction/vector_add/
+./vector_add
+```
+打印如下执行结果，证明样例执行成功。
+```shell
+Vector add completed successfully!
+```
+如果存在精度问题，则会打印错误数据，并显示如下结果。
+```shell
+Vector add failed!
+```

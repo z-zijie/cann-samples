@@ -1,5 +1,7 @@
 # Features
 
+关键特性，解耦大模型核心算子底层能力。
+
 ### [simt](./simt)
 This sample illustrates how to write and run a simple simt kernel on NPU.
 
