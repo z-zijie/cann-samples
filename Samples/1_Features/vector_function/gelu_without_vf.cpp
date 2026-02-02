@@ -9,7 +9,7 @@
  */
 
 /*!
- * \file gelu_with_vf.cpp
+ * \file gelu_without_vf.cpp
  * \brief
  */
 
