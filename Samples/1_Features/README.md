@@ -11,3 +11,6 @@ T.B.D.
 
 ### [hif8](./hif8)
 T.B.D.
+
+### [hif8_mm](./hif8_mm)
+本样例演示了如何在昇腾AI处理器的CubeCore硬件单元上使用AscendC编程语言实现hifloat8类型的矩阵乘运算。
