@@ -2,7 +2,8 @@
 
 ## 描述
 
-本样例展示了如何在昇腾AI处理器的CubeCore硬件单元上使用AscendC编程语言实现矩阵乘运算。
+本样例展示了如何在昇腾AI处理器的CubeCore硬件单元上使用AscendC编程语言实现矩阵乘运算。下面是矩阵乘在NPU上的执行的示意图。
+![](./images/matmul_intro_1.png)
 
 ## 关键特性
 
@@ -13,6 +14,10 @@
 ## 支持架构
 
 NPU ARCH 3510
+
+## ASC API
+
+[ASC API文档](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/850/API/ascendcopapi/atlasascendc_api_07_0003.html)
 
 ## 参数说明
 
