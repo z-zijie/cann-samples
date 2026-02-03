@@ -10,3 +10,6 @@
 
 ### [hif8](./hif8)
 演示 HiFloat8（HIF8）量化数据类型的应用，展示 Quantize 算子的实现，支持 8 位浮点格式以优化存储和计算效率。
+
+### [hif8_mm](./hif8_mm)
+本样例演示了如何在昇腾AI处理器的CubeCore硬件单元上使用AscendC编程语言实现hifloat8类型的矩阵乘运算。
