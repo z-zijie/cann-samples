@@ -29,7 +29,7 @@ template <uint32_t MAX_THREADNUM, typename DATA_TYPE, typename INDICES_TYPE, typ
 inline __simt_vf__ [aicore] __launch_bounds__(MAX_THREADNUM) void gather_function(__gm__ DATA_TYPE *x, __gm__ INDICES_TYPE *indices, __gm__ DATA_TYPE *y, 
     INDEX_SIZE_TYPE gatherDimSize, INDEX_SIZE_TYPE indicesDimSize, INDEX_SIZE_TYPE innerDimSize, INDEX_SIZE_TYPE outNum) {
     for (INDEX_SIZE_TYPE idx = threadIdx.x + blockIdx.x * blockDim.x; idx < outNum; 
-        idx += asc_get_block_num() * blockDim.x) {
+        idx += block_num * blockDim.x) {
         INDEX_SIZE_TYPE outerI = idx / (gatherDimSize * innerDimSize);
         INDEX_SIZE_TYPE tmpI = idx - outerI * (gatherDimSize * innerDimSize);
         INDEX_SIZE_TYPE gatherI = tmpI / innerDimSize;
@@ -130,7 +130,10 @@ int32_t main() {
     dataType *yHost;
     dataType *yDevice;
 
-    int64_t numBlock = static_cast<int64_t>(outerDimSize);
+    uint32_t threadNum = 2048; 
+    uint64_t maxCoreNum = 4; // just an example, actual max_core_num should be based on hardware information.
+    uint64_t tempUsedBlockNum = (static_cast<uint64_t>(outerDimSize) + threadNum - 1) / threadNum;
+    uint64_t numBlock = std::min(tempUsedBlockNum, maxCoreNum);
 
     CHECK_ACL(aclrtMalloc((void **)&xDevice, inputSize, ACL_MEM_MALLOC_HUGE_FIRST));
     CHECK_ACL(aclrtMalloc((void **)&indicesDevice, indicesSize, ACL_MEM_MALLOC_HUGE_FIRST));
