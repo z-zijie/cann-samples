@@ -9,6 +9,10 @@
 # ----------------------------------------------------------------------------
 
 cmake_minimum_required(VERSION 3.16)
+<<<<<<< HEAD
 project(cann-samples LANGUAGES C CXX)
+=======
+project(ops-samples LANGUAGES C CXX)
+>>>>>>> e8d6662634933189340d698c29ba827ea2615e7e
 include(cmake/ascend.cmake)
 add_subdirectory(Samples)

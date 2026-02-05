@@ -7,9 +7,41 @@
 
 ops-samples是[CANN](https://hiascend.com/software/cann)（Compute Architecture for Neural Networks）算子库中提供算子领域高性能实战演进样例与体系化调优知识库。
 
+<<<<<<< HEAD
 ## 📝版本配套
 
 本项目依赖 CANN 软件包，建议安装最新版本以获得最佳兼容性及最新特性支持。
+=======
+## 📝环境部署
+
+单击[下载链接](https://mirror-centralrepo.devcloud.cn-north-4.huaweicloud.com/artifactory/cann-run-release/software/9.0.0/)，根据实际产品型号和环境架构，获取```Ascend-cann-toolkit_${cann_version}_linux-${arch}.run```、```Ascend-cann-${soc_name}-ops_${cann_version}_linux-${arch}.run```。其中ops包是运行态依赖，若仅编译算子，可以不安装此包。
+
+1. **安装社区CANN toolkit包**
+
+    ```bash
+    # 确保安装包具有可执行权限
+    chmod +x Ascend-cann-toolkit_${cann_version}_linux-${arch}.run
+    # 安装命令
+    ./Ascend-cann-toolkit_${cann_version}_linux-${arch}.run --install --force --install-path=${install_path}
+    ```
+    - \$\{cann\_version\}：表示CANN包版本号。
+    - \$\{arch\}：表示CPU架构，如aarch64、x86_64。
+    - \$\{install\_path\}：表示指定安装路径，默认安装在`/usr/local/Ascend`目录。
+
+2. **安装社区版CANN ops包（运行态依赖）**
+
+    运行算子时必须安装本包，若仅编译算子，可跳过本操作。
+
+    ```bash
+    # 确保安装包具有可执行权限
+    chmod +x Ascend-cann-${soc_name}-ops_${cann_version}_linux-${arch}.run
+    # 安装命令
+    ./Ascend-cann-${soc_name}-ops_${cann_version}_linux-${arch}.run --install --install-path=${install_path}
+    ```
+    
+    - \$\{soc\_name\}：表示NPU型号名称，即\$\{soc\_version\}删除“ascend”后剩余的内容。
+    - \$\{install\_path\}：表示指定安装路径，需要与toolkit包安装在相同路径，默认安装在`/usr/local/Ascend`目录。
+>>>>>>> e8d6662634933189340d698c29ba827ea2615e7e
 
 ## ⚡️快速入门
 
