@@ -30,10 +30,11 @@ std::tuple<int64_t, int64_t, int64_t> calc_tiling_params(int64_t totalLength)
     uint64_t ubSize;
     ascendcPlatform->GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
     int64_t coreNum = ascendcPlatform->GetCoreNumAiv();
-    int64_t blockDim = std::min(coreNum, (totalLength + MIN_ELEMS_PER_CORE - 1) / MIN_ELEMS_PER_CORE);
-    int64_t blockLength = (totalLength + blockDim - 1) / blockDim;
+    int64_t numBlocks = std::min(coreNum, (totalLength + MIN_ELEMS_PER_CORE - 1) / MIN_ELEMS_PER_CORE);
+    numBlocks = std::max<int64_t>(1, numBlocks);
+    int64_t blockLength = (totalLength + numBlocks - 1) / numBlocks;
     int64_t tileSize = ubSize / PIPELINE_DEPTH / BUFFER_NUM;
-    return std::make_tuple(blockDim, blockLength, tileSize);
+    return std::make_tuple(numBlocks, blockLength, tileSize);
 }
 
 template <typename T>
@@ -156,10 +157,10 @@ int main()
     aclrtMemcpy(d_B, size, h_B, size, ACL_MEMCPY_HOST_TO_DEVICE);
 
     // Kernel Call
-    int64_t blockDim, blockLength, tileSize;
-    std::tie(blockDim, blockLength, tileSize) = calc_tiling_params(numElements);
+    int64_t numBlocks, blockLength, tileSize;
+    std::tie(numBlocks, blockLength, tileSize) = calc_tiling_params(numElements);
     aclrtSynchronizeStream(stream);
-    add_kernel<float><<<blockDim, nullptr, stream>>>(d_A, d_B, d_C, numElements, blockLength, tileSize);
+    add_kernel<float><<<numBlocks, nullptr, stream>>>(d_A, d_B, d_C, numElements, blockLength, tileSize);
     aclrtSynchronizeStream(stream);
 
     aclrtMemcpy(h_C, size, d_C, size, ACL_MEMCPY_DEVICE_TO_HOST);
