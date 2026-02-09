@@ -165,13 +165,13 @@ int main()
     aclrtMemcpy(d_input, size, input.data(), size, ACL_MEMCPY_HOST_TO_DEVICE);
 
     // Call Gelu Kernel
-    int64_t blockDim, blockLength, tileSize;
-    blockDim = 1;
+    int64_t numBlocks, blockLength, tileSize;
+    numBlocks = 1;
     blockLength = numElements;
     tileSize = 32 * 1024;
     aclrtSynchronizeStream(stream);
     for (int64_t i = 0; i < 5; ++i) {
-        gelu_kernel<<<blockDim, nullptr, stream>>>(d_input, d_result, numElements, blockLength, tileSize);
+        gelu_kernel<<<numBlocks, nullptr, stream>>>(d_input, d_result, numElements, blockLength, tileSize);
     }
     aclrtSynchronizeStream(stream);
 
