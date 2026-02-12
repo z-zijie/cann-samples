@@ -37,7 +37,7 @@ std::tuple<int64_t, int64_t, int64_t> calc_tiling_params(int64_t totalLength)
 }
 
 template <typename T>
-__global__ __aicore__ void add_kernel(
+__global__ __aicore__ __vector__ void add_kernel(
     GM_ADDR x, GM_ADDR y, GM_ADDR z, int64_t totalLength, int64_t blockLength, uint32_t tileSize)
 {
     constexpr static int64_t PIPELINE_DEPTH = 2;
