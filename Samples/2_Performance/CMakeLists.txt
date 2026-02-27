@@ -100,6 +100,9 @@ set(COMMON_INCLUDE_DIRS
     ${ASCEND_HOME}/pkg_inc
 )
 
+# 引入通用函数（根据实际路径调整）
+include(${CMAKE_CURRENT_SOURCE_DIR}/../../cmake/CMakeUtils.cmake)
+
 set(COMMON_LINK_DIRS
     ${TORCH_NPU_LIB_PATH}
     ${ASCEND_HOME}/lib64

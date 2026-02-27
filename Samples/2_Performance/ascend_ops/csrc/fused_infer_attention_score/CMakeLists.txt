@@ -9,22 +9,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 
-message(STATUS "BUILD_TORCH_OPS ON in fused_infer_attention_score")
+# 调用通用函数编译 define 算子
+define_npu_op(fused_infer_attention_score)
 
-# fused_infer_attention_score operation sources
-file(GLOB_RECURSE fused_infer_attention_score_NPU_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
-set(fused_infer_attention_score_SOURCES ${fused_infer_attention_score_NPU_SOURCES})
-
-# Mark .cpp files with special properties
-set_source_files_properties(
-    ${fused_infer_attention_score_NPU_SOURCES} PROPERTIES
-    LANGUAGE CXX
-    COMPILE_FLAGS "--npu-arch=dav-3101 -xasc "
-)
-
-# Create object library
-add_library(fused_infer_attention_score_objects OBJECT ${fused_infer_attention_score_SOURCES})
-
-target_compile_options(fused_infer_attention_score_objects PRIVATE ${COMMON_COMPILE_OPTIONS})
-target_include_directories(fused_infer_attention_score_objects PRIVATE ${COMMON_INCLUDE_DIRS})
 return()

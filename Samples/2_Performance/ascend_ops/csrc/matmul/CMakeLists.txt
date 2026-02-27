@@ -9,22 +9,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 
-message(STATUS "BUILD_TORCH_OPS ON in matmul")
+# 调用通用函数编译算子
+define_npu_op(matmul)
 
-# matmul operation sources
-file(GLOB_RECURSE matmul_NPU_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
-set(matmul_SOURCES ${matmul_NPU_SOURCES})
-
-# Mark .cpp files with special properties
-set_source_files_properties(
-    ${matmul_NPU_SOURCES} PROPERTIES
-    LANGUAGE CXX
-    COMPILE_FLAGS "--npu-arch=dav-3101 -xasc"
-)
-
-# Create object library
-add_library(matmul_objects OBJECT ${matmul_SOURCES})
-
-target_compile_options(matmul_objects PRIVATE ${COMMON_COMPILE_OPTIONS})
-target_include_directories(matmul_objects PRIVATE ${COMMON_INCLUDE_DIRS})
 return()
