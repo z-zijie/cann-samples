@@ -1,3 +1,7 @@
 build/
 build_out/
-CLAUDE.md
+
+# Visual Studio Code
+.vscode
+*.tmp
+*.temp
