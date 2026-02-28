@@ -5,3 +5,8 @@ ascend_ops.egg-info
 __pycache__
 *.so
 CLAUDE.md
+
+# Visual Studio Code
+.vscode
+*.tmp
+*.temp

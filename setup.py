@@ -112,7 +112,7 @@ setup(
     name='ascend_ops',
     version='0.0.1',
     packages=find_packages(),
-    ext_modules=[CMakeExtension("ascend_ops._C", sourcedir=".")],
+    ext_modules=[CMakeExtension("ascend_ops._C", sourcedir="./ascend_ops")],
     cmdclass={'build_ext': CMakeBuild, 'clean': CleanCommand},
     zip_safe=False,
     install_requires=["torch"],

@@ -1,1 +1,9 @@
 en_dtypes==0.0.4
+pyyaml
+build
+decorator
+scipy
+attrs
+psutil
+expecttest
+wheel
