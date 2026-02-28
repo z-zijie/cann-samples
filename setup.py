@@ -111,8 +111,9 @@ class CMakeBuild(build_ext):
 setup(
     name='ascend_ops',
     version='0.0.1',
+    package_dir={"": "Samples"},
     packages=find_packages(),
-    ext_modules=[CMakeExtension("ascend_ops._C", sourcedir="./ascend_ops")],
+    ext_modules=[CMakeExtension("ascend_ops._C", sourcedir="Samples/2_Performance")],
     cmdclass={'build_ext': CMakeBuild, 'clean': CleanCommand},
     zip_safe=False,
     install_requires=["torch"],
