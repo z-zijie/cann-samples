@@ -9,4 +9,35 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 
-add_subdirectory(quant_matmul_mxfp4)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+set(CMAKE_C_COMPILER ${BISHENG})
+set(CMAKE_CXX_COMPILER ${BISHENG})
+set(CMAKE_LINKER ${BISHENG})
+
+add_executable(quant_matmul_mxfp4 quant_matmul_mxfp4.cpp)
+
+target_include_directories(quant_matmul_mxfp4 PRIVATE ${ASCEND_INCLUDE_DIRS})
+target_link_directories(quant_matmul_mxfp4 PRIVATE ${ASCEND_DIR}/lib64)
+
+target_compile_options(quant_matmul_mxfp4 PRIVATE
+    "-xasc"
+    "--npu-arch=dav-3101"
+    "-w"
+    "-O3"
+)
+
+target_link_libraries(quant_matmul_mxfp4
+    PRIVATE
+    m
+    dl
+    platform
+    tiling_api
+)
+
+install(TARGETS quant_matmul_mxfp4
+    RUNTIME DESTINATION 2_Performance/matmul
+)
+

@@ -17,19 +17,32 @@ set(CMAKE_C_COMPILER ${BISHENG})
 set(CMAKE_CXX_COMPILER ${BISHENG})
 set(CMAKE_LINKER ${BISHENG})
 
+<<<<<<< HEAD:Samples/2_Performance/matmul_mxfp4/CMakeLists.txt
 add_executable(matmul_mxfp4 matmul_mxfp4.cpp)
 
 target_include_directories(matmul_mxfp4 PRIVATE ${ASCEND_INCLUDE_DIRS})
 target_link_directories(matmul_mxfp4 PRIVATE ${ASCEND_DIR}/lib64)
 
 target_compile_options(matmul_mxfp4 PRIVATE
+=======
+add_executable(quant_matmul_mxfp4 quant_matmul_mxfp4.cpp)
+
+target_include_directories(quant_matmul_mxfp4 PRIVATE ${ASCEND_INCLUDE_DIRS})
+target_link_directories(quant_matmul_mxfp4 PRIVATE ${ASCEND_DIR}/lib64)
+
+target_compile_options(quant_matmul_mxfp4 PRIVATE
+>>>>>>> d24c893... d:Samples/2_Performance/quant_matmul_mxfp4/CMakeLists.txt
     "-xasc"
     "--npu-arch=dav-3101"
     "-w"
     "-O3"
 )
 
+<<<<<<< HEAD:Samples/2_Performance/matmul_mxfp4/CMakeLists.txt
 target_link_libraries(matmul_mxfp4
+=======
+target_link_libraries(quant_matmul_mxfp4
+>>>>>>> d24c893... d:Samples/2_Performance/quant_matmul_mxfp4/CMakeLists.txt
     PRIVATE
     m
     dl
@@ -37,7 +50,11 @@ target_link_libraries(matmul_mxfp4
     tiling_api
 )
 
+<<<<<<< HEAD:Samples/2_Performance/matmul_mxfp4/CMakeLists.txt
 install(TARGETS matmul_mxfp4
+=======
+install(TARGETS quant_matmul_mxfp4
+>>>>>>> d24c893... d:Samples/2_Performance/quant_matmul_mxfp4/CMakeLists.txt
     RUNTIME DESTINATION 2_Performance/matmul
 )
 
