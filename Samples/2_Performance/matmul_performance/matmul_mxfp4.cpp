@@ -1,6 +1,6 @@
 /**
  * This program is free software, you can redistribute it and/or modify it.
- * Copyright (c) 2025 Huawei Technologies Co., Ltd.
+ * Copyright (c) 2026 Huawei Technologies Co., Ltd.
  * This file is a part of the CANN Open Software.
  * Licensed under CANN Open Software License Agreement Version 2.0 (the "License").
  * Please refer to the License for details. You may not use this file except in compliance with the License.
@@ -10,15 +10,9 @@
  */
 
 /*!
- * \file matmul_torch.cpp
+ * \file matmul_mxfp4.cpp
  * \brief
  */
-
-#include <torch/all.h>
-
-#include "torch_npu/csrc/core/npu/DeviceUtils.h"
-#include "torch_npu/csrc/core/npu/NPUStream.h"
-#include "torch_npu/csrc/framework/OpCommand.h"
 
 #include "kernel_operator.h"
 #include "op_host/matmul_tiling_engine.h"
