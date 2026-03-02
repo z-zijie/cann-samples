@@ -9,4 +9,35 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 
-add_subdirectory(matmul_performance)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+set(CMAKE_C_COMPILER ${BISHENG})
+set(CMAKE_CXX_COMPILER ${BISHENG})
+set(CMAKE_LINKER ${BISHENG})
+
+add_executable(matmul_performance matmul_performance.cpp)
+
+target_include_directories(matmul_performance PRIVATE ${ASCEND_INCLUDE_DIRS})
+target_link_directories(matmul_performance PRIVATE ${ASCEND_DIR}/lib64)
+
+target_compile_options(matmul_performance PRIVATE
+    "-xasc"
+    "--npu-arch=dav-3101"
+    "-w"
+    "-O3"
+)
+
+target_link_libraries(matmul_performance
+    PRIVATE
+    m
+    dl
+    platform
+    tiling_api
+)
+
+install(TARGETS matmul_performance
+    RUNTIME DESTINATION 2_Performance/matmul
+)
+
