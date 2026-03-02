@@ -1,3 +1,8 @@
 build/
 build_out/
 CLAUDE.md
+.vscode/settings.json
+.vscode/tags-34.wecode-db
+.vscode/tags-34.wecode-db-shm
+.vscode/tags-34.wecode-db-wal
+.vscode/tags-34.wecode-lock
