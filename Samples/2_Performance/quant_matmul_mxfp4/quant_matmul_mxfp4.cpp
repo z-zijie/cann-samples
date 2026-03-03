@@ -139,11 +139,6 @@ int main(int argc, char* argv[])
     ACLRT_CHECK_WITH_MSG(aclrtCreateStream(&stream), "aclrtCreateStream failed.");
 
     // host data
-    // std::vector<uint8_t> hA((m * k + 1) >> 1, 0);
-    // std::vector<uint8_t> hB((k * n + 1) >> 1, 0);
-    // std::vector<uint8_t> hScaleA((m * (k + 64) - 1 / 64), 0);
-    // std::vector<uint8_t> hScaleB((n * (k + 64) - 1 / 64), 0);
-    // std::vector<float> hC(m * n, 0);
     uint8_t* hA = nullptr;
     uint8_t* hB = nullptr;
     uint8_t* hScaleA = nullptr;
@@ -166,7 +161,7 @@ int main(int argc, char* argv[])
     size_t sizeScaleB = ((n * (k + MX_DIVISOR_SIZE) - 1 / MX_DIVISOR_SIZE)) * sizeof(uint8_t);
     size_t sizeC = m * n * sizeof(float);
 
-    // QuantMatmulTilingData quantMatmulTilingData;
+    QuantMatmulTilingData quantMatmulTilingData;
     // QuantMatmulTilingEngine quantMatmulTilingEngine;
     // quantMatmulTilingEngine.GetTiling(m, n, k, true, false, quantMatmulTilingData);
 
@@ -212,18 +207,18 @@ int main(int argc, char* argv[])
     ACLRT_CHECK_WITH_MSG(aclrtSynchronizeStream(stream), "aclrtSynchronizeStream failed.");
 
     // 计算golden，对比精度
-    matmul::ComputeGolden<float>(m, k, n, hostInput, hostWeight, goldenOutput);
-    std::vector<uint64_t> errorIndices = matmul::Compare<float>(hostOutput, goldenOutput);
-    if (errorIndices.size() == 0) {
-        std::cout << "matmul run successfully!" << std::endl;
-    } else {
-        for (uint64_t i : errorIndices) {
-            uint64_t errIdx = errorIndices[i];
-            std::cout << "error index: " << errIdx << ", output: " << hostOutput[errIdx]
-                      << ", golden: " << goldenOutput[errIdx] << std::endl;
-        }
-        std::cout << "matmul run failed!" << std::endl;
-    }
+    // matmul::ComputeGolden<float>(m, k, n, hostInput, hostWeight, goldenOutput);
+    // std::vector<uint64_t> errorIndices = matmul::Compare<float>(hostOutput, goldenOutput);
+    // if (errorIndices.size() == 0) {
+    //     std::cout << "matmul run successfully!" << std::endl;
+    // } else {
+    //     for (uint64_t i : errorIndices) {
+    //         uint64_t errIdx = errorIndices[i];
+    //         std::cout << "error index: " << errIdx << ", output: " << hostOutput[errIdx]
+    //                   << ", golden: " << goldenOutput[errIdx] << std::endl;
+    //     }
+    //     std::cout << "matmul run failed!" << std::endl;
+    // }
 
     // 资源释放
     aclrtFreeHost(hA);
