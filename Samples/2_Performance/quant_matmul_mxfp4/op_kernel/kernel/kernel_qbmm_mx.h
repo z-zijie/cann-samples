@@ -29,8 +29,6 @@
 #include "../block/block_scheduler_qbmm.h"
 #include "../block/block_mmad_mx.h"
 
-namespace Cmct {
-namespace Gemm {
 namespace Kernel {
 #define QBMM_MX_KERNEL_CLASS_TEM_PARAMS \
     template <class ProblemShape, class BlockMmad, class BlockScheduler>
@@ -302,7 +300,5 @@ __aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS
 }
 
 } // namespace Kernel
-} // namespace Gemm
-} // namespace Cmct
 
 #endif

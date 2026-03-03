@@ -18,8 +18,6 @@
 #include "lib/std/tuple.h"
 #include "./integral_constant.h"
 
-namespace Cmct {
-namespace Gemm {
 // Base template: handles single-index case
 template <size_t I, typename T>
 __aicore__ constexpr inline decltype(auto) Get(T&& t)
@@ -34,6 +32,4 @@ __aicore__ constexpr inline decltype(auto) Get(T&& t)
     return Get<Second, Rest...>(AscendC::Std::get<First>(AscendC::Std::forward<T>(t)));
 }
 
-} // namespace Gemm
-} // namespace Cmct
 #endif

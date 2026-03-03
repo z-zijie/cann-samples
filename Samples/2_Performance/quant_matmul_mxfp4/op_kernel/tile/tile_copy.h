@@ -19,8 +19,7 @@
 
 #include "tile_copy_policy.h"
 
-namespace Cmct {
-namespace Gemm {
+
 namespace Tile {
 /**
  * @struct TileCopy
@@ -289,6 +288,4 @@ struct HasCopyCo1ToOut : public AscendC::Std::bool_constant<Detail::HasCopyCo1To
 template <class TileCopy>
 inline constexpr bool HasCopyCo1ToOutV = HasCopyCo1ToOut<TileCopy>::value;
 } // namespace Tile
-} // namespace Gemm
-} // namespace Cmct
 #endif

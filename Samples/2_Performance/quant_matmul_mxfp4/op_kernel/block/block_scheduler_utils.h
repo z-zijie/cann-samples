@@ -19,8 +19,6 @@
 #include "../utils/status_utils.h"
 #include "../utils/host_utils.h"
 
-namespace Cmct {
-namespace Gemm {
 namespace Block {
 
 constexpr uint64_t WINDOW_LEN = 4UL;
@@ -135,6 +133,4 @@ __host_aicore__ static Status DoCheckArgs(const ProblemShape_ &shape, int64_t l1
 }
 
 } // namespace Block
-} // namespace Gemm
-} // namespace Cmct
 #endif

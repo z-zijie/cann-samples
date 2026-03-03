@@ -16,8 +16,6 @@
 #ifndef UTILS_STATUS_UTILS_H
 #define UTILS_STATUS_UTILS_H
 
-namespace Cmct {
-namespace Gemm {
 enum class Status {
     success,
     batchErrorExcceedsLimit,
@@ -36,6 +34,4 @@ enum class Status {
     l1L0ErrorNotAlignInt8
 };
 
-} // namespace Gemm
-} // namespace Cmct
 #endif

@@ -24,8 +24,6 @@
 #include "../../impl/adv_api/detail/matmul/utils/matmul_utils.h"
 #include "./integral_constant.h"
 
-namespace Cmct {
-namespace Gemm {
 namespace layout {
 struct RowMajor {};
 struct ColumnMajor {};
@@ -37,6 +35,4 @@ struct TagToFormat {
     static_assert(AscendC::Std::always_false_v<T>, "TagToFormat is not implemented for this layout");
 };
 
-} // namespace Gemm
-} // namespace Cmct
 #endif

@@ -14,8 +14,6 @@
  */
 #ifndef UTILS_QUANT_BATCH_MATMUL_CONSTANT_H
 #define UTILS_QUANT_BATCH_MATMUL_CONSTANT_H
-namespace Cmct {
-namespace Gemm {
 namespace QuantBatchMatmul {
 
 constexpr uint64_t IDX_A_OFFSET = 0UL;
@@ -35,6 +33,5 @@ enum class QuantMode : uint32_t {
     PERGROUP_MODE = 0x1U << 5,
 };
 } // namespace QuantBatchMatmul
-} // namespace Gemm
-} // namespace Cmct
+
 #endif

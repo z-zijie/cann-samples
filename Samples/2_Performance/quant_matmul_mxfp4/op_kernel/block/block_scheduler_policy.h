@@ -16,8 +16,6 @@
 #ifndef MATMUL_BLOCK_BLOCK_SCHEDULER_POLICY_H
 #define MATMUL_BLOCK_BLOCK_SCHEDULER_POLICY_H
 
-namespace Cmct {
-namespace Gemm {
 
 // FULL_LOAD_MODE_表示全载模式 0: 非全载 2：B全载
 template <uint64_t FULL_LOAD_MODE_ = 0>
@@ -31,6 +29,4 @@ struct BuiltInBatchMatmulToMulScheduler {};
 struct IterateKScheduler {};
 struct QuantIterateKScheduler {};
 struct QuantMatmulMxAswtScheduler {};
-} // namespace Gemm
-} // namespace Cmct
 #endif

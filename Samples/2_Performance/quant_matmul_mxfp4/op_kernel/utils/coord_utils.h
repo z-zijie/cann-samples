@@ -18,8 +18,6 @@
 
 #include "common_utils.h"
 #include "quant_batch_matmul_constant.h"
-namespace Cmct {
-namespace Gemm {
 
  
 constexpr int IDX_M_BASE_NORM_CNT = 0;
@@ -140,6 +138,4 @@ public:
     int64_t l1N{0};
     int64_t l1K{0};
 };
-} // namespace Gemm
-} // namespace Cmct
 #endif

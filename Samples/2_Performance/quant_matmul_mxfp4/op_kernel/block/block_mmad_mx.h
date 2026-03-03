@@ -22,8 +22,6 @@
 #include "../policy/dispatch_policy.h"
 #include "..//tile/tile_copy.h"
 
-namespace Cmct {
-namespace Gemm {
 namespace Block {
 using namespace AscendC;
 using namespace Cmct::Gemm::QuantBatchMatmul;
@@ -52,7 +50,7 @@ template <class DispatchPolicy_, class L1TileShape_, class L0TileShape_, class A
 class BlockMmadMx<DispatchPolicy_, L1TileShape_, L0TileShape_, AType_, LayoutA_, BType_, LayoutB_, CType_, LayoutC_,
                 BiasType_, LayoutBias_, TileCopy_,
                 AscendC::Std::enable_if_t<
-                    AscendC::Std::is_base_of_v<QuantMatmulMxMultiBlockWithAswt<>, DispatchPolicy_>> {
+                    AscendC::Std::is_base_of_v<QuantMatmulMxMultiBlockWithAswt<>, DispatchPolicy_>>> {
 public:
     using AType = AType_;
     using BType = BType_;
@@ -738,6 +736,4 @@ private:
     AscendC::LocalTensor<fp8_e8m0_t> scaleBL1Local_{AscendC::TPosition::A1, 0, AscendC::TOTAL_L1_SIZE};
 };
 }  // namespace Block
-}  // namespace Gemm
-}  // namespace Cmct
 #endif

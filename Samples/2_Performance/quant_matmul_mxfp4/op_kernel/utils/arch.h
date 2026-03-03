@@ -16,8 +16,6 @@
 #ifndef UTILS_ARCH_H
 #define UTILS_ARCH_H
 
-namespace Cmct {
-namespace Gemm {
 namespace Arch {
 struct DAV2201 {};
 struct DAV3510 {};
@@ -34,6 +32,5 @@ constexpr static int64_t L0C_SIZE = 128 * 1024;
 #endif
 
 constexpr static int64_t L1_SIZE = 512 * 1024;
-} // namespace Gemm
-} // namespace Cmct
+
 #endif

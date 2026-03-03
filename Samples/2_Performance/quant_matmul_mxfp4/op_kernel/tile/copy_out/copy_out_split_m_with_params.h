@@ -18,8 +18,6 @@
 #include "../tile_copy_policy.h"
 #include "../../utils/tensor_utils.h"
 
-namespace Cmct {
-namespace Gemm {
 namespace Tile {
 /**
  * @struct Copy
@@ -236,6 +234,4 @@ public:
     }
 };
 } // namespace Tile
-} // namespace Gemm
-} // namespace Cmct
 #endif

@@ -19,8 +19,6 @@
 #include "../utils/common_utils.h"
 #include "../utils/integral_constant.h"
 
-namespace Cmct {
-namespace Gemm {
 /* block schedule policies */
 struct KernelNaivePipeline {};     // Basic pipelining without caching or optimization
 struct KernelMultiBlock {};        // Multi-block pipelined data transfer
@@ -132,43 +130,6 @@ struct MatmulMultiBlock {
     constexpr static bool ENABLE_INTRINSICS_CHECK = false;
     constexpr static bool ENABLE_SET_BIAS = false;
     constexpr static MatmulConfigMode CONFIG = MatmulConfigMode::CONFIG_MDL;
-};
-
-/**
- * @struct MatmulMultiBlockWithOutQue
- * @brief Matrix multiplication multi-block structure, no quant, implemented based on Layout
- * @param [in] SingleCoreShape: the shape of a single core, default is AscendC::Shape<_0, _0, _0, _0>
- * @param [in] FULL_LOAD_MODE: mode of full load, default is 0(no full load)
- * @param [in] ENABLE_RELU: execute relu after mmad , default is false
- */
-template <class SingleCoreShape = AscendC::Shape<_0, _0, _0, _0>, uint64_t FULL_LOAD_MODE_ = 0,
-    uint64_t FUSED_OP_TYPE_ = 0>
-struct MatmulMultiBlockWithOutQue {
-    using ScheduleType = KernelMultiBlockOnKAxis;
-    using SingleShape = SingleCoreShape;
-    constexpr static uint64_t fullLoadMode = FULL_LOAD_MODE_;
-    constexpr static bool enableRelu = (FUSED_OP_TYPE_ == OP_TYPE_RELU);
-    constexpr static bool enableAdd = (FUSED_OP_TYPE_ == OP_TYPE_ADD);
-    constexpr static bool enableMul = (FUSED_OP_TYPE_ == OP_TYPE_MUL);
-};
-
-/**
- * @struct MatmulMultiBlockWithStreamK
- * @brief Matrix multiplication split k axis processing structure, no quant, no bias, implemented base on layout
- * @param [in] FixpOpti: enum, judge if enabling fixp align optimize, default is ON_THE_FLY
- * @param [in] ENABLE_RELU: execute relu after mmad , default is false
- * @param [in] SingleCoreShape: the shape of a single core, default is AscendC::Shape<_0, _0, _0, _0>
- */
-template <MatMulL0C2Out FixpOpti = MatMulL0C2Out::ON_THE_FLY, uint64_t FUSED_OP_TYPE_ = 0,
-    class SingleCoreShape = AscendC::Shape<_0, _0, _0, _0>>
-struct MatmulMultiBlockWithStreamK {
-    using ScheduleType = KernelMultiBlockStreamK;
-    using SingleShape = SingleCoreShape;
-    constexpr static bool enableInputDataLenCheck = false;
-    constexpr static bool enableRelu = (FUSED_OP_TYPE_ == OP_TYPE_RELU);
-    constexpr static bool enableAdd = (FUSED_OP_TYPE_ == OP_TYPE_ADD);
-    constexpr static bool enableMul = (FUSED_OP_TYPE_ == OP_TYPE_MUL);
-    constexpr static MatMulL0C2Out fixpOpti_ = FixpOpti;
 };
 
 template <class SingleCoreShape = AscendC::Shape<_0, _0, _0, _0>>
@@ -316,6 +277,4 @@ struct MmadAPrefetchBAntiquantScmc {
     constexpr static uint64_t AIV_NUM = AivNum;
 };
 
-} // namespace Gemm
-} // namespace Cmct
 #endif

@@ -56,9 +56,6 @@ struct tensor_trait<LocalTensor<Tp>> {
 };
 } // namespace AscendC
 
-namespace Cmct {
-namespace Gemm {
-
 template <class Layout_, class AGlobalTensor_, class ATensorTrait_, class AType_>
 __aicore__ inline void InitGlobalTensorA(AGlobalTensor_& aGlobal, GM_ADDR aGmAddr, bool transA, int64_t m, int64_t k)
 {
@@ -308,6 +305,4 @@ __aicore__ inline constexpr bool PosIsL0C()
     return AscendC::PhyPosIsL0C(pos);
 }
 
-} // namespace Gemm
-} // namespace Cmct
 #endif

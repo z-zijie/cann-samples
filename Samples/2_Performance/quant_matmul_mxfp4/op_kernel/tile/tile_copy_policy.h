@@ -17,8 +17,6 @@
 
 #include "../utils/arch.h"
 
-namespace Cmct {
-namespace Gemm {
 namespace Tile {
 struct CopyWithParams {};                      ///< Copy policy with additional parameters
 struct CopyOutSplitMWithParams {};             ///< Copy policy for splitting output along the M dimension with parameters
@@ -47,6 +45,5 @@ template <class ArchTag, class DispatchPolicy, class DataType, class DstTrait, c
           const auto& cfg = CFG_NORM>
 struct Copy {};
 } // namespace Tile
-} // namespace Gemm
-} // namespace Cmct
+
 #endif

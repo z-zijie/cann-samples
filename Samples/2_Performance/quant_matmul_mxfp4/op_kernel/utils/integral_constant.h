@@ -30,8 +30,6 @@ constexpr bool always_false_v = always_false<Tp...>::value;
 } // namespace Std
 } // namespace AscendC
 
-namespace Cmct {
-namespace Gemm {
 template <int32_t t>
 using Int = AscendC::Std::integral_constant<int32_t, t>;
 
@@ -44,6 +42,5 @@ using _16 = Int<16>;
 using _32 = Int<32>;
 using _256 = Int<256>;
 
-} // namespace Gemm
-} // namespace Cmct
+
 #endif

@@ -24,8 +24,6 @@
 #include "kernel_operator.h"
 #endif
 #include "lib/matmul_intf.h"
-namespace Cmct {
-namespace Gemm {
 constexpr int32_t MATMUL_MNK_ALIGN = 16;
 
 constexpr int MNK_M = 0;
@@ -84,6 +82,4 @@ __aicore__ inline uint64_t Align(uint64_t a, uint64_t b)
     return (a + b - 1) / b * b;
 }
 
-} // namespace Gemm
-} // namespace Cmct
 #endif

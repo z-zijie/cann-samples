@@ -18,8 +18,6 @@
 #ifndef __NPU_ARCH__
 #include "tiling/platform/platform_ascendc.h"
 
-namespace Cmct {
-namespace Gemm {
 
 static int64_t GetCoreNum()
 {
@@ -32,7 +30,5 @@ static int64_t GetCoreNum()
     }
 }
 
-} // namespace Gemm
-} // namespace Cmct
 #endif
 #endif

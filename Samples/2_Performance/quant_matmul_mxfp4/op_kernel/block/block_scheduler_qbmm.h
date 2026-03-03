@@ -20,8 +20,6 @@
 #include "./block_scheduler_policy.h"
 #include "../utils/common_utils.h"
 
-namespace Cmct {
-namespace Gemm {
 namespace Block {
 
 template <class ProblemShape_, class L1TileShape_, class L0TileShape_, bool TransA_, bool TransB_>
@@ -292,6 +290,4 @@ struct BlockSchedulerSelector<ProblemShape_, L1TileShape_, L0TileShape_, Cmct::G
     using SchedulerOp = BlockSchedulerQuantBatchMatmulV3<ProblemShape_, L1TileShape_, L0TileShape_, TransA_, TransB_>;
 };
 }  // namespace Block
-}  // namespace Gemm
-}  // namespace Cmct
 #endif
