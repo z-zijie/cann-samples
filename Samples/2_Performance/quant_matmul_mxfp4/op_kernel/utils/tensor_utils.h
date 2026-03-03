@@ -56,6 +56,7 @@ struct tensor_trait<LocalTensor<Tp>> {
 };
 } // namespace AscendC
 
+
 template <class Layout_, class AGlobalTensor_, class ATensorTrait_, class AType_>
 __aicore__ inline void InitGlobalTensorA(AGlobalTensor_& aGlobal, GM_ADDR aGmAddr, bool transA, int64_t m, int64_t k)
 {

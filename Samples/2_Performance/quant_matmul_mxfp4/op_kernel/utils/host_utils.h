@@ -30,5 +30,15 @@ static int64_t GetCoreNum()
     }
 }
 
+static size_t GetSysWorkspaceSize()
+{
+    auto ascendcPlatform = platform_ascendc::PlatformAscendCManager::GetInstance();
+    if (ascendcPlatform == nullptr) {
+        return 0;
+    }
+    else {
+        return static_cast<size_t>(ascendcPlatform->GetLibApiWorkSpaceSize());
+    }
+}
 #endif
 #endif

@@ -32,5 +32,4 @@ constexpr static int64_t L0C_SIZE = 128 * 1024;
 #endif
 
 constexpr static int64_t L1_SIZE = 512 * 1024;
-
 #endif
