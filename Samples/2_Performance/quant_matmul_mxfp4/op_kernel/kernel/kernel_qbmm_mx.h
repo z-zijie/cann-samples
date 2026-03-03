@@ -22,12 +22,10 @@
 #include "kernel_operator_intf.h"
 #endif
 #include "../utils/common_utils.h"
-#include "../utils/fill_utils.h"
 #include "../utils/quant_batch_matmul_constant.h"
 #include "../utils/layout_utils.h"
 #include "../utils/tuple_utils.h"
 #include "../utils/coord_utils.h"
-#include "../utils/tensor_utils.h"
 #include "../block/block_scheduler_qbmm.h"
 
 namespace Cmct {
