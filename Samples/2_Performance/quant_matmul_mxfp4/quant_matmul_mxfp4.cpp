@@ -65,19 +65,16 @@ __global__ __aicore__ void MatmulKernel(__gm__ uint8_t* input, __gm__ uint8_t* w
 
 }
 
-
 template <typename MatmulKernelImpl>
-__global__ __aicore__ void MatmulKernel(__gm__ uint8_t* input, __gm__ uint8_t* weight, __gm__ uint8_t* output,
-                                        const MatmulTilingData matmulTilingData)
+__global__ __aicore__ void MatmulKernel(
+    __gm__ uint8_t* dA, __gm__ uint8_t* dB, __gm__ uint8_t* dScaleA, __gm__ uint8_t* dScaleB, __gm__ uint8_t* dC,
+    const QuantMatmulTilingData quantMatmulTilingData)
 {
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIC_ONLY);
 
     using Params = typename MatmulKernelImpl::Params;
     Params params = {
-        {matmulTilingData.m,matmulTilingData.n, matmulTilingData.k},
-        {input, weight, output},
-        {&matmulTilingData}
-    };
+        {matmulTilingData.m, matmulTilingData.n, matmulTilingData.k}, {input, weight, output}, {&matmulTilingData}};
     MatmulKernelImpl matmulKernelImpl;
     matmulKernelImpl(params);
     return;
@@ -117,46 +114,6 @@ void MatmulApi(aclrtStream stream, const at::Tensor& input, const at::Tensor& we
 
         MatmulKernel<MatmulKernelImpl><<<blockDim, nullptr, stream>>>(inputPtr, weightPtr, outputPtr, matmulTilingData);
     });
-}
-
-torch::Tensor CreateOutputTensor(const torch::Tensor& input, const torch::Tensor& weight, bool transA, bool transB)
-{
-    TORCH_CHECK(input.dim() == ND_DIM, "Input tensor must be 2D");
-    TORCH_CHECK(weight.dim() == ND_DIM, "Weight tensor must be 2D");
-
-    int64_t m = transA ? input.size(1) : input.size(0);
-    int64_t kA = transA ? input.size(0) : input.size(1);
-    int64_t kB = transB ? weight.size(1) : weight.size(0);
-    int64_t n = transB ? weight.size(0) : weight.size(1);
-
-    TORCH_CHECK(m > 0, "Input tensor of m has to be positive, but got ", m);
-    TORCH_CHECK(kA > 0, "Input tensor of k has to be positive, but got ", kA);
-    TORCH_CHECK(kB > 0, "Weight tensor of k has to be positive, but got ", kB);
-    TORCH_CHECK(n > 0, "Weight tensor of n has to be positive, but got ", n);
-    TORCH_CHECK(kA == kB, "Reduce dim must same with input tensor and weight tensor");
-    return torch::empty({m, n}, input.options());
-}
-
-torch::Tensor MatmulNpu(const torch::Tensor& input, const torch::Tensor& weight, bool transA, bool transB)
-{
-    TORCH_CHECK(torch_npu::utils::is_npu(input), "Input tensor must be on NPU device");
-    TORCH_CHECK(torch_npu::utils::is_npu(weight), "Weight tensor must be on NPU device");
-
-    auto output = CreateOutputTensor(input, weight, transA, transB);
-    auto stream = c10_npu::getCurrentNPUStream().stream(false);
-    auto acl_call = [=]() -> int {
-        AT_DISPATCH_FLOATING_TYPES_AND2(at::kHalf, at::kBFloat16, input.scalar_type(), "MatmulNpu",
-                                        [&] { MatmulApi<scalar_t>(stream, input, weight, output, transA, transB); });
-        return 0;
-    };
-    at_npu::native::OpCommand::RunOpApiV2("Matmul", acl_call);
-    return output;
-}
-
-// Register Ascend implementations for matmulv3
-TORCH_LIBRARY_IMPL(ascend_ops, PrivateUse1, m)
-{
-    m.impl("matmul", MatmulNpu);
 }
 
 int main(int argc, char* argv[])
