@@ -34,12 +34,6 @@ __aicore__ constexpr inline decltype(auto) Get(T&& t)
     return Get<Second, Rest...>(AscendC::Std::get<First>(AscendC::Std::forward<T>(t)));
 }
 
-template <size_t N, typename Tp>
-__aicore__ constexpr inline decltype(auto) GetIntegralConstant()
-{
-    static_assert(AscendC::Std::is_tuple_v<Tp>, "Input must be a AscendC::Std::tuple type");
-    return AscendC::Std::tuple_element<N, Tp>::type::value;
-}
 } // namespace Gemm
 } // namespace Cmct
 #endif
