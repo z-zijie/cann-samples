@@ -10,12 +10,13 @@
  */
 
 /*!
- * \file matmul_mxfp4.cpp
+ * \file quant_matmul_mxfp4.cpp
  * \brief
  */
 #include <cstdlib>
 #include "kernel_operator.h"
 #include "op_host/matmul_tiling_engine.h"
+#include "op_kernel/block/block_mmad_mx.h"
 #include "op_kernel/block/matmul_block_mmad_aswt.h"
 #include "op_kernel/block/matmul_block_scheduler_policy.h"
 #include "op_kernel/kernel/matmul_kernel_aswt_impl.h"
@@ -23,6 +24,7 @@
 #include "op_kernel/utils/matmul_common_utils.h"
 #include "op_kernel/utils/matmul_dtype_utils.h"
 #include "op_kernel/utils/matmul_layout_utils.h"
+#include "op_kernel/utils/quant_matmul_tiling_data.h"
 
 // todo: 这里宏可以移到公共文件中
 // 暂时没有 aclrtGetErrorString
@@ -54,66 +56,62 @@
         }                                               \
     } while (0)
 
-constexpr static uint32_t MX_GROUP_SIZE = 32;
+// constexpr static uint32_t MX_GROUP_SIZE = 32;
 constexpr static uint32_t MX_DIVISOR_SIZE = 64;
 
-__global__ __aicore__ void MatmulKernel(__gm__ uint8_t* input, __gm__ uint8_t* weight, __gm__ uint8_t* output,
-                                        const MatmulTilingData matmulTilingData)
-{
-    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIC_ONLY);
-
-
-}
-
-template <typename MatmulKernelImpl>
-__global__ __aicore__ void MatmulKernel(
+__global__ __aicore__ void QuantMatmulMxfp4Kernel(
     __gm__ uint8_t* dA, __gm__ uint8_t* dB, __gm__ uint8_t* dScaleA, __gm__ uint8_t* dScaleB, __gm__ uint8_t* dC,
     const QuantMatmulTilingData quantMatmulTilingData)
 {
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIC_ONLY);
 
-    using Params = typename MatmulKernelImpl::Params;
+    using aType = fp4x2_e2m1_t;
+    using bType = fp4x2_e2m1_t;
+    using cType = float;
+
+    using layoutA = layout::RowMajor;
+    using layoutB = layout::ColumnMajor;
+    using layoutC = layout::RowMajor;
+    using L1TileShape = AscendC::Shape<_0, _0, _0>;
+    using L0TileShape = AscendC::Shape<_0, _0, _0>;
+
+    using BlockScheduler = QuantMatmulMxAswtScheduler;
+    using DispatchPolicy = QuantMatmulMxMultiBlockWithAswt<>;
+    using BlockMmad =
+        Block::BlockMmadMx<DispatchPolicy, L1TileShape, L0TileShape, aType, layoutA, bType, layoutB, cType, layoutC>;
+    using ProblemShape = MatmulShape;
+    using QuantMatmulKernelImpl = Kernel::QuantMatmulMxKernelAswtImpl<ProblemShape, BlockMmad, BlockScheduler>;
+
+    using Params = typename QuantMatmulKernelImpl::Params;
+
+    using QBMMTiling = typename QuantMatmulKernelImpl::QBMMTiling;
+    QBMMTiling qbmmParams{quantMatmulTilingData.params.batchA1,
+                          quantMatmulTilingData.params.batchA2,
+                          quantMatmulTilingData.params.batchA3,
+                          quantMatmulTilingData.params.batchA4,
+                          quantMatmulTilingData.params.batchB1,
+                          quantMatmulTilingData.params.batchB2,
+                          quantMatmulTilingData.params.batchB3,
+                          quantMatmulTilingData.params.batchB4,
+                          quantMatmulTilingData.params.batchC1,
+                          quantMatmulTilingData.params.batchC2,
+                          quantMatmulTilingData.params.batchC3,
+                          quantMatmulTilingData.params.batchC4,
+                          quantMatmulTilingData.params.biasThreeDim,
+                          quantMatmulTilingData.baseM, quantMatmulTilingData.baseN, quantMatmulTilingData.baseK,
+                          static_cast<uint32_t>(quantMatmulTilingData.isBias),
+                          static_cast<uint32_t>(quantMatmulTilingData.dbL0C)};
+
     Params params = {
-        {matmulTilingData.m, matmulTilingData.n, matmulTilingData.k}, {input, weight, output}, {&matmulTilingData}};
-    MatmulKernelImpl matmulKernelImpl;
-    matmulKernelImpl(params);
-    return;
-}
-
-template <typename T>
-void MatmulApi(aclrtStream stream, const at::Tensor& input, const at::Tensor& weight, const torch::Tensor& output,
-               bool transA, bool transB)
-{
-    MatmulTilingData matmulTilingData;
-    MatmulTplValue matmulTplValue;
-    MatmulTilingEngine matmulTilingEngine;
-    matmulTilingEngine.GetTiling(input, weight, transA, transB, matmulTilingData, matmulTplValue);
-
-    uint32_t blockDim = matmulTilingData.usedCoreNum;
-    __gm__ uint8_t* inputPtr = (__gm__ uint8_t*)input.data_ptr<T>();
-    __gm__ uint8_t* weightPtr = (__gm__ uint8_t*)weight.data_ptr<T>();
-    __gm__ uint8_t* outputPtr = (__gm__ uint8_t*)output.data_ptr<T>();
-
-    using aType = typename TagToAscendDtype<T>::Type;
-    using bType = typename TagToAscendDtype<T>::Type;
-    using cType = typename TagToAscendDtype<T>::Type;
-
-    DISPATCH_TRANSPOSE_COMBINATION(transA, transB, {
-        using layoutA = std::conditional_t<transA, layout::ColumnMajor, layout::RowMajor>;
-        using layoutB = std::conditional_t<transB, layout::ColumnMajor, layout::RowMajor>;
-        using layoutC = layout::RowMajor;
-        using L1TileShape = AscendC::Shape<_0, _0, _0>;
-        using L0TileShape = AscendC::Shape<_0, _0, _0>;
-
-        using BlockScheduler = BuiltInAswtScheduler;
-        using DispatchPolicy = MatmulMultiBlockWithAswt<>;
-        using BlockMmad =
-            Block::BlockMmad<DispatchPolicy, L1TileShape, L0TileShape, aType, layoutA, bType, layoutB, cType, layoutC>;
-        using ProblemShape = MatmulShape;
-        using MatmulKernelImpl = Kernel::MatmulKernelAswtImpl<ProblemShape, BlockMmad, BlockScheduler>;
-
-        MatmulKernel<MatmulKernelImpl><<<blockDim, nullptr, stream>>>(inputPtr, weightPtr, outputPtr, matmulTilingData);
-    });
+        {quantMatmulTilingData.m, quantMatmulTilingData.n, quantMatmulTilingData.k, quantMatmulTilingData.batchC},
+        {dA, dB, dC, dA, dScaleA, dScaleB},
+        {quantMatmulTilingData.stepKb * quantMatmulTilingData.baseK, quantMatmulTilingData.scaleKL1, quantMatmulTilingData.nBufferNum},
+        {quantMatmulTilingData.baseM, quantMatmulTilingData.baseN, quantMatmulTilingData.mTailTile, quantMatmulTilingData.nTailTile,
+         quantMatmulTilingData.mBaseTailSplitCnt, quantMatmulTilingData.nBaseTailSplitCnt, quantMatmulTilingData.mTailMain,
+         quantMatmulTilingData.nTailMain},
+        qbmmParams};
+    QuantMatmulKernelImpl quantMatmulKernelImpl;
+    QuantMatmulKernelImpl(params);
 }
 
 int main(int argc, char* argv[])
@@ -164,6 +162,29 @@ int main(int argc, char* argv[])
     QuantMatmulTilingData quantMatmulTilingData;
     // QuantMatmulTilingEngine quantMatmulTilingEngine;
     // quantMatmulTilingEngine.GetTiling(m, n, k, true, false, quantMatmulTilingData);
+
+    quantMatmulTilingData.m = m;
+    quantMatmulTilingData.n = n;
+    quantMatmulTilingData.k = k;
+    quantMatmulTilingData.baseM = 256;
+    quantMatmulTilingData.baseN = 256;
+    quantMatmulTilingData.baseK = 256;
+    quantMatmulTilingData.scaleKL1 = 256;
+    quantMatmulTilingData.stepKa = 1;
+    quantMatmulTilingData.stepKb = 1;
+    quantMatmulTilingData.scaleFactorA = 0;
+    quantMatmulTilingData.scaleFactorB = 0;
+    quantMatmulTilingData.nBufferNum = 2;
+    quantMatmulTilingData.isBias = 0;
+    quantMatmulTilingData.dbL0C = 0;
+    quantMatmulTilingData.reserved = 0;
+
+    quantMatmulTilingData.mTailTile = 1;
+    quantMatmulTilingData.nTailTile = 1;
+    quantMatmulTilingData.mBaseTailSplitCnt = 1;
+    quantMatmulTilingData.nBaseTailSplitCnt = 1;
+    quantMatmulTilingData.mTailMain = 0;
+    quantMatmulTilingData.nTailMain = 0;
 
     // malloc pinned memory
     ACLRT_CHECK_WITH_MSG(aclrtMallocHost((void**)&hA, sizeA), "aclrtMallocHost failed.");

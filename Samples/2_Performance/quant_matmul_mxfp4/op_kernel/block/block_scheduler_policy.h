@@ -30,7 +30,7 @@ struct BuiltInMergeBatchScheduler {};
 struct BuiltInBatchMatmulToMulScheduler {};
 struct IterateKScheduler {};
 struct QuantIterateKScheduler {};
-struct QuantBatchMatmulV3Scheduler {};
+struct QuantMatmulMxAswtScheduler {};
 } // namespace Gemm
 } // namespace Cmct
 #endif

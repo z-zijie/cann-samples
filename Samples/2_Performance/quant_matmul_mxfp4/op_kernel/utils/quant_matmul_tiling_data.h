@@ -11,28 +11,16 @@
  * \file quant_batch_matmul_v3_tiling_data.h
  * \brief
  */
-#ifndef QUANT_BATCH_MATMUL_V3_TILING_DATA_H
-#define QUANT_BATCH_MATMUL_V3_TILING_DATA_H
+#ifndef QUANT_MATMUL_TILING_DATA_H
+#define QUANT_MATMUL_TILING_DATA_H
 #include "kernel_tiling/kernel_tiling.h"
 
 #ifndef __CCE_AICORE__
 #include <cstdint>
 #endif
 
-namespace DequantBmm {
 #pragma pack(push, 8)
-struct SlidingWindowParams {
-    uint32_t mTailTile = 0;
-    uint32_t nTailTile = 0;
-    uint32_t mBaseTailSplitCnt = 1;
-    uint32_t nBaseTailSplitCnt = 1;
-    uint32_t mTailMain = 0;
-    uint32_t nTailMain = 0;
-};
-#pragma pack(pop)
-
-#pragma pack(push, 8)
-struct QuantBatchMatmulV3BasicAPIDataParams {
+struct alignas(8) QuantBatchMatmulV3BasicAPITilingData {
     uint32_t batchA = 0;
     uint32_t batchB = 0;
     uint32_t batchC = 0;
@@ -55,11 +43,8 @@ struct QuantBatchMatmulV3BasicAPIDataParams {
     uint32_t groupSizeM = 0;
     uint32_t groupSizeN = 0;
     uint32_t groupSizeK = 0;
-};
-#pragma pack(pop)
 
-#pragma pack(push, 8)
-struct BasicAPICubeTiling {
+
     uint32_t m = 0;
     uint32_t n = 0;
     uint32_t k = 0;
@@ -71,20 +56,18 @@ struct BasicAPICubeTiling {
     uint16_t stepKb = 0;
     uint16_t scaleFactorA = 0;
     uint16_t scaleFactorB = 0;
-
     uint8_t nBufferNum = 0;
     uint8_t isBias = 0;
     uint8_t dbL0C = 0;
     uint8_t reserved = 0;
+
+    uint32_t mTailTile = 0;
+    uint32_t nTailTile = 0;
+    uint32_t mBaseTailSplitCnt = 1;
+    uint32_t nBaseTailSplitCnt = 1;
+    uint32_t mTailMain = 0;
+    uint32_t nTailMain = 0;
 };
 #pragma pack(pop)
 
-#pragma pack(push, 8)
-struct QuantBatchMatmulV3BasicAPITilingData {
-    QuantBatchMatmulV3BasicAPIDataParams params;
-    BasicAPICubeTiling matmulTiling;
-    SlidingWindowParams adaptiveSlidingWin;
-};
-#pragma pack(pop)
-} // namespace DequantBmm
-#endif // QUANT_BATCH_MATMUL_V3_TILING_DATA_H
+#endif // QUANT_MATMUL_TILING_DATA_H

@@ -27,24 +27,25 @@
 #include "../utils/tuple_utils.h"
 #include "../utils/coord_utils.h"
 #include "../block/block_scheduler_qbmm.h"
+#include "../block/block_mmad_mx.h"
 
 namespace Cmct {
 namespace Gemm {
 namespace Kernel {
 #define QBMM_MX_KERNEL_CLASS_TEM_PARAMS \
-    template <class ProblemShape, class BlockMmad, class BlockEpilogue, class BlockScheduler, bool isAtomicAdd>
-#define QBMM_MX_KERNEL_FUN_TEM_PARAMS ProblemShape, BlockMmad, BlockEpilogue, BlockScheduler, isAtomicAdd
+    template <class ProblemShape, class BlockMmad, class BlockScheduler>
+#define QBMM_MX_KERNEL_FUN_TEM_PARAMS ProblemShape, BlockMmad, BlockScheduler
 
 using namespace Cmct;
 using namespace Cmct::Gemm;
 using namespace AscendC;
 
 QBMM_MX_KERNEL_CLASS_TEM_PARAMS
-class QuantMmBatchMX {
+class QuantMatmulMxKernelAswtImpl {
 public:
-    __aicore__ inline QuantMmBatchMX()
+    __aicore__ inline QuantMatmulMxKernelAswtImpl()
     {}
-    __aicore__ inline ~QuantMmBatchMX()
+    __aicore__ inline ~QuantMatmulMxKernelAswtImpl()
     {}
 
     static constexpr bool transA = BlockMmad::transA;
@@ -138,11 +139,8 @@ private:
 };
 
 QBMM_MX_KERNEL_CLASS_TEM_PARAMS
-__aicore__ inline void QuantMmBatchMX<QBMM_MX_KERNEL_FUN_TEM_PARAMS>::Run(const Params& params)
+__aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS>::Run(const Params& params)
 {
-    if constexpr (isAtomicAdd) {
-        AscendC::SetAtomicAdd<float>();
-    }
     Init(params);
     BlockSchedulerOp bs(params.problemShape, params.schParams);
     problemShape_ = ToShapeTuple(params.problemShape);
@@ -153,17 +151,13 @@ __aicore__ inline void QuantMmBatchMX<QBMM_MX_KERNEL_FUN_TEM_PARAMS>::Run(const 
 
     if (params.problemShape.b == 1) {
         ProcessSingleBatch(params, bs, 0, true);
-        if constexpr (isAtomicAdd) {
- 	        AscendC::SetAtomicNone();
- 	    }
-        return;
     }
 
     ProcessWithBatch(params, bs);
 }
 
 QBMM_MX_KERNEL_CLASS_TEM_PARAMS
-__aicore__ inline void QuantMmBatchMX<QBMM_MX_KERNEL_FUN_TEM_PARAMS>::Init(const Params& params)
+__aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS>::Init(const Params& params)
 {
     if ASCEND_IS_AIV {
         return;
@@ -180,13 +174,10 @@ __aicore__ inline void QuantMmBatchMX<QBMM_MX_KERNEL_FUN_TEM_PARAMS>::Init(const
     }
     x1scaleGlobal_.SetGlobalBuffer((__gm__ fp8_e8m0_t*)params.mmadParams.pertokenScaleGmAddr);
     x2scaleGlobal_.SetGlobalBuffer((__gm__ fp8_e8m0_t*)params.mmadParams.scaleGmAddr);
-    if constexpr (isAtomicAdd) {
-        cGlobal_.SetL2CacheHint(AscendC::CacheMode::CACHE_MODE_DISABLE);
-    }
 }
 
 QBMM_MX_KERNEL_CLASS_TEM_PARAMS
-__aicore__ inline void QuantMmBatchMX<QBMM_MX_KERNEL_FUN_TEM_PARAMS>::ProcessWithBatch(
+__aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS>::ProcessWithBatch(
     const Params& params, BlockSchedulerOp& bs)
 {
     uint64_t batchC3C4 = static_cast<uint64_t>(params.qbmmParams.batchC3) * params.qbmmParams.batchC4;
@@ -245,7 +236,7 @@ __aicore__ inline void QuantMmBatchMX<QBMM_MX_KERNEL_FUN_TEM_PARAMS>::ProcessWit
 }
 
 QBMM_MX_KERNEL_CLASS_TEM_PARAMS
-__aicore__ inline void QuantMmBatchMX<QBMM_MX_KERNEL_FUN_TEM_PARAMS>::AddBatchOffset(const Params &params)
+__aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS>::AddBatchOffset(const Params &params)
 {
     Get<QuantBatchMatmul::IDX_A_OFFSET>(blockOffset_) += batchAOffset_ * params.problemShape.m * params.problemShape.k;
     if constexpr (FormatB == CubeFormat::NZ) {
@@ -269,7 +260,7 @@ __aicore__ inline void QuantMmBatchMX<QBMM_MX_KERNEL_FUN_TEM_PARAMS>::AddBatchOf
 }
 
 QBMM_MX_KERNEL_CLASS_TEM_PARAMS
-__aicore__ inline void QuantMmBatchMX<QBMM_MX_KERNEL_FUN_TEM_PARAMS>::ProcessSingleBatch(
+__aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS>::ProcessSingleBatch(
     const Params& params, BlockSchedulerOp& bs, uint64_t restBatch, bool isTailRound)
 {
     CoordClass coord(
