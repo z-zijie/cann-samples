@@ -20,7 +20,7 @@
 #endif
 
 #pragma pack(push, 8)
-struct alignas(8) QuantBatchMatmulV3BasicAPITilingData {
+struct alignas(8) QuantMatmulTilingData {
     uint32_t batchA = 0;
     uint32_t batchB = 0;
     uint32_t batchC = 0;
