@@ -166,7 +166,11 @@ int main(int argc, char* argv[])
     size_t sizeScaleB = ((n * (k + MX_DIVISOR_SIZE) - 1 / MX_DIVISOR_SIZE)) * sizeof(uint8_t);
     size_t sizeC = m * n * sizeof(float);
 
-    // malloc host 锁页内存
+    // QuantMatmulTilingData quantMatmulTilingData;
+    // QuantMatmulTilingEngine quantMatmulTilingEngine;
+    // quantMatmulTilingEngine.GetTiling(m, n, k, true, false, quantMatmulTilingData);
+
+    // malloc pinned memory
     ACLRT_CHECK_WITH_MSG(aclrtMallocHost((void**)&hA, sizeA), "aclrtMallocHost failed.");
     ACLRT_CHECK_WITH_MSG(aclrtMallocHost((void**)&hB, sizeB), "aclrtMallocHost failed.");
     ACLRT_CHECK_WITH_MSG(aclrtMallocHost((void**)&hScaleA, sizeScaleA), "aclrtMallocHost failed.");
@@ -196,7 +200,7 @@ int main(int argc, char* argv[])
     uint32_t numBlocks = ascendcPlatform->GetCoreNumAic();
 
     // kernel launch
-    QuantMatmulMxfp4Kernel<<<numBlocks, nullptr, stream>>>(dA, dB, dScaleA, dScaleB, dC, tilingData);
+    QuantMatmulMxfp4Kernel<<<numBlocks, nullptr, stream>>>(dA, dB, dScaleA, dScaleB, dC, quantMatmulTilingData);
 
     ACLRT_KERNEL_CHECK("Kernel launch fail");
 
