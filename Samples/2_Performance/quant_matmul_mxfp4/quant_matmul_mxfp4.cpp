@@ -65,7 +65,7 @@
 constexpr static uint32_t MX_DIVISOR_SIZE = 64;
 
 __global__ __aicore__ void QuantMatmulMxfp4Kernel(
-    __gm__ uint8_t* dA, __gm__ uint8_t* dB, __gm__ uint8_t* dScaleA, __gm__ uint8_t* dScaleB, __gm__ float* dC,
+    GM_ADDR dA, GM_ADDR dB, GM_ADDR dScaleA, GM_ADDR dScaleB, GM_ADDR dC,
     const QuantMatmulTilingData quantMatmulTilingData)
 {
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIC_ONLY);
@@ -117,7 +117,7 @@ __global__ __aicore__ void QuantMatmulMxfp4Kernel(
          quantMatmulTilingData.nTailMain},
         qbmmParams};
     QuantMatmulKernelImpl quantMatmulKernelImpl;
-    QuantMatmulKernelImpl(params);
+    quantMatmulKernelImpl(params);
 }
 
 // 打印使用说明
