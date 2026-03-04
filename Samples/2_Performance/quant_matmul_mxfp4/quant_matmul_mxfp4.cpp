@@ -186,11 +186,11 @@ int main(int argc, char* argv[])
     // matmul::FillRandomData<float>(hostWeight, -2.0f, 2.0f);
 
     // device addr
-    uint8_t* dA = nullptr;
-    uint8_t* dB = nullptr;
-    uint8_t* dScaleA = nullptr;
-    uint8_t* dScaleB = nullptr;
-    float* dC = nullptr;
+    GM_ADDR dA = nullptr;
+    GM_ADDR dB = nullptr;
+    GM_ADDR dScaleA = nullptr;
+    GM_ADDR dScaleB = nullptr;
+    GM_ADDR dC = nullptr;
 
     // fp4 needs to be divided by 2.
     size_t sizeA = ((m * k + 1) >> 1) * sizeof(uint8_t);
