@@ -15,7 +15,6 @@
 #ifndef MATMUL_POLICY_DISPATCH_POLICY_H
 #define MATMUL_POLICY_DISPATCH_POLICY_H
 
-#include "../utils/arch.h"
 #include "../utils/common_utils.h"
 #include "../utils/integral_constant.h"
 

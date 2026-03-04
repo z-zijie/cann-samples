@@ -25,6 +25,12 @@
 #endif
 #include "lib/matmul_intf.h"
 
+// buffer size
+constexpr static int64_t L0A_SIZE = 64 * 1024;
+constexpr static int64_t L0B_SIZE = 64 * 1024;
+constexpr static int64_t L0C_SIZE = 256 * 1024;
+constexpr static int64_t L1_SIZE = 512 * 1024;
+constexpr static int32_t BT_SIZE = 4096;
 
 constexpr int64_t MATRIX_INNER_DIM_LIMIT_SIZE = 65536LL;
 constexpr int32_t MATMUL_MNK_ALIGN = 16;
