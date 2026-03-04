@@ -69,7 +69,7 @@ bool ReadFile(const std::string &filePath, size_t &fileSize, void *buffer, size_
  * @param [in] size: size to write
  * @return write result
  */
-bool WriteFile(const std::string &filePath, const void *buffer, size_t size)
+bool WriteFile(const std::string& filePath, const void* buffer, size_t size)
 {
     if (buffer == nullptr) {
         ERROR_LOG("Write file failed. buffer is nullptr");
