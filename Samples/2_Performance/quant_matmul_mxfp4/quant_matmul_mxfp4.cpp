@@ -152,6 +152,14 @@ void parseArguments(int argc, char* argv[], int& m, int& k, int& n)
     if (m <= 0 || k <= 0 || n <= 0) {
         throw std::invalid_argument("ERROR: m k n must be positive");
     }
+
+    if (k % 2 != 0) {
+        throw std::invalid_argument("ERROR: k must be an even number");
+    }
+
+    if ((k / 32) % 2 != 0) {
+        throw std::invalid_argument("ERROR: k should satisfy that ceil(k, 32) is an even number");
+    }
 }
 
 int main(int argc, char* argv[])
