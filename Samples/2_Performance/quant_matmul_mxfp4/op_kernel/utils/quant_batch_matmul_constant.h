@@ -14,7 +14,7 @@
  */
 #ifndef UTILS_QUANT_BATCH_MATMUL_CONSTANT_H
 #define UTILS_QUANT_BATCH_MATMUL_CONSTANT_H
-namespace QuantBatchMatmul {
+
 constexpr uint8_t MTE1_MTE2_EVENT_ID_NUM = 4;
 constexpr uint16_t DOUBLE_BUFFER = 2;
 constexpr uint16_t FOUR_BUFFER = 4;
@@ -67,5 +67,5 @@ enum class QuantMode : uint32_t {
     PERBLOCK_MODE = 0x1U << 4,
     PERGROUP_MODE = 0x1U << 5,
 };
-} // namespace QuantBatchMatmul
+
 #endif

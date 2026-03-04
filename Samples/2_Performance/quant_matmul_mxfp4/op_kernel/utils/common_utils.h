@@ -24,6 +24,8 @@
 #include "kernel_operator.h"
 #endif
 #include "lib/matmul_intf.h"
+
+
 constexpr int64_t MATRIX_INNER_DIM_LIMIT_SIZE = 65536LL;
 constexpr int32_t MATMUL_MNK_ALIGN = 16;
 constexpr int32_t MATMUL_MNK_ALIGN_INT8 = 32;
@@ -107,59 +109,5 @@ __aicore__ inline uint64_t Align(uint64_t a, uint64_t b)
     return (a + b - 1) / b * b;
 }
 
-/**
- * Get the aiv corenum from aic in different platforms
- */
-__aicore__ inline uint32_t GetAicAivTaskRation()
-{
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 2201 || __NPU_ARCH__ == 3101)
-    return 2U; // 2: aic:aiv = 1:2
-#else
-    return 1U;
-#endif
-}
-
-template <typename CType, typename AType>
-__aicore__ inline constexpr static bool IsQuantSenario()
-{
-    using L0cT = typename AscendC::GetMmDstType<AType>::Type;
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3101)
-    if constexpr (
-        !AscendC::IsTypeOneOfV<AType, int8_t, hifloat8_t, fp8_e4m3fn_t, fp8_e5m2_t, fp4x2_e2m1_t, fp4x2_e1m2_t> &&
-        AscendC::IsTypeOneOfV<CType, half, bfloat16_t>) {
-        return false;
-    }
-    if constexpr (
-        AscendC::IsTypeOneOfV<AType, hifloat8_t, fp8_e4m3fn_t, fp8_e5m2_t, fp4x2_e2m1_t, fp4x2_e1m2_t> &&
-        AscendC::IsTypeOneOfV<
-            CType, hifloat8_t, fp8_e4m3fn_t, fp8_e5m2_t, half, bfloat16_t, float, fp4x2_e2m1_t, fp4x2_e1m2_t>) {
-        return true;
-    }
-    if constexpr (AscendC::IsSameTypeV<L0cT, int32_t> && AscendC::IsSameTypeV<CType, bfloat16_t>) {
-        return true;
-    }
-#endif
-    if constexpr (AscendC::IsSameTypeV<L0cT, int32_t> && AscendC::IsTypeOneOfV<CType, half, int8_t, uint8_t>) {
-        return true;
-    } else if constexpr (AscendC::IsSameTypeV<L0cT, float> && AscendC::IsTypeOneOfV<CType, int8_t, uint8_t>) {
-        return true;
-    }
-    return false;
-}
-
-template <class T>
-struct is_static : AscendC::Std::bool_constant<std::is_empty<T>::value> {};
-
-template <class T>
-constexpr bool is_static_v = is_static<AscendC::Std::remove_cvref_t<T>>::value;
-
-template <class T>
-struct all_static : AscendC::Std::bool_constant<is_static_v<T>> {};
-
-template <class... Ts>
-struct all_static<AscendC::Std::tuple<Ts...>> : AscendC::Std::bool_constant<(all_static<Ts>::value && ...)> {};
-
-template <class T>
-constexpr bool all_static_v = all_static<AscendC::Std::remove_cvref_t<T>>::value;
 
 #endif

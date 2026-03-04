@@ -20,11 +20,10 @@
 #include "../utils/quant_batch_matmul_constant.h"
 #include "../utils/tuple_utils.h"
 #include "../policy/dispatch_policy.h"
-#include "..//tile/tile_copy.h"
+#include "../tile/tile_copy.h"
 
 namespace Block {
 using namespace AscendC;
-using namespace Cmct::Gemm::QuantBatchMatmul;
 
 struct TileL1L0Param {
     uint64_t curM = 0;
@@ -157,13 +156,13 @@ public:
         l1BufNum_ = l1Params.l1BufNum;
         enableL0cPingPong_ = dbL0C;
         bL1OneBuffer_ = baseN_ * kL1_;
-        scaleBL1OneBuffer_ = baseN_ * Cmct::Gemm::CeilDiv(scaleKL1_, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE;
+        scaleBL1OneBuffer_ = baseN_ * CeilDiv(scaleKL1_, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE;
         if (isBias_) {
             biasL1OneBuffer_ = baseN_ * sizeof(BiasType);
         }
         if constexpr (DispatchPolicy::fullLoadMode == 0) {
-            aL1OneBuffer_ = baseM_ * Cmct::Gemm::Align(kL1_, MXFP_DIVISOR_SIZE);
-            scaleAL1OneBuffer_ = baseM_ * Cmct::Gemm::CeilDiv(scaleKL1_, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE;
+            aL1OneBuffer_ = baseM_ * Align(kL1_, MXFP_DIVISOR_SIZE);
+            scaleAL1OneBuffer_ = baseM_ * CeilDiv(scaleKL1_, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE;
             for (int32_t bufferId = 0; bufferId < l1BufNum_; bufferId++) {
                 // 2 buffer: L1 space is : A0|B0|AScale0|BScale0|bias0|...|A1|B1|AScale1|BScale1|bias1|...
                 // 4 buffer: L1 space is : A0A2|B0B2|AScale0|BScale0|bias0|...|A1A3|B1B3|AScale1|BScale1|bias1|...
@@ -179,10 +178,10 @@ public:
                 l1BufferBiasOffset_[bufferId] = l1BufferScaleBOffset_[bufferId] + scaleBL1OneBuffer_;
             }
         } else {
-            uint64_t mAlign = Cmct::Gemm::Align(baseM_, transA ? C0_SIZE : BLOCK_CUBE);
-            uint64_t kAlign = Cmct::Gemm::Align(k_, MXFP_DIVISOR_SIZE);
+            uint64_t mAlign = Align(baseM_, transA ? C0_SIZE : BLOCK_CUBE);
+            uint64_t kAlign = Align(k_, MXFP_DIVISOR_SIZE);
             aL1OneBuffer_ = mAlign * kAlign;
-            scaleAL1OneBuffer_ = baseM_ * Cmct::Gemm::CeilDiv(k_, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE;
+            scaleAL1OneBuffer_ = baseM_ * CeilDiv(k_, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE;
             // 2 buffer: L1 space is : B0|BScale0|bias0|A|AScale|...|B1|BScale1|bias1|
             // 4 buffer: L1 space is : B0B2|BScale0|bias0|A|AScale|...|B1B3|BScale1|bias1|...
             l1BufferAOffset_[0] = bL1OneBuffer_ * (l1BufNum_ >> 1) + ((scaleBL1OneBuffer_ + biasL1OneBuffer_) << 1);
@@ -249,16 +248,16 @@ public:
         AscendC::DataCopyExtParams dataCopyParams;
         AscendC::DataCopyPadExtParams<uint8_t> padParams;
         if constexpr (transB) {
-            dataCopyParams.blockCount = Cmct::Gemm::CeilDiv(tileL1L0Param.curGmBKL1, C0_SIZE);
+            dataCopyParams.blockCount = CeilDiv(tileL1L0Param.curGmBKL1, C0_SIZE);
             dataCopyParams.blockLen = tileL1L0Param.curAlignN * C0_SIZE;
             dataCopyParams.srcStride =
-                (Cmct::Gemm::CeilAlign(n_, AscendC::BLOCK_CUBE) - tileL1L0Param.curAlignN) * C0_SIZE;
+                (CeilAlign(n_, AscendC::BLOCK_CUBE) - tileL1L0Param.curAlignN) * C0_SIZE;
             dataCopyParams.dstStride = 0;
         } else {
-            int64_t curGmBKL1NZ = Cmct::Gemm::CeilAlign(tileL1L0Param.curGmBKL1, AscendC::BLOCK_CUBE);
+            int64_t curGmBKL1NZ = CeilAlign(tileL1L0Param.curGmBKL1, AscendC::BLOCK_CUBE);
             dataCopyParams.blockCount = tileL1L0Param.curAlignN / C0_SIZE;
             dataCopyParams.blockLen = curGmBKL1NZ * C0_SIZE;
-            dataCopyParams.srcStride = (Cmct::Gemm::CeilAlign(k_, AscendC::BLOCK_CUBE) - curGmBKL1NZ) * C0_SIZE;
+            dataCopyParams.srcStride = (CeilAlign(k_, AscendC::BLOCK_CUBE) - curGmBKL1NZ) * C0_SIZE;
             dataCopyParams.dstStride = tileL1L0Param.curPadBKL1 - curGmBKL1NZ;
         }
         AscendC::DataCopyPad(bl1LocalUint8, bGlobalUInt8, dataCopyParams, padParams);
@@ -279,13 +278,13 @@ public:
             initConstValueParams.blockNum = tileL1L0Param.curAlignM;
             initConstValueParams.dstGap = 0;
             initConstValueParams.initValue = 0;
-            uint64_t kAlign = Cmct::Gemm::CeilDiv(tileL1L0Param.curGmAKL1, C0_SIZE) * AscendC::BLOCK_CUBE;
+            uint64_t kAlign = CeilDiv(tileL1L0Param.curGmAKL1, C0_SIZE) * AscendC::BLOCK_CUBE;
             offset = tileL1L0Param.curAlignM * kAlign;
         } else {
             if (tileL1L0Param.curPadAKL1 == tileL1L0Param.curGmAKL1) {
                 return;
             }
-            uint64_t m1 = Cmct::Gemm::CeilDiv(tileL1L0Param.curAlignM, C0_SIZE);
+            uint64_t m1 = CeilDiv(tileL1L0Param.curAlignM, C0_SIZE);
             offset = tileL1L0Param.curGmAKL1 * AscendC::BLOCK_CUBE;
             initConstValueParams.repeatTimes = m1;
             initConstValueParams.blockNum = tileL1L0Param.curPadAKL1 - tileL1L0Param.curGmAKL1;
@@ -311,11 +310,11 @@ public:
             initConstValueParams.blockNum = tileL1L0Param.curAlignN;
             initConstValueParams.dstGap = 0;
             initConstValueParams.initValue = 0;
-            uint64_t kAlign = Cmct::Gemm::CeilDiv(tileL1L0Param.curGmBKL1, C0_SIZE) * AscendC::BLOCK_CUBE;
+            uint64_t kAlign = CeilDiv(tileL1L0Param.curGmBKL1, C0_SIZE) * AscendC::BLOCK_CUBE;
             offset = tileL1L0Param.curAlignN * kAlign;
         } else {
             if constexpr (formatB == CubeFormat::NZ) {
-                if (tileL1L0Param.curPadBKL1 == Cmct::Gemm::CeilAlign(tileL1L0Param.curGmBKL1, AscendC::BLOCK_CUBE)) {
+                if (tileL1L0Param.curPadBKL1 == CeilAlign(tileL1L0Param.curGmBKL1, AscendC::BLOCK_CUBE)) {
                     return;
                 }
             } else {
@@ -324,7 +323,7 @@ public:
                 }
             }
             // when format of B is NZ, we reuse code for ND even though we initialize unnecessary extra space
-            uint64_t n1 = Cmct::Gemm::CeilDiv(tileL1L0Param.curAlignN, C0_SIZE);
+            uint64_t n1 = CeilDiv(tileL1L0Param.curAlignN, C0_SIZE);
             offset = tileL1L0Param.curGmBKL1 * AscendC::BLOCK_CUBE;
             initConstValueParams.repeatTimes = n1;
             initConstValueParams.blockNum = tileL1L0Param.curPadBKL1 - tileL1L0Param.curGmBKL1;
@@ -356,7 +355,7 @@ public:
             curScaleKL1 = k_ - kL1Offset;
         }
         uint64_t nDim = curML1;
-        uint64_t dDim = Cmct::Gemm::CeilDiv(curScaleKL1, MXFP_DIVISOR_SIZE);
+        uint64_t dDim = CeilDiv(curScaleKL1, MXFP_DIVISOR_SIZE);
 
         uint64_t offsetScaleAGM = kL1Offset / MXFP_DIVISOR_SIZE;
 
@@ -370,8 +369,8 @@ public:
             dn2nzParams.dValue = nDim;
             dn2nzParams.nValue = dDim;
             dn2nzParams.srcDnMatrixStride = 0;
-            dn2nzParams.srcDValue = Cmct::Gemm::CeilDiv(k_, MXFP_DIVISOR_SIZE);
-            dn2nzParams.dstNzC0Stride = Cmct::Gemm::CeilDiv(curKL1, MXFP_DIVISOR_SIZE);
+            dn2nzParams.srcDValue = CeilDiv(k_, MXFP_DIVISOR_SIZE);
+            dn2nzParams.dstNzC0Stride = CeilDiv(curKL1, MXFP_DIVISOR_SIZE);
             dn2nzParams.dstNzNStride = 1;
             dn2nzParams.dstNzMatrixStride = 0;
             AscendC::DataCopy(aScaleL1LocalImpl, aScaleGlobalB16[offsetScaleAGM], dn2nzParams);
@@ -382,7 +381,7 @@ public:
             nd2nzParams.dValue = dDim;
             nd2nzParams.srcNdMatrixStride = 0;
             nd2nzParams.srcDValue = m_;
-            nd2nzParams.dstNzC0Stride = Cmct::Gemm::CeilDiv(curKL1, MXFP_DIVISOR_SIZE);
+            nd2nzParams.dstNzC0Stride = CeilDiv(curKL1, MXFP_DIVISOR_SIZE);
             nd2nzParams.dstNzNStride = 1;
             nd2nzParams.dstNzMatrixStride = 0;
             AscendC::DataCopy(aScaleL1LocalImpl, aScaleGlobalB16[offsetScaleAGM], nd2nzParams);
@@ -398,7 +397,7 @@ public:
             curScaleKL1 = k_ - kL1Offset;
         }
         uint64_t nDim = curNL1;
-        uint64_t dDim = Cmct::Gemm::CeilDiv(curScaleKL1, MXFP_DIVISOR_SIZE);
+        uint64_t dDim = CeilDiv(curScaleKL1, MXFP_DIVISOR_SIZE);
 
         GlobalTensor<half> bScaleGlobalB16;
         bScaleGlobalB16.SetGlobalBuffer(((__gm__ half*)(bScaleGlobal.GetPhyAddr())));
@@ -412,8 +411,8 @@ public:
             dn2nzParams.dValue = nDim;
             dn2nzParams.nValue = dDim;
             dn2nzParams.srcDnMatrixStride = 0;
-            dn2nzParams.srcDValue = Cmct::Gemm::CeilDiv(k_, MXFP_DIVISOR_SIZE);
-            dn2nzParams.dstNzC0Stride = Cmct::Gemm::CeilDiv(scaleKL1_, MXFP_DIVISOR_SIZE);
+            dn2nzParams.srcDValue = CeilDiv(k_, MXFP_DIVISOR_SIZE);
+            dn2nzParams.dstNzC0Stride = CeilDiv(scaleKL1_, MXFP_DIVISOR_SIZE);
             dn2nzParams.dstNzNStride = 1;
             dn2nzParams.dstNzMatrixStride = 0;
             AscendC::DataCopy(bScaleL1LocalImpl, bScaleGlobalB16[offsetScaleBGM], dn2nzParams);
@@ -424,7 +423,7 @@ public:
             nd2nzParams.dValue = dDim;
             nd2nzParams.srcNdMatrixStride = 0;
             nd2nzParams.srcDValue = n_;
-            nd2nzParams.dstNzC0Stride = Cmct::Gemm::CeilDiv(scaleKL1_, MXFP_DIVISOR_SIZE);
+            nd2nzParams.dstNzC0Stride = CeilDiv(scaleKL1_, MXFP_DIVISOR_SIZE);
             nd2nzParams.dstNzNStride = 1;
             nd2nzParams.dstNzMatrixStride = 0;
             AscendC::DataCopy(bScaleL1LocalImpl, bScaleGlobalB16[offsetScaleBGM], nd2nzParams);
@@ -439,7 +438,7 @@ public:
         }
         // s32场景要对齐到2 因此是align(nl1Align / 8, 2)
         uint64_t btAlign = AscendC::BLOCK_CUBE / BIAS_C0;
-        uint16_t bustLenth = Cmct::Gemm::Align(nl1Align / BIAS_C0, btAlign);
+        uint16_t bustLenth = Align(nl1Align / BIAS_C0, btAlign);
         AscendC::DataCopyParams biasParam{1, static_cast<uint16_t>(bustLenth), 0, 0};
         // 当dstlocal位于C2时，C2中至少为fp32*16
         AscendC::DataCopy(biasBt, biasL1Local, biasParam);
@@ -452,20 +451,20 @@ public:
     {
         AscendC::LoadData2DParamsV2 loadDataParams;
         AscendC::LoadData2DMxParams loadData2DMxParams;
-        uint64_t m1 = Cmct::Gemm::CeilDiv(tileL1L0Param.curM, AscendC::BLOCK_CUBE);
+        uint64_t m1 = CeilDiv(tileL1L0Param.curM, AscendC::BLOCK_CUBE);
         loadDataParams.mStartPosition = 0;
-        loadDataParams.kStartPosition = Cmct::Gemm::CeilDiv(iter * baseK_, C0_SIZE);
+        loadDataParams.kStartPosition = CeilDiv(iter * baseK_, C0_SIZE);
         loadDataParams.mStep = m1;
-        loadDataParams.kStep = Cmct::Gemm::CeilDiv(tileL1L0Param.curKL0, C0_SIZE);
+        loadDataParams.kStep = CeilDiv(tileL1L0Param.curKL0, C0_SIZE);
         loadDataParams.srcStride = loadDataParams.mStep;
         loadDataParams.dstStride = loadDataParams.mStep;
         loadDataParams.ifTranspose = false;
 
         loadData2DMxParams.xStartPosition = 0;
-        loadData2DMxParams.yStartPosition = Cmct::Gemm::CeilDiv(iter * baseK_, MXFP_DIVISOR_SIZE);
+        loadData2DMxParams.yStartPosition = CeilDiv(iter * baseK_, MXFP_DIVISOR_SIZE);
         loadData2DMxParams.xStep = m1;
-        loadData2DMxParams.yStep = Cmct::Gemm::CeilDiv(tileL1L0Param.curKL0, MXFP_DIVISOR_SIZE);
-        loadData2DMxParams.srcStride = Cmct::Gemm::CeilDiv(curScaleKL1, MXFP_DIVISOR_SIZE);
+        loadData2DMxParams.yStep = CeilDiv(tileL1L0Param.curKL0, MXFP_DIVISOR_SIZE);
+        loadData2DMxParams.srcStride = CeilDiv(curScaleKL1, MXFP_DIVISOR_SIZE);
         loadData2DMxParams.dstStride = loadData2DMxParams.yStep;
         AscendC::LoadData(l0aLocal, al1Local, scaleAl1Local, loadDataParams, loadData2DMxParams);
     }
@@ -477,20 +476,20 @@ public:
     {
         AscendC::LoadData2DParamsV2 loadDataParams;
         AscendC::LoadData2DMxParams loadData2DMxParams;
-        uint64_t n1 = Cmct::Gemm::CeilDiv(tileL1L0Param.curN, AscendC::BLOCK_CUBE);
+        uint64_t n1 = CeilDiv(tileL1L0Param.curN, AscendC::BLOCK_CUBE);
         loadDataParams.mStartPosition = 0;
-        loadDataParams.kStartPosition = Cmct::Gemm::CeilDiv(iter * baseK_, C0_SIZE);
+        loadDataParams.kStartPosition = CeilDiv(iter * baseK_, C0_SIZE);
         loadDataParams.mStep = n1;
-        loadDataParams.kStep = Cmct::Gemm::CeilDiv(tileL1L0Param.curKL0, C0_SIZE);
+        loadDataParams.kStep = CeilDiv(tileL1L0Param.curKL0, C0_SIZE);
         loadDataParams.srcStride = loadDataParams.mStep;
         loadDataParams.dstStride = loadDataParams.mStep;
         loadDataParams.ifTranspose = false;
 
         loadData2DMxParams.xStartPosition = 0;
-        loadData2DMxParams.yStartPosition = Cmct::Gemm::CeilDiv(iter * baseK_, MXFP_DIVISOR_SIZE);
+        loadData2DMxParams.yStartPosition = CeilDiv(iter * baseK_, MXFP_DIVISOR_SIZE);
         loadData2DMxParams.xStep = n1;
-        loadData2DMxParams.yStep = Cmct::Gemm::CeilDiv(tileL1L0Param.curKL0, MXFP_DIVISOR_SIZE);
-        loadData2DMxParams.srcStride = Cmct::Gemm::CeilDiv(scaleKL1_, MXFP_DIVISOR_SIZE);
+        loadData2DMxParams.yStep = CeilDiv(tileL1L0Param.curKL0, MXFP_DIVISOR_SIZE);
+        loadData2DMxParams.srcStride = CeilDiv(scaleKL1_, MXFP_DIVISOR_SIZE);
         loadData2DMxParams.dstStride = loadData2DMxParams.yStep;
         AscendC::LoadData(l0bLocal, bl1Local, scaleBl1Local, loadDataParams, loadData2DMxParams);
     }
@@ -502,7 +501,7 @@ public:
         intriParams.nSize = baseN;
         intriParams.mSize = baseM;
         intriParams.dstStride = n_;
-        intriParams.srcStride = Cmct::Gemm::Align(baseM, AscendC::BLOCK_CUBE);
+        intriParams.srcStride = Align(baseM, AscendC::BLOCK_CUBE);
         // set mode according to dtype
         if constexpr (AscendC::IsSameType<CType, bfloat16_t>::value) {
             intriParams.quantPre = QuantMode_t::F322BF16;
@@ -520,7 +519,7 @@ public:
     __aicore__ inline void UpdateKL1(TileL1L0Param &tileL1L0Param, uint64_t iter0)
     {
         tileL1L0Param.curGmBKL1 = (iter0 + 1 == kL1Iter_) ? (k_ - iter0 * kL1_) : kL1_;
-        tileL1L0Param.curPadBKL1 = Cmct::Gemm::CeilAlign(tileL1L0Param.curGmBKL1, MXFP_DIVISOR_SIZE);
+        tileL1L0Param.curPadBKL1 = CeilAlign(tileL1L0Param.curGmBKL1, MXFP_DIVISOR_SIZE);
         tileL1L0Param.curGmAKL1 = tileL1L0Param.curGmBKL1;
         tileL1L0Param.curPadAKL1 = tileL1L0Param.curPadBKL1;  // pad to 64 align
     }
@@ -537,14 +536,14 @@ public:
     __aicore__ inline void GetAlignMN(TileL1L0Param &tileL1L0Param)
     {
         if constexpr (transA) {
-            tileL1L0Param.curAlignM = Cmct::Gemm::CeilAlign(tileL1L0Param.curM, C0_SIZE);
+            tileL1L0Param.curAlignM = CeilAlign(tileL1L0Param.curM, C0_SIZE);
         } else {
-            tileL1L0Param.curAlignM = Cmct::Gemm::CeilAlign(tileL1L0Param.curM, BLOCK_CUBE);
+            tileL1L0Param.curAlignM = CeilAlign(tileL1L0Param.curM, BLOCK_CUBE);
         }
         if constexpr (!transB) {
-            tileL1L0Param.curAlignN = Cmct::Gemm::CeilAlign(tileL1L0Param.curN, C0_SIZE);
+            tileL1L0Param.curAlignN = CeilAlign(tileL1L0Param.curN, C0_SIZE);
         } else {
-            tileL1L0Param.curAlignN = Cmct::Gemm::CeilAlign(tileL1L0Param.curN, BLOCK_CUBE);
+            tileL1L0Param.curAlignN = CeilAlign(tileL1L0Param.curN, BLOCK_CUBE);
         }
     }
 
@@ -594,7 +593,7 @@ public:
         // InitB1(bL1Local_[l1BufferBOffset_[l1BufId]], tileL1L0Param);
         if constexpr (formatB == CubeFormat::NZ) {
             uint64_t offsetB =
-                transB ? l1Iter * kL1_ * Cmct::Gemm::CeilAlign(n_, AscendC::BLOCK_CUBE) : l1Iter * kL1_ * C0_SIZE;
+                transB ? l1Iter * kL1_ * CeilAlign(n_, AscendC::BLOCK_CUBE) : l1Iter * kL1_ * C0_SIZE;
             CopyInB1WeightNz(bGlobal[offsetB], bL1Local_[l1BufferBOffset_[l1BufId]], tileL1L0Param);
         } else {
             uint64_t offsetB = l1Iter * kL1_;
@@ -605,7 +604,7 @@ public:
     __aicore__ inline void Iterate(TileL1L0Param &tileL1L0Param, MmadParams &mmadParams, uint64_t l1Iter, uint64_t l1BufId,
                                    uint64_t scaleL1BufId, uint64_t offsetAl1, uint64_t l0cOffset)
     {
-        uint64_t kL0Iter = Cmct::Gemm::CeilDiv(tileL1L0Param.curGmBKL1, baseK_);
+        uint64_t kL0Iter = CeilDiv(tileL1L0Param.curGmBKL1, baseK_);
         for (uint16_t iter1 = 0; iter1 < kL0Iter; ++iter1) {
             UpdateKL0(tileL1L0Param, iter1);
             // Load data to L0 and open DB
@@ -624,12 +623,12 @@ public:
             }
             // copy bias to bt
             CopyInC2(biasL1Local_[l1BufferBiasOffset_[biasBufId_] / sizeof(BiasType)], biasBt_[baseN_ * biasBufId_],
-                     Cmct::Gemm::Align(mmadParams.n, AscendC::BLOCK_CUBE), NeedBias(l1Iter, iter1));
+                     Align(mmadParams.n, AscendC::BLOCK_CUBE), NeedBias(l1Iter, iter1));
             CopyInL0B(l0bLocal_[l0Offset], bL1Local_[l1BufferBOffset_[l1BufId]],
                       scaleBL1Local_[l1BufferScaleBOffset_[scaleL1BufId] + offsetScaleL1], iter1, tileL1L0Param);
             AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(l0PingPong_ & 0x1);
             AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(l0PingPong_ & 0x1);
-            mmadParams.k = Cmct::Gemm::CeilAlign(tileL1L0Param.curKL0, MXFP_DIVISOR_SIZE);
+            mmadParams.k = CeilAlign(tileL1L0Param.curKL0, MXFP_DIVISOR_SIZE);
             mmadParams.unitFlag =
                 (l1Iter + 1 == kL1Iter_ && iter1 + 1 == kL0Iter) ? FINAL_ACCUMULATION : NON_FINAL_ACCUMULATION;
             mmadParams.cmatrixInitVal = (l1Iter == 0 && iter1 == 0 && !isBias_);
