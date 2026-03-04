@@ -16,13 +16,12 @@
 #include <cstdlib>
 #include "kernel_operator.h"
 #include "op_kernel/block/block_mmad_mx.h"
-#include "op_kernel/block/matmul_block_mmad_aswt.h"
-#include "op_kernel/block/matmul_block_scheduler_policy.h"
-#include "op_kernel/kernel/matmul_kernel_aswt_impl.h"
-#include "op_kernel/policy/matmul_dispatch_policy.h"
-#include "op_kernel/utils/matmul_common_utils.h"
-#include "op_kernel/utils/matmul_dtype_utils.h"
-#include "op_kernel/utils/matmul_layout_utils.h"
+#include "op_kernel/block/block_scheduler_policy.h"
+#include "op_kernel/block/block_scheduler_qbmm.h"
+#include "op_kernel/kernel/kernel_qbmm_mx.h"
+#include "op_kernel/policy/dispatch_policy.h"
+#include "op_kernel/utils/common_utils.h"
+#include "op_kernel/utils/layout_utils.h"
 #include "op_kernel/utils/quant_matmul_tiling_data.h"
 
 // todo: 这里宏可以移到公共文件中

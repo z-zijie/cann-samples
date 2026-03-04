@@ -20,7 +20,6 @@
 #include "../utils/quant_batch_matmul_constant.h"
 #include "../utils/tuple_utils.h"
 #include "../policy/dispatch_policy.h"
-#include "../tile/tile_copy.h"
 
 namespace Block {
 using namespace AscendC;
@@ -37,19 +36,21 @@ struct TileL1L0Param {
     uint64_t curKL0 = 0;
 };
 
-template <class DispatchPolicy_, class L1TileShape_, class L0TileShape_, class AType_, class LayoutA_, class BType_,
-          class LayoutB_, class CType_, class LayoutC_, class BiasType_, class LayoutBias_, class TileCopy_,
-          class Enable = void>
+template <
+    class DispatchPolicy_, class L1TileShape_, class L0TileShape_, class AType_, class LayoutA_, class BType_,
+    class LayoutB_, class CType_, class LayoutC_, class BiasType_, class LayoutBias_, class TileCopy_,
+    class Enable = void>
 class BlockMmadMx {
     static_assert(AscendC::Std::always_false_v<DispatchPolicy_>, "Should not be here!");
 };
 
-template <class DispatchPolicy_, class L1TileShape_, class L0TileShape_, class AType_, class LayoutA_, class BType_,
-          class LayoutB_, class CType_, class LayoutC_, class BiasType_, class LayoutBias_, class TileCopy_>
-class BlockMmadMx<DispatchPolicy_, L1TileShape_, L0TileShape_, AType_, LayoutA_, BType_, LayoutB_, CType_, LayoutC_,
-                BiasType_, LayoutBias_, TileCopy_,
-                AscendC::Std::enable_if_t<
-                    AscendC::Std::is_base_of_v<QuantMatmulMxMultiBlockWithAswt<>, DispatchPolicy_>>> {
+template <
+    class DispatchPolicy_, class L1TileShape_, class L0TileShape_, class AType_, class LayoutA_, class BType_,
+    class LayoutB_, class CType_, class LayoutC_, class BiasType_, class LayoutBias_, class TileCopy_>
+class BlockMmadMx<
+    DispatchPolicy_, L1TileShape_, L0TileShape_, AType_, LayoutA_, BType_, LayoutB_, CType_, LayoutC_, BiasType_,
+    LayoutBias_, TileCopy_,
+    AscendC::Std::enable_if_t<AscendC::Std::is_base_of_v<QuantMatmulMxMultiBlockWithAswt<>, DispatchPolicy_>>> {
 public:
     using AType = AType_;
     using BType = BType_;
