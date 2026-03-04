@@ -27,10 +27,11 @@ struct KernelMultiBlockOnKAxisWithScale {};
  * @brief Matrix multiplication with scaleA and scaleB
  * @param [in] SingleCoreShape: the shape of a single core, default is AscendC::Shape<_0, _0, _0>
  */
-template <class SingleCoreShape = AscendC::Shape<_0, _0, _0>>
+template <class SingleCoreShape = AscendC::Shape<_0, _0, _0>, uint64_t FULL_LOAD_MODE_ = 0>
 struct QuantMatmulMxMultiBlockWithAswt {
     using ScheduleType = KernelMultiBlockOnKAxisWithScale;
     using SingleShape = SingleCoreShape;
+    constexpr static uint64_t fullLoadMode = FULL_LOAD_MODE_;
 };
 
 #endif
