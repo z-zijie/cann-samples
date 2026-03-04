@@ -42,7 +42,7 @@ def gen_golden_data_simple():
         scale_x2_npu,
         pertoken_scale=scale_x1_npu,
         pertoken_scale_dtype=torch_npu.float8_e8m0fnu,
-        output_dtype=torch.float16,
+        output_dtype=torch.float32,
         group_sizes=[1,1,32],
         x1_dtype=torch_npu.float4_e2m1fn_x2,
         x2_dtype=torch_npu.float4_e2m1fn_x2,

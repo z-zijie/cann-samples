@@ -20,12 +20,12 @@ import torch_npu
 import logging
 
 ERROR_TOL = 1e-3
-data_type = en_dtypes.hifloat8
+data_type = torch.float32
 
 def verify_result(output, golden):
     # 1ulp对比方式
-    output = np.fromfile(output, dtype=data_type).view(np.int8)
-    golden = np.fromfile(golden, dtype=data_type).view(np.int8)
+    output = np.fromfile(output, dtype=data_type)
+    golden = np.fromfile(golden, dtype=data_type)
     diff_results = np.abs(np.subtract(output, golden))
     diff_indices = np.where(diff_results > 1)[0]
 
