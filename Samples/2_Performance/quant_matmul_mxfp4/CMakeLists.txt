@@ -38,6 +38,6 @@ target_link_libraries(quant_matmul_mxfp4
 )
 
 install(TARGETS quant_matmul_mxfp4
-    RUNTIME DESTINATION 2_Performance/matmul
+    RUNTIME DESTINATION 2_Performance/quant_matmul
 )
 
