@@ -45,7 +45,7 @@
 
 #define ACLRT_KERNEL_CHECK(msg)                                                                     \
     do {                                                                                            \
-        aclError err = aclrtGetLastError(0);                                                        \
+        aclError err = aclrtGetLastError(aclrtLastErrLevel::ACL_RT_THREAD_LEVEL);                   \
         if (err != ACL_SUCCESS) {                                                                   \
             std::cerr << "*** ACLRT Error in " << __FILE__ << " at line " << __LINE__ << std::endl; \
             std::cerr << msg << std::endl;                                                          \
@@ -65,7 +65,7 @@
 constexpr static uint32_t MX_DIVISOR_SIZE = 64;
 
 __global__ __aicore__ void QuantMatmulMxfp4Kernel(
-    __gm__ uint8_t* dA, __gm__ uint8_t* dB, __gm__ uint8_t* dScaleA, __gm__ uint8_t* dScaleB, __gm__ uint8_t* dC,
+    __gm__ uint8_t* dA, __gm__ uint8_t* dB, __gm__ uint8_t* dScaleA, __gm__ uint8_t* dScaleB, __gm__ float* dC,
     const QuantMatmulTilingData quantMatmulTilingData)
 {
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIC_ONLY);
@@ -157,7 +157,7 @@ void parseArguments(int argc, char* argv[], int& m, int& k, int& n)
 int main(int argc, char* argv[])
 {
     // get inputShape
-    uint32_t m, k, n;
+    int m, k, n;
     try {
         parseArguments(argc, argv, m, k, n);
     } catch (const std::exception& e) {
