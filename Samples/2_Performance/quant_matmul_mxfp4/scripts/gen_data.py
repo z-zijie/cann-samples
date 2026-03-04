@@ -25,10 +25,10 @@ def gen_golden_data_simple():
     M = 256
     K = 256
     N = 256
-    cpu_x1 = torch.randint(-5, 5 (M, int(K/2)), dtype=torch.int8)
-    cpu_x2 = torch.randint(-5, 5 (N, int(K/2)), dtype=torch.int8)
-    scale_x2 = torch.randint(-5, 5, (N, math.ceil(K/64), 2), dtype=torch.int8)
-    scale_x1 = torch.randint(-5, 5, (M, math.ceil(K/64), 2), dtype=torch.int8)
+    cpu_x1 = torch.randint(-1, 1, (M, int(K/2)), dtype=torch.int8)
+    cpu_x2 = torch.randint(-1, 1, (N, int(K/2)), dtype=torch.int8)
+    scale_x2 = torch.randint(-1, 1, (N, math.ceil(K/64), 2), dtype=torch.int8)
+    scale_x1 = torch.randint(-1, 1, (M, math.ceil(K/64), 2), dtype=torch.int8)
 
     x1_npu = cpu_x1.npu()
     x2_npu = cpu_x2.npu().transpose(-1, -2)
@@ -50,11 +50,11 @@ def gen_golden_data_simple():
     ).cpu()
     os.makedirs("input", exist_ok=True)
     os.makedirs("output", exist_ok=True)
-    cpu_x1.tofile("./input/input_x1.bin")
-    cpu_x2.tofile("./input/input_x2.bin")
-    scale_x1.tofile("./input/input_scale_x1.bin")
-    scale_x2.tofile("./input/input_scale_x2.bin")
-    npu_out.tofile("./output/output_y.bin")
+    cpu_x1.numpy().tofile("./input/input_x1.bin")
+    cpu_x2.numpy().tofile("./input/input_x2.bin")
+    scale_x1.numpy().tofile("./input/input_scale_x1.bin")
+    scale_x2.numpy().tofile("./input/input_scale_x2.bin")
+    npu_out.numpy().tofile("./output/golden_y.bin")
 
 
 if __name__ == "__main__":

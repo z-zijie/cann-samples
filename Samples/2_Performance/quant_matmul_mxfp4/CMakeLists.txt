@@ -41,3 +41,9 @@ install(TARGETS quant_matmul_mxfp4
     RUNTIME DESTINATION 2_Performance/quant_matmul
 )
 
+install(DIRECTORY
+    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/
+    DESTINATION 2_Performance/matmul
+    FILES_MATCHING
+    PATTERN "*.py"
+)

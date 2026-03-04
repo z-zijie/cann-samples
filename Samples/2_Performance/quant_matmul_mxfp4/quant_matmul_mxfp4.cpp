@@ -22,6 +22,7 @@
 #include "tiling/platform/platform_ascendc.h"
 #include <cstdlib>
 #include "kernel_operator.h"
+#include "data_utils.h"
 #include "op_kernel/block/block_mmad_mx.h"
 #include "op_kernel/block/block_scheduler_policy.h"
 #include "op_kernel/block/block_scheduler_qbmm.h"

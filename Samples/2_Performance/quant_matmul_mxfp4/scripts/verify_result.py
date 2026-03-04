@@ -20,7 +20,7 @@ import torch_npu
 import logging
 
 ERROR_TOL = 1e-3
-data_type = torch.float32
+data_type = np.float32
 
 def verify_result(output, golden):
     # 1ulp对比方式
