@@ -65,7 +65,7 @@
 constexpr static uint32_t MX_DIVISOR_SIZE = 64;
 
 __global__ __aicore__ void QuantMatmulMxfp4Kernel(
-    GM_ADDR dA, GM_ADDR dB, GM_ADDR dScaleA, GM_ADDR dScaleB, GM_ADDR dC,
+    GM_ADDR dA, GM_ADDR dB, GM_ADDR dScaleA, GM_ADDR dScaleB, GM_ADDR dBias, GM_ADDR dC,
     const QuantMatmulTilingData quantMatmulTilingData)
 {
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIC_ONLY);
@@ -110,7 +110,7 @@ __global__ __aicore__ void QuantMatmulMxfp4Kernel(
 
     Params params = {
         {quantMatmulTilingData.m, quantMatmulTilingData.n, quantMatmulTilingData.k, quantMatmulTilingData.batchC},
-        {dA, dB, dC, dA, dScaleA, dScaleB},
+        {dA, dB, dC, dBias, dScaleA, dScaleB},
         {quantMatmulTilingData.stepKb * quantMatmulTilingData.baseK, quantMatmulTilingData.scaleKL1, quantMatmulTilingData.nBufferNum},
         {quantMatmulTilingData.baseM, quantMatmulTilingData.baseN, quantMatmulTilingData.mTailTile, quantMatmulTilingData.nTailTile,
          quantMatmulTilingData.mBaseTailSplitCnt, quantMatmulTilingData.nBaseTailSplitCnt, quantMatmulTilingData.mTailMain,
@@ -189,6 +189,7 @@ int main(int argc, char* argv[])
     uint8_t* hB = nullptr;
     uint8_t* hScaleA = nullptr;
     uint8_t* hScaleB = nullptr;
+    float* hBias = nullptr;
     float* hC = nullptr;
     // matmul::FillRandomData<float>(hostInput, -2.0f, 2.0f);
     // matmul::FillRandomData<float>(hostWeight, -2.0f, 2.0f);
@@ -198,6 +199,7 @@ int main(int argc, char* argv[])
     GM_ADDR dB = nullptr;
     GM_ADDR dScaleA = nullptr;
     GM_ADDR dScaleB = nullptr;
+    GM_ADDR dBias = nullptr;
     GM_ADDR dC = nullptr;
 
     // fp4 needs to be divided by 2.
@@ -205,6 +207,7 @@ int main(int argc, char* argv[])
     size_t sizeB = ((k * n + 1) >> 1) * sizeof(uint8_t);
     size_t sizeScaleA = ((m * (k + MX_DIVISOR_SIZE) - 1 / MX_DIVISOR_SIZE)) * sizeof(uint8_t);
     size_t sizeScaleB = ((n * (k + MX_DIVISOR_SIZE) - 1 / MX_DIVISOR_SIZE)) * sizeof(uint8_t);
+    size_t sizeBias = n * sizeof(float);
     size_t sizeC = m * n * sizeof(float);
 
     QuantMatmulTilingData quantMatmulTilingData;
@@ -261,6 +264,7 @@ int main(int argc, char* argv[])
     ACLRT_CHECK_WITH_MSG(aclrtMallocHost((void**)&hB, sizeB), "aclrtMallocHost failed.");
     ACLRT_CHECK_WITH_MSG(aclrtMallocHost((void**)&hScaleA, sizeScaleA), "aclrtMallocHost failed.");
     ACLRT_CHECK_WITH_MSG(aclrtMallocHost((void**)&hScaleB, sizeScaleB), "aclrtMallocHost failed.");
+    ACLRT_CHECK_WITH_MSG(aclrtMallocHost((void**)&hBias, sizeBias), "aclrtMallocHost failed.");
     ACLRT_CHECK_WITH_MSG(aclrtMallocHost((void**)&hC, sizeC), "aclrtMallocHost failed.");
 
     ReadFile("./input/input_x1.bin", sizeA, hA, sizeA);
@@ -273,6 +277,7 @@ int main(int argc, char* argv[])
     ACLRT_CHECK_WITH_MSG(aclrtMalloc((void**)&dB, sizeB, ACL_MEM_MALLOC_HUGE_FIRST), "aclrtMalloc failed.");
     ACLRT_CHECK_WITH_MSG(aclrtMalloc((void**)&dScaleA, sizeScaleA, ACL_MEM_MALLOC_HUGE_FIRST), "aclrtMalloc failed.");
     ACLRT_CHECK_WITH_MSG(aclrtMalloc((void**)&dScaleB, sizeScaleB, ACL_MEM_MALLOC_HUGE_FIRST), "aclrtMalloc failed.");
+    ACLRT_CHECK_WITH_MSG(aclrtMalloc((void**)&dBias, sizeBias, ACL_MEM_MALLOC_HUGE_FIRST), "aclrtMalloc failed.");
     ACLRT_CHECK_WITH_MSG(aclrtMalloc((void**)&dC, sizeC, ACL_MEM_MALLOC_HUGE_FIRST), "aclrtMalloc failed.");
 
     // memcpy h2d
@@ -284,6 +289,7 @@ int main(int argc, char* argv[])
     ACLRT_CHECK_WITH_MSG(aclrtMemcpyAsync(dB, sizeB, hB, sizeB, ACL_MEMCPY_HOST_TO_DEVICE, stream), "aclrtMemcpyAsync failed.");
     ACLRT_CHECK_WITH_MSG(aclrtMemcpyAsync(dScaleA, sizeScaleA, hScaleA, sizeScaleA, ACL_MEMCPY_HOST_TO_DEVICE, stream), "aclrtMemcpyAsync failed.");
     ACLRT_CHECK_WITH_MSG(aclrtMemcpyAsync(dScaleB, sizeScaleB, hScaleB, sizeScaleB, ACL_MEMCPY_HOST_TO_DEVICE, stream), "aclrtMemcpyAsync failed.");
+    ACLRT_CHECK_WITH_MSG(aclrtMemcpyAsync(dBias, sizeBias, hBias, sizeBias, ACL_MEMCPY_HOST_TO_DEVICE, stream), "aclrtMemcpyAsync failed.");
 
     // get platform info
     auto ascendcPlatform = platform_ascendc::PlatformAscendCManager::GetInstance();
