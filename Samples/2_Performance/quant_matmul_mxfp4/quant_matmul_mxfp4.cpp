@@ -19,6 +19,7 @@
 #include <memory>
 #include <random>
 #include "acl/acl.h"
+#include "tiling/platform/platform_ascendc.h"
 #include <cstdlib>
 #include "kernel_operator.h"
 #include "op_kernel/block/block_mmad_mx.h"
@@ -83,7 +84,7 @@ __global__ __aicore__ void QuantMatmulMxfp4Kernel(
     using BlockScheduler = QuantMatmulMxAswtScheduler;
     using DispatchPolicy = QuantMatmulMxMultiBlockWithAswt<>;
     using BlockMmad = Block::BlockMmadMx<
-        DispatchPolicy, L1TileShape, L0TileShape, AType, layoutA, BType, layoutB, CType, layoutC, BiasType, layoutC>;
+        DispatchPolicy, L1TileShape, L0TileShape, AType, layoutA, BType, layoutB, CType, layoutC, BiasType, layoutC, void>;
     using ProblemShape = MatmulShape;
     using QuantMatmulKernelImpl = Kernel::QuantMatmulMxKernelAswtImpl<ProblemShape, BlockMmad, BlockScheduler>;
 
