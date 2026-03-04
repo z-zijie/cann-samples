@@ -261,8 +261,7 @@ __aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS
         bs.UpdateTailTile(mTailTile, nTailTile);
     }
     while (bs.GetTileIdx(blockIdx)) {
-        BlockShape singleShape =
-            bs.template GetBlockShape(blockIdx);
+        BlockShape singleShape = bs.GetBlockShape(blockIdx);
         if (Get<MNK_M>(singleShape) <= 0 || Get<MNK_N>(singleShape) <= 0) {
             return;
         }
