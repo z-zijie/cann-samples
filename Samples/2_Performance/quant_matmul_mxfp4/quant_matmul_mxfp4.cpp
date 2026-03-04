@@ -15,7 +15,6 @@
  */
 #include <cstdlib>
 #include "kernel_operator.h"
-#include "op_host/matmul_tiling_engine.h"
 #include "op_kernel/block/block_mmad_mx.h"
 #include "op_kernel/block/matmul_block_mmad_aswt.h"
 #include "op_kernel/block/matmul_block_scheduler_policy.h"
