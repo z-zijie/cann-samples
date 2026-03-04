@@ -171,7 +171,7 @@ int main(int argc, char* argv[])
     aclrtStream stream;
     uint32_t deviceCount;
     ACLRT_CHECK_WITH_MSG(aclrtGetDeviceCount(&deviceCount), "Failed to get ACLRT devices");
-    CHECK_COND(deviceCount < 1U, "No ACLRT devices found");
+    CHECK_COND(deviceCount > 0U, "No ACLRT devices found");
     ACLRT_CHECK_WITH_MSG(aclInit(nullptr), "aclInit failed.");
     ACLRT_CHECK_WITH_MSG(aclrtSetDevice(deviceId), "aclrtSetDevice failed.");
     ACLRT_CHECK_WITH_MSG(aclrtCreateStream(&stream), "aclrtCreateStream failed.");
