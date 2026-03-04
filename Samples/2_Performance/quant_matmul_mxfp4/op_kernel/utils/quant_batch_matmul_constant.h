@@ -53,6 +53,8 @@ constexpr uint32_t FINAL_ACCUMULATION = 3;
 constexpr uint32_t NON_FINAL_ACCUMULATION = 2;
 constexpr uint64_t B8_MIN_STEP = 2UL;
 
+constexpr uint16_t ZERO_FLAG = 0;
+constexpr uint16_t FIRST_FLAG = 1;
 constexpr uint16_t INPUT_BUFFER_FLAG_0 = 0;
 constexpr uint16_t INPUT_BUFFER_FLAG_1 = 1;
 constexpr uint16_t INPUT_BUFFER_FLAG_2 = 2;

@@ -16,17 +16,5 @@
 #ifndef MATMUL_BLOCK_BLOCK_SCHEDULER_POLICY_H
 #define MATMUL_BLOCK_BLOCK_SCHEDULER_POLICY_H
 
-
-// FULL_LOAD_MODE_表示全载模式 0: 非全载 2：B全载
-template <uint64_t FULL_LOAD_MODE_ = 0>
-struct BuiltInAswtScheduler {
-    static constexpr uint64_t FULL_LOAD_MODE = FULL_LOAD_MODE_;
-};
-struct BuiltInStreamKScheduler {};
-struct BuiltInIterBatchScheduler {};
-struct BuiltInMergeBatchScheduler {};
-struct BuiltInBatchMatmulToMulScheduler {};
-struct IterateKScheduler {};
-struct QuantIterateKScheduler {};
 struct QuantMatmulMxAswtScheduler {};
 #endif

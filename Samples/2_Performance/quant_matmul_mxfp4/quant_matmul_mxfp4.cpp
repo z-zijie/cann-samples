@@ -18,7 +18,7 @@
 #include "op_kernel/block/block_mmad_mx.h"
 #include "op_kernel/block/block_scheduler_policy.h"
 #include "op_kernel/block/block_scheduler_qbmm.h"
-#include "op_kernel/kernel/kernel_qbmm_mx.h"
+#include "op_kernel/kernel/quant_matmul_mx_kernel_aswt_impl.h"
 #include "op_kernel/policy/dispatch_policy.h"
 #include "op_kernel/utils/common_utils.h"
 #include "op_kernel/utils/layout_utils.h"
@@ -83,19 +83,19 @@ __global__ __aicore__ void QuantMatmulMxfp4Kernel(
     using Params = typename QuantMatmulKernelImpl::Params;
 
     using QBMMTiling = typename QuantMatmulKernelImpl::QBMMTiling;
-    QBMMTiling qbmmParams{quantMatmulTilingData.params.batchA1,
-                          quantMatmulTilingData.params.batchA2,
-                          quantMatmulTilingData.params.batchA3,
-                          quantMatmulTilingData.params.batchA4,
-                          quantMatmulTilingData.params.batchB1,
-                          quantMatmulTilingData.params.batchB2,
-                          quantMatmulTilingData.params.batchB3,
-                          quantMatmulTilingData.params.batchB4,
-                          quantMatmulTilingData.params.batchC1,
-                          quantMatmulTilingData.params.batchC2,
-                          quantMatmulTilingData.params.batchC3,
-                          quantMatmulTilingData.params.batchC4,
-                          quantMatmulTilingData.params.biasThreeDim,
+    QBMMTiling qbmmParams{quantMatmulTilingData.batchA1,
+                          quantMatmulTilingData.batchA2,
+                          quantMatmulTilingData.batchA3,
+                          quantMatmulTilingData.batchA4,
+                          quantMatmulTilingData.batchB1,
+                          quantMatmulTilingData.batchB2,
+                          quantMatmulTilingData.batchB3,
+                          quantMatmulTilingData.batchB4,
+                          quantMatmulTilingData.batchC1,
+                          quantMatmulTilingData.batchC2,
+                          quantMatmulTilingData.batchC3,
+                          quantMatmulTilingData.batchC4,
+                          quantMatmulTilingData.biasThreeDim,
                           quantMatmulTilingData.baseM, quantMatmulTilingData.baseN, quantMatmulTilingData.baseK,
                           static_cast<uint32_t>(quantMatmulTilingData.isBias),
                           static_cast<uint32_t>(quantMatmulTilingData.dbL0C)};
@@ -253,20 +253,6 @@ int main(int argc, char* argv[])
     ACLRT_CHECK_WITH_MSG(aclrtSynchronizeStream(stream), "aclrtSynchronizeStream failed.");
 
     // WriteFile("./output/output_y.bin", hC, sizeC);
-
-    // 计算golden，对比精度
-    // matmul::ComputeGolden<float>(m, k, n, hostInput, hostWeight, goldenOutput);
-    // std::vector<uint64_t> errorIndices = matmul::Compare<float>(hostOutput, goldenOutput);
-    // if (errorIndices.size() == 0) {
-    //     std::cout << "matmul run successfully!" << std::endl;
-    // } else {
-    //     for (uint64_t i : errorIndices) {
-    //         uint64_t errIdx = errorIndices[i];
-    //         std::cout << "error index: " << errIdx << ", output: " << hostOutput[errIdx]
-    //                   << ", golden: " << goldenOutput[errIdx] << std::endl;
-    //     }
-    //     std::cout << "matmul run failed!" << std::endl;
-    // }
 
     // 资源释放
     aclrtFreeHost(hA);

@@ -23,7 +23,7 @@
 namespace Block {
 
 template <class ProblemShape_, class L1TileShape_, class L0TileShape_, bool TransA_, bool TransB_>
-class BlockSchedulerQuantBatchMatmulV3 {
+class BlockSchedulerQuantMatmulMx {
 public:
     int64_t m_{0};
     int64_t n_{0};
@@ -72,21 +72,21 @@ public:
     const int64_t WINDOW_LEN = 4;
 
 public:
-    __aicore__ inline BlockSchedulerQuantBatchMatmulV3(const ProblemShape &shape, const Params &params)
+    __aicore__ inline BlockSchedulerQuantMatmulMx(const ProblemShape &shape, const Params &params)
     {
         m_ = shape.m;
         n_ = shape.n;
         k_ = shape.k;
         baseM_ = static_cast<int64_t>(params.baseM);
         baseN_ = static_cast<int64_t>(params.baseN);
-        mCnt_ = Cmct::Gemm::CeilDiv(m_, baseM_);
-        nCnt_ = Cmct::Gemm::CeilDiv(n_, baseN_);
+        mCnt_ = CeilDiv(m_, baseM_);
+        nCnt_ = CeilDiv(n_, baseN_);
         totalCnt_ = mCnt_ * nCnt_;
-        mCoreNum_ = Cmct::Gemm::Min(WINDOW_LEN, mCnt_);
+        mCoreNum_ = Min(WINDOW_LEN, mCnt_);
         mainRow_ = mCnt_ / mCoreNum_ - 1;
         mTailCoreNum_ = mCnt_ - mCoreNum_ * mainRow_;
         endBlockIdx_ = (totalCnt_ - 1) % blockNum_;
-        round_ = Cmct::Gemm::CeilDiv(totalCnt_, blockNum_);
+        round_ = CeilDiv(totalCnt_, blockNum_);
         if (blockIdx_ > endBlockIdx_) {
             round_ -= 1;
         }
@@ -136,31 +136,10 @@ public:
         return endBlockIdx_;
     }
 
-    /**
-     * @brief Round the input value up to the smallest power of two.
-     *
-     * Modifies the input value in place so that it becomes the smallest
-     * power of two greater than or equal to its original value.
-     * This implementation uses a bit-smearing technique and assumes
-     * the input value is in the range [1, 256].
-     *
-     * @param inputValue  Input value to be rounded up.
-     */
-    __aicore__ inline void CeilPowerOfTwo(int64_t& inputValue)
+    __aicore__ inline BlockShape GetBlockShape(BlockCoord blockCoord)
     {
-        inputValue--;
-        inputValue |= inputValue >> 1; // Propagate the highest set bit to the right by 1 position,ensuring the most
-                                       // significant bit and its adjacent lower bit are set.
-        inputValue |= inputValue >> 2; // Continue propagating the highest set bit by 2 positions, expanding the
-                                       // contiguous range of set bits below the MSB to 3 bits.
-        inputValue |= inputValue >> 4; // Further propagate the highest set bit by 4 positions, resulting in all bits
-                                       // below the MSB (up to 7 positions) being set.
-        inputValue++;
-    }
-
-    __aicore__ inline void CalSingleCoreShapeByCoord(
-        int64_t& singleCoreM, int64_t& singleCoreN, const BlockCoord& blockCoord)
-    {
+        int64_t singleCoreM = baseM_;
+        int64_t singleCoreN = baseN_;
         if constexpr (!TransA_) {
             if (Get<MNK_M>(blockCoord) >= mBaseNormCnt_) {
                 singleCoreM = Get<MNK_M>(blockCoord) < mCnt_ - 1 ? mBaseTailMain_ : mBaseTailLast_;
@@ -179,46 +158,13 @@ public:
                 singleCoreN = nBaseTailMain_;
             }
         }
-    }
-
-    template <QuantBatchMatmul::QuantMode aQuantMode, QuantBatchMatmul::QuantMode bQuantMode,
-              CubeFormat formatB = CubeFormat::ND>
-    __aicore__ inline BlockShape GetBlockShape(BlockCoord blockCoord)
-    {
-        int64_t singleCoreM = baseM_;
-        int64_t singleCoreN = baseN_;
-        CalSingleCoreShapeByCoord(singleCoreM, singleCoreN, blockCoord);
 
         if (totalTailTile_ == 1 || roundIdx_ < round_) {
             return {singleCoreM, singleCoreN, 0, 0};
         }
 
-        int64_t singleCoreMSplit = Cmct::Gemm::CeilDiv(singleCoreM, mTailTile_);
-        int64_t singleCoreNSplit = Cmct::Gemm::CeilDiv(singleCoreN, nTailTile_);
-        if constexpr (
-            (aQuantMode == QuantBatchMatmul::QuantMode::PERGROUP_MODE ||
-             aQuantMode == QuantBatchMatmul::QuantMode::PERBLOCK_MODE) &&
-            TransA_) {
-            singleCoreMSplit = PER_BLOCK_SIZE << (singleCoreMSplit > PER_BLOCK_SIZE);
-        } else if constexpr (aQuantMode == QuantBatchMatmul::QuantMode::PERBLOCK_MODE) {
-            CeilPowerOfTwo(singleCoreMSplit);
-        }
-        if constexpr (bQuantMode == QuantBatchMatmul::QuantMode::PERBLOCK_MODE) {
-            if constexpr (!TransB_) { // (k, n)
-                singleCoreNSplit = PER_BLOCK_SIZE << (singleCoreNSplit > PER_BLOCK_SIZE);
-            } else {
-                CeilPowerOfTwo(singleCoreNSplit);
-            }
-        }
-
-        if constexpr (formatB == CubeFormat::NZ) {
-            if constexpr (!TransB_) { 
-                singleCoreNSplit = Cmct::Gemm::CeilAlign(singleCoreNSplit, C0_SIZE_B8);
-            } else {
-                singleCoreNSplit = Cmct::Gemm::CeilAlign(singleCoreNSplit, AscendC::BLOCK_CUBE);
-            }
-        }
-
+        int64_t singleCoreMSplit = CeilDiv(singleCoreM, mTailTile_);
+        int64_t singleCoreNSplit = CeilDiv(singleCoreN, nTailTile_);
         int64_t mSplitIdx = (blockIdx_ % totalTailTile_) % mTailTile_;
         int64_t nSplitIdx = (blockIdx_ % totalTailTile_) / mTailTile_;
         mSplitAddrOffset_ = mSplitIdx * singleCoreMSplit;
@@ -226,8 +172,8 @@ public:
         if (mSplitAddrOffset_ >= singleCoreM || nSplitAddrOffset_ >= singleCoreN) {
             return {0, 0, 0, 0};
         }
-        singleCoreM = Cmct::Gemm::Min(singleCoreM - mSplitAddrOffset_, singleCoreMSplit);
-        singleCoreN = Cmct::Gemm::Min(singleCoreN - nSplitAddrOffset_, singleCoreNSplit);
+        singleCoreM = Min(singleCoreM - mSplitAddrOffset_, singleCoreMSplit);
+        singleCoreN = Min(singleCoreN - nSplitAddrOffset_, singleCoreNSplit);
         return {singleCoreM, singleCoreN, mSplitAddrOffset_, nSplitAddrOffset_};
     }
 
@@ -243,7 +189,7 @@ public:
         endBlockIdx_ = (totalCnt_ + startBlockIdx_ - 1) % blockNum_;
 
         roundIdx_ = 0;
-        round_ = Cmct::Gemm::CeilDiv(totalCnt_, blockNum_);
+        round_ = CeilDiv(totalCnt_, blockNum_);
         if (startBlockIdx_ > endBlockIdx_ && (blockIdx_ > endBlockIdx_ && blockIdx_ < startBlockIdx_)) {
             round_ -= 1;
         } else if (startBlockIdx_ <= endBlockIdx_ && (blockIdx_ > endBlockIdx_ || blockIdx_ < startBlockIdx_)) {
@@ -285,9 +231,9 @@ public:
 };
 
 template <class ProblemShape_, class L1TileShape_, class L0TileShape_, bool TransA_, bool TransB_>
-struct BlockSchedulerSelector<ProblemShape_, L1TileShape_, L0TileShape_, Cmct::Gemm::QuantBatchMatmulV3Scheduler,
+struct BlockSchedulerSelector<ProblemShape_, L1TileShape_, L0TileShape_, QuantMatmulMxAswtScheduler,
                               TransA_, TransB_> {
-    using SchedulerOp = BlockSchedulerQuantBatchMatmulV3<ProblemShape_, L1TileShape_, L0TileShape_, TransA_, TransB_>;
+    using SchedulerOp = BlockSchedulerQuantMatmulMx<ProblemShape_, L1TileShape_, L0TileShape_, TransA_, TransB_>;
 };
 }  // namespace Block
 #endif
