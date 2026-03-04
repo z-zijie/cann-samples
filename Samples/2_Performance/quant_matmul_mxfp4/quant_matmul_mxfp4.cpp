@@ -215,6 +215,11 @@ int main(int argc, char* argv[])
     ACLRT_CHECK_WITH_MSG(aclrtMallocHost((void**)&hScaleB, sizeScaleB), "aclrtMallocHost failed.");
     ACLRT_CHECK_WITH_MSG(aclrtMallocHost((void**)&hC, sizeC), "aclrtMallocHost failed.");
 
+    // ReadFile("./input/input_x1.bin", sizeA, hA, sizeA);
+    // ReadFile("./input/input_x2.bin", sizeB, hB, sizeB);
+    // ReadFile("./input/input_scale_x1.bin", sizeScaleA, hScaleA, sizeScaleA);
+    // ReadFile("./input/input_scale_x2.bin", sizeScaleB, hScaleB, sizeScaleB);
+
     // malloc device memory
     ACLRT_CHECK_WITH_MSG(aclrtMalloc((void**)&dA, sizeA, ACL_MEM_MALLOC_HUGE_FIRST), "aclrtMalloc failed.");
     ACLRT_CHECK_WITH_MSG(aclrtMalloc((void**)&dB, sizeB, ACL_MEM_MALLOC_HUGE_FIRST), "aclrtMalloc failed.");
@@ -248,6 +253,8 @@ int main(int argc, char* argv[])
 
     // Sync
     ACLRT_CHECK_WITH_MSG(aclrtSynchronizeStream(stream), "aclrtSynchronizeStream failed.");
+
+    // WriteFile("./output/output_y.bin", hC, sizeC);
 
     // 计算golden，对比精度
     // matmul::ComputeGolden<float>(m, k, n, hostInput, hostWeight, goldenOutput);
