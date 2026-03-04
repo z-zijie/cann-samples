@@ -38,12 +38,12 @@ target_link_libraries(quant_matmul_mxfp4
 )
 
 install(TARGETS quant_matmul_mxfp4
-    RUNTIME DESTINATION 2_Performance/quant_matmul
+    RUNTIME DESTINATION 2_Performance/quant_matmul_mxfp4
 )
 
 install(DIRECTORY
     ${CMAKE_CURRENT_SOURCE_DIR}/scripts/
-    DESTINATION 2_Performance/matmul
+    DESTINATION 2_Performance/quant_matmul_mxfp4
     FILES_MATCHING
     PATTERN "*.py"
 )
