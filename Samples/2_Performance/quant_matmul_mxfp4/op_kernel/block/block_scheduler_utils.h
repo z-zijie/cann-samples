@@ -30,7 +30,7 @@ struct BlockSchedulerSelector;
 
 __aicore__ inline int64_t GetPerBlockNum(int64_t coreNum, int64_t mTileNum, int64_t nTileNum, int64_t b = 1)
 {
-    int64_t perCoreBlockNum = Cmct::Gemm::CeilDiv(mTileNum * nTileNum * b, coreNum);
+    int64_t perCoreBlockNum = CeilDiv(mTileNum * nTileNum * b, coreNum);
     return perCoreBlockNum;
 }
 
@@ -90,16 +90,16 @@ __aicore__ inline int64_t MMLcm(int64_t m, int64_t n)
 static int64_t DoGetBlockNum(int64_t l1M, int64_t l1N, const MatmulShape &shape)
 {
     int maxCoreNum = GetCoreNum();
-    int64_t mTotalCnt = Cmct::Gemm::CeilDiv(shape.m, l1M);
-    int64_t nTotalCnt = Cmct::Gemm::CeilDiv(shape.n, l1N);
+    int64_t mTotalCnt = CeilDiv(shape.m, l1M);
+    int64_t nTotalCnt = CeilDiv(shape.n, l1N);
     int64_t batch = shape.b ? shape.b : 1;
     int64_t blockNum = 0;
     int64_t totalCnt = mTotalCnt * nTotalCnt * batch;
     if (totalCnt < maxCoreNum) {
         blockNum = totalCnt;
     } else {
-        int64_t perCoreBlockNum = Cmct::Gemm::CeilDiv(totalCnt, maxCoreNum);
-        blockNum = Cmct::Gemm::CeilDiv(totalCnt, perCoreBlockNum);
+        int64_t perCoreBlockNum = CeilDiv(totalCnt, maxCoreNum);
+        blockNum = CeilDiv(totalCnt, perCoreBlockNum);
     }
     return blockNum;
 }

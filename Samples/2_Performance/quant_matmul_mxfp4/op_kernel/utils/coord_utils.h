@@ -38,46 +38,7 @@ public:
     static constexpr bool isTransB = isTransB_;
     static constexpr CubeFormat layoutB = layoutB_;
 
-    template <QuantMode aQuantMode>
-    __aicore__ inline void CalOffsetOfAIV(
-        int64_t mOffset, int64_t nOffset,
-        AscendC::Std::tuple<int64_t, int64_t, int64_t, int64_t, int64_t, int64_t>& offset)
-    {
-        int64_t x1ScaleMOffset = mOffset;
-        if constexpr (aQuantMode == QuantMode::PERBLOCK_MODE) {
-            x1ScaleMOffset = mOffset / PER_BLOCK_SIZE;
-        }
-        if constexpr (isTransA) {
-            Get<2>(offset) = x1ScaleMOffset; // 2: idx of x1Scale
-        } else {
-            Get<2>(offset) = x1ScaleMOffset * CeilDiv(k, PER_BLOCK_SIZE); // 2: idx of x1Scale
-        }
-        if constexpr (isTransB) {
-            Get<3>(offset) = nOffset /   * CeilDiv(k, PER_BLOCK_SIZE); // 3: idx of x2Scale
-        } else {
-            Get<3>(offset) = nOffset / PER_BLOCK_SIZE; // 3: idx of x2Scale
-        }
-    }
-
-    __aicore__ inline void CalOffset4Weight(
-        int64_t nOffset, AscendC::Std::tuple<int64_t, int64_t, int64_t, int64_t, int64_t, int64_t> &offset)
-    {
-        if constexpr (layoutB == CubeFormat::NZ) {
-            if constexpr (isTransB) {
-                Get<1>(offset) = nOffset * C0_SIZE_B8;
-            } else {
-                Get<1>(offset) = nOffset * CeilDiv(k, AscendC::BLOCK_CUBE) * AscendC::BLOCK_CUBE;
-            }
-        } else {
-            if constexpr (isTransB) {
-                Get<1>(offset) = nOffset * k;
-            } else {
-                Get<1>(offset) = nOffset;
-            }
-        }
-    }
-
-    template <QuantMode aQuantMode, bool enableLoadBalance = false>
+    template <bool enableLoadBalance = false>
     __aicore__ inline AscendC::Std::tuple<int64_t, int64_t, int64_t, int64_t, int64_t, int64_t> GetQuantOffset(
         int64_t mTileIdx, int64_t nTileIdx, int64_t mSplitOffset = 0, int64_t nSplitOffset = 0,
         const AscendC::Std::tuple<uint32_t, uint32_t, uint32_t, uint32_t>& loadBalanceParam = {0u, 0u, 0u, 0u})
@@ -104,29 +65,22 @@ public:
         } else {
             Get<0>(offset) = mOffset * k;
         }
-        CalOffset4Weight(nOffset, offset);
-        
-        Get<5>(offset) = mOffset * n + nOffset; // 5: idx of y
-        if constexpr (
-            aQuantMode == QuantMode::PERGROUP_MODE ||
-            aQuantMode == QuantMode::PERBLOCK_MODE) {
-            if ASCEND_IS_AIV {
-                this->CalOffsetOfAIV<aQuantMode>(mOffset, nOffset, offset);
-            }
-        } else if constexpr (aQuantMode == QuantMode::MX_PERGROUP_MODE) {
-            if constexpr (isTransA) {
-                Get<2>(offset) = mOffset * MXFP_MULTI_BASE_SIZE; // 2: idx of x1Scale
-            } else {
-                Get<2>(offset) = mOffset * CeilDiv(k, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE; // 2: idx of x1Scale
-            }
-            if constexpr (isTransB) {
-                Get<3>(offset) = nOffset * CeilDiv(k, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE; // 3: idx of x2Scale
-            } else {
-                Get<3>(offset) = nOffset * MXFP_MULTI_BASE_SIZE; // 3: idx of x2Scale
-            }
+        if constexpr (isTransB) {
+            Get<1>(offset) = nOffset * k;
         } else {
-            Get<2>(offset) = mOffset; // 2: idx of x1Scale
-            Get<3>(offset) = nOffset; // 3: idx of x2Scale
+            Get<1>(offset) = nOffset;
+        }
+
+        Get<5>(offset) = mOffset * n + nOffset; // 5: idx of y
+        if constexpr (isTransA) {
+            Get<2>(offset) = mOffset * MXFP_MULTI_BASE_SIZE; // 2: idx of x1Scale
+        } else {
+            Get<2>(offset) = mOffset * CeilDiv(k, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE; // 2: idx of x1Scale
+        }
+        if constexpr (isTransB) {
+            Get<3>(offset) = nOffset * CeilDiv(k, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE; // 3: idx of x2Scale
+        } else {
+            Get<3>(offset) = nOffset * MXFP_MULTI_BASE_SIZE; // 3: idx of x2Scale
         }
         Get<4>(offset) = nOffset; // 4: idx of bias
         return offset;

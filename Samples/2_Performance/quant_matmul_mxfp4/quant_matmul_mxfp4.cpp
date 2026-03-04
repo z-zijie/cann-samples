@@ -13,6 +13,12 @@
  * \file quant_matmul_mxfp4.cpp
  * \brief
  */
+#include <iostream>
+#include <vector>
+#include <cmath>
+#include <memory>
+#include <random>
+#include "acl/acl.h"
 #include <cstdlib>
 #include "kernel_operator.h"
 #include "op_kernel/block/block_mmad_mx.h"
@@ -63,9 +69,10 @@ __global__ __aicore__ void QuantMatmulMxfp4Kernel(
 {
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIC_ONLY);
 
-    using aType = fp4x2_e2m1_t;
-    using bType = fp4x2_e2m1_t;
-    using cType = float;
+    using AType = fp4x2_e2m1_t;
+    using BType = fp4x2_e2m1_t;
+    using BiasType = float;
+    using CType = float;
 
     using layoutA = layout::RowMajor;
     using layoutB = layout::ColumnMajor;
@@ -75,8 +82,8 @@ __global__ __aicore__ void QuantMatmulMxfp4Kernel(
 
     using BlockScheduler = QuantMatmulMxAswtScheduler;
     using DispatchPolicy = QuantMatmulMxMultiBlockWithAswt<>;
-    using BlockMmad =
-        Block::BlockMmadMx<DispatchPolicy, L1TileShape, L0TileShape, aType, layoutA, bType, layoutB, cType, layoutC>;
+    using BlockMmad = Block::BlockMmadMx<
+        DispatchPolicy, L1TileShape, L0TileShape, AType, layoutA, BType, layoutB, CType, layoutC, BiasType, layoutC>;
     using ProblemShape = MatmulShape;
     using QuantMatmulKernelImpl = Kernel::QuantMatmulMxKernelAswtImpl<ProblemShape, BlockMmad, BlockScheduler>;
 
@@ -110,6 +117,40 @@ __global__ __aicore__ void QuantMatmulMxfp4Kernel(
         qbmmParams};
     QuantMatmulKernelImpl quantMatmulKernelImpl;
     QuantMatmulKernelImpl(params);
+}
+
+// 打印使用说明
+void printUsage(const std::string& programName)
+{
+    std::cerr << "Usage: " << programName << " m k n" << std::endl;
+    std::cerr << "Args: " << std::endl;
+    std::cerr << "  m: row of matrix A" << std::endl;
+    std::cerr << "  k: col of matrix A" << std::endl;
+    std::cerr << "  n: col of matrix B" << std::endl;
+    std::cerr << "Example: " << programName << " 100 50 200" << std::endl;
+}
+
+// 解析命令行参数
+void parseArguments(int argc, char* argv[], int& m, int& k, int& n)
+{
+    if (argc >= 2 && (std::string(argv[1]) == "--help" || std::string(argv[1]) == "-h")) {
+        printUsage(argv[0]);
+        exit(1);
+    }
+    if (argc < 4) {
+        throw std::invalid_argument("ERROR: Lacks Arguments");
+    }
+    try {
+        m = std::stoi(argv[1]);
+        k = std::stoi(argv[2]);
+        n = std::stoi(argv[3]);
+    } catch (const std::invalid_argument& e) {
+        throw std::invalid_argument("ERROR: m k n must be Integer");
+    }
+
+    if (m <= 0 || k <= 0 || n <= 0) {
+        throw std::invalid_argument("ERROR: m k n must be positive");
+    }
 }
 
 int main(int argc, char* argv[])
