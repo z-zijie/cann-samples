@@ -298,7 +298,7 @@ int main(int argc, char* argv[])
     uint32_t numBlocks = ascendcPlatform->GetCoreNumAic();
 
     // kernel launch
-    QuantMatmulMxfp4Kernel<<<numBlocks, nullptr, stream>>>(dA, dB, dScaleA, dScaleB, dC, quantMatmulTilingData);
+    QuantMatmulMxfp4Kernel<<<numBlocks, nullptr, stream>>>(dA, dB, dScaleA, dScaleB, dBias, dC, quantMatmulTilingData);
 
     ACLRT_KERNEL_CHECK("Kernel launch fail");
 
@@ -316,11 +316,13 @@ int main(int argc, char* argv[])
     aclrtFreeHost(hB);
     aclrtFreeHost(hScaleA);
     aclrtFreeHost(hScaleB);
+    aclrtFreeHost(hBias);
     aclrtFreeHost(hC);
     aclrtFree(dA);
     aclrtFree(dB);
     aclrtFree(dScaleA);
     aclrtFree(dScaleB);
+    aclrtFree(dBias);
     aclrtFree(dC);
     aclrtDestroyStream(stream);
     aclrtResetDevice(deviceId);
