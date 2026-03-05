@@ -58,14 +58,13 @@ public:
     using CType = typename BlockMmad::CType;
     using BiasType = typename BlockMmad::BiasType;
     using LayoutB = typename BlockMmad::LayoutB;
-    static constexpr CubeFormat FormatB = TagToFormat<LayoutB>::format;
 
     using TupleShape = AscendC::Shape<int64_t, int64_t, int64_t>;
     using BlockShape = AscendC::Shape<int64_t, int64_t, int64_t, int64_t>;
     using BlockCoord = AscendC::Coord<int64_t, int64_t, int64_t, int64_t>;
-    // x1,x2,x1Scale,x2Scale,bias,y
+    // x1, x2, x1Scale, x2Scale, bias, y
     using BlockOffset = AscendC::Shape<int64_t, int64_t, int64_t, int64_t, int64_t, int64_t>;
-    using CoordClass = Coordinate<transA, transB, CubeFormat::ND, FormatB, CubeFormat::ND>;
+    using CoordClass = Coordinate<transA, transB, CubeFormat::ND, CubeFormat::ND, CubeFormat::ND>;
     using BlockSchedulerParams = typename BlockSchedulerOp::Params;
 
     struct QBMMTiling {
@@ -175,7 +174,6 @@ __aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS
             biasGlobal_[Get<IDX_BIAS_OFFSET>(blockOffset_)],
             cGlobal_[Get<IDX_C_OFFSET>(blockOffset_)], singleShape);
     }
-    bs.UpdateNextBatchBlockRoundParams();
 }
 
 } // namespace Kernel

@@ -183,20 +183,6 @@ public:
                 static_cast<uint32_t>(nBaseNormCnt_), static_cast<uint32_t>(nBaseTailMain_)};
     }
 
-    __aicore__ inline void UpdateNextBatchBlockRoundParams()
-    {
-        startBlockIdx_ = endBlockIdx_ + 1 == blockNum_ ? 0 : (endBlockIdx_ + 1);
-        endBlockIdx_ = (totalCnt_ + startBlockIdx_ - 1) % blockNum_;
-
-        roundIdx_ = 0;
-        round_ = CeilDiv(totalCnt_, blockNum_);
-        if (startBlockIdx_ > endBlockIdx_ && (blockIdx_ > endBlockIdx_ && blockIdx_ < startBlockIdx_)) {
-            round_ -= 1;
-        } else if (startBlockIdx_ <= endBlockIdx_ && (blockIdx_ > endBlockIdx_ || blockIdx_ < startBlockIdx_)) {
-            round_ -= 1;
-        }
-    }
-
     __aicore__ inline bool GetTileIdx(BlockCoord &blockCoord)
     {
         if (roundIdx_ >= round_) {
