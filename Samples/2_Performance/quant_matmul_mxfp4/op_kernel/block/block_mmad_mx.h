@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2025 Huawei Technologies Co., Ltd.
+ * Copyright (c) 2026 Huawei Technologies Co., Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
  * CANN Open Software License Agreement Version 2.0 (the "License").
  * Please refer to the License for details. You may not use this file except in compliance with the License.
@@ -73,9 +73,9 @@ public:
     uint64_t kL1Iter_{0};
     uint64_t kL1_{1};
     uint64_t scaleKL1_{1};
-    uint64_t baseM_{16};
-    uint64_t baseN_{16};
-    uint64_t baseK_{16};
+    uint64_t mL0_{16};
+    uint64_t nL0_{16};
+    uint64_t kL0_{16};
     bool isBias_{false};
     static constexpr bool transA = TagToTrans<LayoutA>::value;
     static constexpr bool transB = TagToTrans<LayoutB>::value;
@@ -149,20 +149,20 @@ public:
         k_ = Get<IDX_K_IDX>(problemShape);
         kL1_ = l1Params.kL1;
         scaleKL1_ = l1Params.scaleKL1;
-        baseM_ = Get<IDX_M_IDX>(l0TileShape);
-        baseN_ = Get<IDX_N_IDX>(l0TileShape);
-        baseK_ = Get<IDX_K_IDX>(l0TileShape);
+        mL0_ = Get<IDX_M_IDX>(l0TileShape);
+        nL0_ = Get<IDX_N_IDX>(l0TileShape);
+        kL0_ = Get<IDX_K_IDX>(l0TileShape);
         isBias_ = isBias;
         l1BufNum_ = l1Params.l1BufNum;
         enableL0cPingPong_ = dbL0C;
-        bL1OneBuffer_ = baseN_ * kL1_;
-        scaleBL1OneBuffer_ = baseN_ * CeilDiv(scaleKL1_, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE;
+        bL1OneBuffer_ = nL0_ * kL1_;
+        scaleBL1OneBuffer_ = nL0_ * CeilDiv(scaleKL1_, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE;
         if (isBias_) {
-            biasL1OneBuffer_ = baseN_ * sizeof(BiasType);
+            biasL1OneBuffer_ = nL0_ * sizeof(BiasType);
         }
         if constexpr (DispatchPolicy::fullLoadMode == 0) {
-            aL1OneBuffer_ = baseM_ * Align(kL1_, MXFP_DIVISOR_SIZE);
-            scaleAL1OneBuffer_ = baseM_ * CeilDiv(scaleKL1_, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE;
+            aL1OneBuffer_ = mL0_ * Align(kL1_, MXFP_DIVISOR_SIZE);
+            scaleAL1OneBuffer_ = mL0_ * CeilDiv(scaleKL1_, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE;
             for (int32_t bufferId = 0; bufferId < l1BufNum_; bufferId++) {
                 // 2 buffer: L1 space is : A0|B0|AScale0|BScale0|bias0|...|A1|B1|AScale1|BScale1|bias1|...
                 // 4 buffer: L1 space is : A0A2|B0B2|AScale0|BScale0|bias0|...|A1A3|B1B3|AScale1|BScale1|bias1|...
@@ -178,10 +178,10 @@ public:
                 l1BufferBiasOffset_[bufferId] = l1BufferScaleBOffset_[bufferId] + scaleBL1OneBuffer_;
             }
         } else {
-            uint64_t mAlign = Align(baseM_, transA ? C0_SIZE : BLOCK_CUBE);
+            uint64_t mAlign = Align(mL0_, transA ? C0_SIZE : BLOCK_CUBE);
             uint64_t kAlign = Align(k_, MXFP_DIVISOR_SIZE);
             aL1OneBuffer_ = mAlign * kAlign;
-            scaleAL1OneBuffer_ = baseM_ * CeilDiv(k_, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE;
+            scaleAL1OneBuffer_ = mL0_ * CeilDiv(k_, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE;
             // 2 buffer: L1 space is : B0|BScale0|bias0|A|AScale|...|B1|BScale1|bias1|
             // 4 buffer: L1 space is : B0B2|BScale0|bias0|A|AScale|...|B1B3|BScale1|bias1|...
             l1BufferAOffset_[0] = bL1OneBuffer_ * (l1BufNum_ >> 1) + ((scaleBL1OneBuffer_ + biasL1OneBuffer_) << 1);
@@ -357,7 +357,7 @@ public:
         AscendC::LoadData2DMxParams loadData2DMxParams;
         uint64_t m1 = CeilDiv(tileL1L0Param.curM, AscendC::BLOCK_CUBE);
         loadDataParams.mStartPosition = 0;
-        loadDataParams.kStartPosition = CeilDiv(iter * baseK_, C0_SIZE);
+        loadDataParams.kStartPosition = CeilDiv(iter * kL0_, C0_SIZE);
         loadDataParams.mStep = m1;
         loadDataParams.kStep = CeilDiv(tileL1L0Param.curKL0, C0_SIZE);
         loadDataParams.srcStride = loadDataParams.mStep;
@@ -365,7 +365,7 @@ public:
         loadDataParams.ifTranspose = false;
 
         loadData2DMxParams.xStartPosition = 0;
-        loadData2DMxParams.yStartPosition = CeilDiv(iter * baseK_, MXFP_DIVISOR_SIZE);
+        loadData2DMxParams.yStartPosition = CeilDiv(iter * kL0_, MXFP_DIVISOR_SIZE);
         loadData2DMxParams.xStep = m1;
         loadData2DMxParams.yStep = CeilDiv(tileL1L0Param.curKL0, MXFP_DIVISOR_SIZE);
         loadData2DMxParams.srcStride = CeilDiv(curScaleKL1, MXFP_DIVISOR_SIZE);
@@ -382,7 +382,7 @@ public:
         AscendC::LoadData2DMxParams loadData2DMxParams;
         uint64_t n1 = CeilDiv(tileL1L0Param.curN, AscendC::BLOCK_CUBE);
         loadDataParams.mStartPosition = 0;
-        loadDataParams.kStartPosition = CeilDiv(iter * baseK_, C0_SIZE);
+        loadDataParams.kStartPosition = CeilDiv(iter * kL0_, C0_SIZE);
         loadDataParams.mStep = n1;
         loadDataParams.kStep = CeilDiv(tileL1L0Param.curKL0, C0_SIZE);
         loadDataParams.srcStride = loadDataParams.mStep;
@@ -390,7 +390,7 @@ public:
         loadDataParams.ifTranspose = false;
 
         loadData2DMxParams.xStartPosition = 0;
-        loadData2DMxParams.yStartPosition = CeilDiv(iter * baseK_, MXFP_DIVISOR_SIZE);
+        loadData2DMxParams.yStartPosition = CeilDiv(iter * kL0_, MXFP_DIVISOR_SIZE);
         loadData2DMxParams.xStep = n1;
         loadData2DMxParams.yStep = CeilDiv(tileL1L0Param.curKL0, MXFP_DIVISOR_SIZE);
         loadData2DMxParams.srcStride = CeilDiv(scaleKL1_, MXFP_DIVISOR_SIZE);
@@ -399,13 +399,13 @@ public:
     }
 
     __aicore__ inline void CopyOut(const AscendC::GlobalTensor<CType> &cGlobal, AscendC::LocalTensor<float> &c1Local,
-                                   uint64_t baseM, uint64_t baseN)
+                                   uint64_t mL0, uint64_t nL0)
     {
         AscendC::DataCopyCO12DstParams intriParams;
-        intriParams.nSize = baseN;
-        intriParams.mSize = baseM;
+        intriParams.nSize = nL0;
+        intriParams.mSize = mL0;
         intriParams.dstStride = n_;
-        intriParams.srcStride = Align(baseM, AscendC::BLOCK_CUBE);
+        intriParams.srcStride = Align(mL0, AscendC::BLOCK_CUBE);
         // set mode according to dtype
         if constexpr (AscendC::IsSameType<CType, bfloat16_t>::value) {
             intriParams.quantPre = QuantMode_t::F322BF16;
@@ -430,10 +430,10 @@ public:
 
     __aicore__ inline void UpdateKL0(TileL1L0Param &tileL1L0Param, uint64_t iter1)
     {
-        if (iter1 * baseK_ + baseK_ > tileL1L0Param.curPadBKL1) {
-            tileL1L0Param.curKL0 = tileL1L0Param.curPadBKL1 - iter1 * baseK_;
+        if (iter1 * kL0_ + kL0_ > tileL1L0Param.curPadBKL1) {
+            tileL1L0Param.curKL0 = tileL1L0Param.curPadBKL1 - iter1 * kL0_;
         } else {
-            tileL1L0Param.curKL0 = baseK_;
+            tileL1L0Param.curKL0 = kL0_;
         }
     }
 
@@ -499,7 +499,7 @@ public:
     __aicore__ inline void Iterate(TileL1L0Param &tileL1L0Param, MmadParams &mmadParams, uint64_t l1Iter, uint64_t l1BufId,
                                    uint64_t scaleL1BufId, uint64_t offsetAl1, uint64_t l0cOffset)
     {
-        uint64_t kL0Iter = CeilDiv(tileL1L0Param.curGmBKL1, baseK_);
+        uint64_t kL0Iter = CeilDiv(tileL1L0Param.curGmBKL1, kL0_);
         for (uint16_t iter1 = 0; iter1 < kL0Iter; ++iter1) {
             UpdateKL0(tileL1L0Param, iter1);
             // Load data to L0 and open DB
@@ -517,7 +517,7 @@ public:
                           scaleAL1Local_[l1BufferScaleAOffset_[0] + offsetScaleAL1], iter1, tileL1L0Param, k_);
             }
             // copy bias to bt
-            CopyInC2(biasL1Local_[l1BufferBiasOffset_[biasBufId_] / sizeof(BiasType)], biasBt_[baseN_ * biasBufId_],
+            CopyInC2(biasL1Local_[l1BufferBiasOffset_[biasBufId_] / sizeof(BiasType)], biasBt_[nL0_ * biasBufId_],
                      Align(mmadParams.n, AscendC::BLOCK_CUBE), NeedBias(l1Iter, iter1));
             CopyInL0B(l0bLocal_[l0Offset], bL1Local_[l1BufferBOffset_[l1BufId]],
                       scaleBL1Local_[l1BufferScaleBOffset_[scaleL1BufId] + offsetScaleL1], iter1, tileL1L0Param);
@@ -527,7 +527,7 @@ public:
             mmadParams.unitFlag =
                 (l1Iter + 1 == kL1Iter_ && iter1 + 1 == kL0Iter) ? FINAL_ACCUMULATION : NON_FINAL_ACCUMULATION;
             mmadParams.cmatrixInitVal = (l1Iter == 0 && iter1 == 0 && !isBias_);
-            Mmad(mmadParams, l0cOffset, l0Offset, baseN_ * biasBufId_, NeedBias(l1Iter, iter1));
+            Mmad(mmadParams, l0cOffset, l0Offset, nL0_ * biasBufId_, NeedBias(l1Iter, iter1));
             AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0PingPong_ & 0x1);
             l0PingPong_++;
         }

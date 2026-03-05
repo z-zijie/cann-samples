@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2025 Huawei Technologies Co., Ltd.
+ * Copyright (c) 2026 Huawei Technologies Co., Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
  * CANN Open Software License Agreement Version 2.0 (the "License").
  * Please refer to the License for details. You may not use this file except in compliance with the License.
@@ -8,7 +8,7 @@
  * See LICENSE in the root of the software repository for the full text of the License.
  */
 /*!
- * \file quant_batch_matmul_v3_tiling_data.h
+ * \file quant_matmul_tiling_data.h
  * \brief
  */
 #ifndef QUANT_MATMUL_TILING_DATA_H
@@ -21,45 +21,14 @@
 
 #pragma pack(push, 8)
 struct alignas(8) QuantMatmulTilingData {
-    uint32_t batchA = 0;
-    uint32_t batchB = 0;
-    uint32_t batchC = 0;
-    uint32_t batchA1 = 0;
-    uint32_t batchA2 = 0;
-    uint32_t batchA3 = 0;
-    uint32_t batchA4 = 0;
-    uint32_t batchB1 = 0;
-    uint32_t batchB2 = 0;
-    uint32_t batchB3 = 0;
-    uint32_t batchB4 = 0;
-    uint32_t batchC1 = 0;
-    uint32_t batchC2 = 0;
-    uint32_t batchC3 = 0;
-    uint32_t batchC4 = 0;
-    uint32_t x1QuantMode = 0;
-    uint32_t x2QuantMode = 0;
-    uint32_t biasThreeDim = 0;
-    uint32_t biasDtype = 0;
-    uint32_t groupSizeM = 0;
-    uint32_t groupSizeN = 0;
-    uint32_t groupSizeK = 0;
-
-
     uint32_t m = 0;
     uint32_t n = 0;
     uint32_t k = 0;
-    uint32_t baseM = 0;
-    uint32_t baseN = 0;
-    uint32_t baseK = 0;
+    uint32_t mL0 = 0;
+    uint32_t nL0 = 0;
+    uint32_t kL0 = 0;
+    uint32_t kL1 = 0;
     uint32_t scaleKL1 = 0;
-    uint16_t stepKa = 0;
-    uint16_t stepKb = 0;
-    uint16_t scaleFactorA = 0;
-    uint16_t scaleFactorB = 0;
-    uint8_t nBufferNum = 0;
-    uint8_t isBias = 0;
-    uint8_t dbL0C = 0;
-    uint8_t reserved = 0;
 
     uint32_t mTailTile = 0;
     uint32_t nTailTile = 0;
@@ -67,6 +36,10 @@ struct alignas(8) QuantMatmulTilingData {
     uint32_t nBaseTailSplitCnt = 1;
     uint32_t mTailMain = 0;
     uint32_t nTailMain = 0;
+
+    uint8_t nBufferNum = 0;
+    uint8_t hasBias = 0;
+    uint8_t dbL0C = 0;
 };
 #pragma pack(pop)
 

@@ -92,28 +92,14 @@ __global__ __aicore__ void QuantMatmulMxfp4Kernel(
     using Params = typename QuantMatmulKernelImpl::Params;
 
     using QBMMTiling = typename QuantMatmulKernelImpl::QBMMTiling;
-    QBMMTiling qbmmParams{quantMatmulTilingData.batchA1,
-                          quantMatmulTilingData.batchA2,
-                          quantMatmulTilingData.batchA3,
-                          quantMatmulTilingData.batchA4,
-                          quantMatmulTilingData.batchB1,
-                          quantMatmulTilingData.batchB2,
-                          quantMatmulTilingData.batchB3,
-                          quantMatmulTilingData.batchB4,
-                          quantMatmulTilingData.batchC1,
-                          quantMatmulTilingData.batchC2,
-                          quantMatmulTilingData.batchC3,
-                          quantMatmulTilingData.batchC4,
-                          quantMatmulTilingData.biasThreeDim,
-                          quantMatmulTilingData.baseM, quantMatmulTilingData.baseN, quantMatmulTilingData.baseK,
-                          static_cast<uint32_t>(quantMatmulTilingData.isBias),
+    QBMMTiling qbmmParams{static_cast<uint32_t>(quantMatmulTilingData.hasBias),
                           static_cast<uint32_t>(quantMatmulTilingData.dbL0C)};
 
     Params params = {
-        {quantMatmulTilingData.m, quantMatmulTilingData.n, quantMatmulTilingData.k, quantMatmulTilingData.batchC},
+        {quantMatmulTilingData.m, quantMatmulTilingData.n, quantMatmulTilingData.k, 1},
         {dA, dB, dC, dBias, dScaleA, dScaleB},
-        {quantMatmulTilingData.stepKb * quantMatmulTilingData.baseK, quantMatmulTilingData.scaleKL1, quantMatmulTilingData.nBufferNum},
-        {quantMatmulTilingData.baseM, quantMatmulTilingData.baseN, quantMatmulTilingData.mTailTile, quantMatmulTilingData.nTailTile,
+        {quantMatmulTilingData.kL1, quantMatmulTilingData.scaleKL1, quantMatmulTilingData.nBufferNum},
+        {quantMatmulTilingData.mL0, quantMatmulTilingData.nL0, quantMatmulTilingData.mTailTile, quantMatmulTilingData.nTailTile,
          quantMatmulTilingData.mBaseTailSplitCnt, quantMatmulTilingData.nBaseTailSplitCnt, quantMatmulTilingData.mTailMain,
          quantMatmulTilingData.nTailMain},
         qbmmParams};
@@ -214,44 +200,17 @@ int main(int argc, char* argv[])
     QuantMatmulTilingData quantMatmulTilingData;
     // QuantMatmulTilingEngine quantMatmulTilingEngine;
     // quantMatmulTilingEngine.GetTiling(m, n, k, true, false, quantMatmulTilingData);
-    quantMatmulTilingData.batchA = 1;
-    quantMatmulTilingData.batchB = 1;
-    quantMatmulTilingData.batchC = 1;
-    quantMatmulTilingData.batchA1 = 1;
-    quantMatmulTilingData.batchA2 = 1;
-    quantMatmulTilingData.batchA3 = 1;
-    quantMatmulTilingData.batchA4 = 1;
-    quantMatmulTilingData.batchB1 = 1;
-    quantMatmulTilingData.batchB2 = 1;
-    quantMatmulTilingData.batchB3 = 1;
-    quantMatmulTilingData.batchB4 = 1;
-    quantMatmulTilingData.batchC1 = 1;
-    quantMatmulTilingData.batchC2 = 1;
-    quantMatmulTilingData.batchC3 = 1;
-    quantMatmulTilingData.batchC4 = 1;
-    quantMatmulTilingData.x1QuantMode = 8;
-    quantMatmulTilingData.x2QuantMode = 8;
-    quantMatmulTilingData.biasThreeDim = 0;
-    quantMatmulTilingData.biasDtype = 3;
-    quantMatmulTilingData.groupSizeM = 1;
-    quantMatmulTilingData.groupSizeN = 1;
-    quantMatmulTilingData.groupSizeK = 32;
-
     quantMatmulTilingData.m = m;
     quantMatmulTilingData.n = n;
     quantMatmulTilingData.k = k;
-    quantMatmulTilingData.baseM = 32;
-    quantMatmulTilingData.baseN = 64;
-    quantMatmulTilingData.baseK = 256;
+    quantMatmulTilingData.mL0 = 32;
+    quantMatmulTilingData.nL0 = 64;
+    quantMatmulTilingData.kL0 = 256;
+    quantMatmulTilingData.kL1 = 256;
     quantMatmulTilingData.scaleKL1 = 256;
-    quantMatmulTilingData.stepKa = 1;
-    quantMatmulTilingData.stepKb = 1;
-    quantMatmulTilingData.scaleFactorA = 1;
-    quantMatmulTilingData.scaleFactorB = 1;
     quantMatmulTilingData.nBufferNum = 4;
-    quantMatmulTilingData.isBias = 0;
+    quantMatmulTilingData.hasBias = 0;
     quantMatmulTilingData.dbL0C = 2;
-    quantMatmulTilingData.reserved = 0;
 
     quantMatmulTilingData.mTailTile = 1;
     quantMatmulTilingData.nTailTile = 1;

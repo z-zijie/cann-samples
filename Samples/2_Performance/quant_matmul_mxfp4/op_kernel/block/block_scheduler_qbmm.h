@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2025 Huawei Technologies Co., Ltd.
+ * Copyright (c) 2026 Huawei Technologies Co., Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
  * CANN Open Software License Agreement Version 2.0 (the "License").
  * Please refer to the License for details. You may not use this file except in compliance with the License.
@@ -28,8 +28,8 @@ public:
     int64_t m_{0};
     int64_t n_{0};
     int64_t k_{0};
-    int64_t baseM_{0};
-    int64_t baseN_{0};
+    int64_t mL0_{0};
+    int64_t nL0_{0};
     int64_t mCnt_{0};
     int64_t nCnt_{0};
     int64_t totalCnt_{0};
@@ -59,8 +59,8 @@ public:
     using ProblemShape = ProblemShape_;
 
     struct Params {
-        int64_t baseM;
-        int64_t baseN;
+        int64_t mL0;
+        int64_t nL0;
         int64_t mTailTile;
         int64_t nTailTile;
         int64_t mBaseTailSplitCnt;
@@ -77,10 +77,10 @@ public:
         m_ = shape.m;
         n_ = shape.n;
         k_ = shape.k;
-        baseM_ = static_cast<int64_t>(params.baseM);
-        baseN_ = static_cast<int64_t>(params.baseN);
-        mCnt_ = CeilDiv(m_, baseM_);
-        nCnt_ = CeilDiv(n_, baseN_);
+        mL0_ = static_cast<int64_t>(params.mL0);
+        nL0_ = static_cast<int64_t>(params.nL0);
+        mCnt_ = CeilDiv(m_, mL0_);
+        nCnt_ = CeilDiv(n_, nL0_);
         totalCnt_ = mCnt_ * nCnt_;
         mCoreNum_ = Min(WINDOW_LEN, mCnt_);
         mainRow_ = mCnt_ / mCoreNum_ - 1;
@@ -92,19 +92,19 @@ public:
         }
         if constexpr (!TransA_) {
             mBaseNormCnt_ = mCnt_ - params.mBaseTailSplitCnt;
-            int64_t mMergeSize = m_ - mBaseNormCnt_ * baseM_;
+            int64_t mMergeSize = m_ - mBaseNormCnt_ * mL0_;
             mBaseTailMain_ = params.mBaseTailSplitCnt == 1 ? mMergeSize : params.mTailMain;
             mBaseTailLast_ = mMergeSize - (params.mBaseTailSplitCnt - 1) * mBaseTailMain_;
         } else {
-            mBaseTailMain_ = m_ - (mCnt_ - 1) * baseM_;
+            mBaseTailMain_ = m_ - (mCnt_ - 1) * mL0_;
         }
         if constexpr (TransB_) {
             nBaseNormCnt_ = nCnt_ - params.nBaseTailSplitCnt;
-            int64_t nMergeSize = n_ - nBaseNormCnt_ * baseN_;
+            int64_t nMergeSize = n_ - nBaseNormCnt_ * nL0_;
             nBaseTailMain_ = params.nBaseTailSplitCnt == 1 ? nMergeSize : params.nTailMain;
             nBaseTailLast_ = nMergeSize - (params.nBaseTailSplitCnt - 1) * nBaseTailMain_;
         } else {
-            nBaseTailMain_ = n_ - (nCnt_ - 1) * baseN_;
+            nBaseTailMain_ = n_ - (nCnt_ - 1) * nL0_;
         }
     }
 
@@ -138,8 +138,8 @@ public:
 
     __aicore__ inline BlockShape GetBlockShape(BlockCoord blockCoord)
     {
-        int64_t singleCoreM = baseM_;
-        int64_t singleCoreN = baseN_;
+        int64_t singleCoreM = mL0_;
+        int64_t singleCoreN = nL0_;
         if constexpr (!TransA_) {
             if (Get<MNK_M>(blockCoord) >= mBaseNormCnt_) {
                 singleCoreM = Get<MNK_M>(blockCoord) < mCnt_ - 1 ? mBaseTailMain_ : mBaseTailLast_;
