@@ -56,6 +56,5 @@ def gen_golden_data_simple():
     scale_x2.numpy().tofile("./input/input_scaleB.bin")
     npu_out.numpy().tofile("./output/golden_out.bin")
 
-
 if __name__ == "__main__":
     gen_golden_data_simple()
