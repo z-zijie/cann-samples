@@ -393,7 +393,7 @@ int32_t main(int argc, char *argv[])
     // 生成数据
     std::string exeDir = getExeDir();
     std::ostringstream cmd;
-    cmd << "python3 " << SOURCE_DIR << "/../ustls/gen_input_data.py "
+    cmd << "python3 " << SOURCE_DIR << "/ustls/gen_input_data.py "
         << "-r=" << r << " "
         << "-a=" << a << " "
         << "-d=float16 "
