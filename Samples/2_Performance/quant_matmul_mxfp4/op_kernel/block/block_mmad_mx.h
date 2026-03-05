@@ -116,12 +116,10 @@ public:
 
     __aicore__ inline BlockMmadMx()
     {
-        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(INPUT_BUFFER_FLAG_0);
-        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(INPUT_BUFFER_FLAG_1);
-        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(INPUT_BUFFER_FLAG_2);
-        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(INPUT_BUFFER_FLAG_3);
-        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(SCALE_BUFFER_FLAG_0);
-        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(SCALE_BUFFER_FLAG_1);
+        #pragma unroll
+        for(uint8_t i = 0; i < MTE1_MTE2_EVENT_ID_NUM; ++i) {
+            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(i);
+        }
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(ZERO_FLAG);
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(FIRST_FLAG);
         AscendC::SetMMLayoutTransform(true); // true means column first when fixpipe_l0c2out
@@ -129,12 +127,10 @@ public:
 
     __aicore__ inline ~BlockMmadMx()
     {
-        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(INPUT_BUFFER_FLAG_0);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(INPUT_BUFFER_FLAG_1);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(INPUT_BUFFER_FLAG_2);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(INPUT_BUFFER_FLAG_3);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(SCALE_BUFFER_FLAG_0);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(SCALE_BUFFER_FLAG_1);
+        #pragma unroll
+        for(uint8_t i = 0; i < MTE1_MTE2_EVENT_ID_NUM; ++i) {
+            AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(i);
+        }
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(ZERO_FLAG);
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(FIRST_FLAG);
         AscendC::SetMMLayoutTransform(false); // false means row first when fixpipe_l0c2out
@@ -606,8 +602,6 @@ private:
     }
 
 private:
-    constexpr static uint16_t SCALE_BUFFER_FLAG_0 = 4;
-    constexpr static uint16_t SCALE_BUFFER_FLAG_1 = 5;
     uint16_t biasBufId_ = 0;
     uint64_t biasL1OneBuffer_ = 0UL;
     uint64_t aL1OneBuffer_ = 0UL;
