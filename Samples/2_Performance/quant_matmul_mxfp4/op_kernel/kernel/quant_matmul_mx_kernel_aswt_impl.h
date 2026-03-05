@@ -152,11 +152,8 @@ __aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS
         params.problemShape.m, params.problemShape.n, params.problemShape.k, params.schParams.mL0,
         params.schParams.nL0, params.qbmmParams.kL0);
     BlockCoord blockIdx;
-    const int64_t mTailTile = params.schParams.mTailTile;
-    const int64_t nTailTile = params.schParams.nTailTile;
-    // both tail of current batch and rest batch are tail round
     if (bs.GetEndBlockIdx() + 1 <= AscendC::GetBlockNum()) {
-        bs.UpdateTailTile(mTailTile, nTailTile);
+        bs.UpdateTailTile(params.schParams.mTailTile, params.schParams.nTailTile);
     }
     while (bs.GetTileIdx(blockIdx)) {
         BlockShape singleShape = bs.GetBlockShape(blockIdx);
