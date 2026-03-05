@@ -22,9 +22,9 @@ import logging
 
 
 def gen_golden_data_simple():
-    M = 256
-    K = 256
-    N = 256
+    M = 8192
+    K = 16384
+    N = 8192
     cpu_x1 = torch.randint(-10, 10, (M, int(K/2)), dtype=torch.int8)
     cpu_x2 = torch.randint(-10, 10, (N, int(K/2)), dtype=torch.int8)
     scale_x2 = torch.randint(-10, 10, (N, math.ceil(K/64), 2), dtype=torch.int8)
