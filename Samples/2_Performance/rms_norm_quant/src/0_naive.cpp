@@ -59,7 +59,7 @@ typedef int8_t offsetType;
 typedef int8_t outputType;
 
 static constexpr size_t BUF_NUM = 1;
-static constexpr size_t BLOCK_NUM = 1;
+static constexpr size_t BLOCK_NUM = 64;
 static constexpr int64_t BLOCK_BYTES = 32;
 static constexpr int MAX_ERROR_ELEM_NUM = 100;
 
@@ -97,8 +97,8 @@ private:
     TBuf<QuePosition::VECCALC> xBuf_;
     TBuf<QuePosition::VECCALC> gammaBuf_;
     TBuf<QuePosition::VECCALC> betaBuf_;
-    TBuf<QuePosition::VECCALC> sumBuf_;
     TBuf<QuePosition::VECCALC> rmsBuf_;
+    TBuf<QuePosition::VECCALC> reduceBuf_;
 
     GlobalTensor<DATA_TYPE> xGm_;
     GlobalTensor<DATA_TYPE> gammaGm_;
@@ -148,8 +148,8 @@ public:
         pipe_.InitBuffer(gammaBuf_, AlignBytes(tilingData_->r, sizeof(float)));
         pipe_.InitBuffer(betaBuf_, AlignBytes(tilingData_->r, sizeof(float)));
         pipe_.InitBuffer(rmsBuf_, AlignBytes(tilingData_->r, sizeof(float)));
-        pipe_.InitBuffer(sumBuf_, AlignBytes(tilingData_->r, sizeof(float)));
-
+        pipe_.InitBuffer(reduceBuf_, BLOCK_BYTES);
+        
         scale_ = static_cast<float>(scaleGm_.GetValue(0));
         offset_ = static_cast<float>(offsetGm_.GetValue(0));
         rInv_ = static_cast<float>(1.0f / tilingData_->r);
@@ -203,12 +203,12 @@ public:
         LocalTensor<float> gammaLocalTensor = gammaBuf_.Get<float>();
         LocalTensor<float> betaLocalTensor = betaBuf_.Get<float>();
         LocalTensor<float> rmsLocalTensor = rmsBuf_.Get<float>();
-        LocalTensor<float> sumLocalTensor = sumBuf_.Get<float>();
+        LocalTensor<float> reduceLocalTensor = reduceBuf_.Get<float>();
 
         Cast(xLocalTensor, xInLocalTensor, RoundMode::CAST_NONE, tilingData_->r);
         Mul(rmsLocalTensor, xLocalTensor, xLocalTensor, tilingData_->r);
-        ReduceSum(sumLocalTensor, rmsLocalTensor, xInLocalTensor.template ReinterpretCast<float>(), tilingData_->r);
-        Duplicate(rmsLocalTensor, sumLocalTensor, tilingData_->r);
+        ReduceSum(reduceLocalTensor, rmsLocalTensor, xInLocalTensor.template ReinterpretCast<float>(), tilingData_->r);
+        Duplicate(rmsLocalTensor, reduceLocalTensor, tilingData_->r);
 
         Muls(rmsLocalTensor, rmsLocalTensor, rInv_, tilingData_->r);
         Adds(rmsLocalTensor, rmsLocalTensor, tilingData_->epsilon, tilingData_->r);
@@ -218,8 +218,8 @@ public:
         Add(rmsLocalTensor, rmsLocalTensor, betaLocalTensor, tilingData_->r);
         Muls(rmsLocalTensor, rmsLocalTensor, scale_, tilingData_->r);
         Adds(rmsLocalTensor, rmsLocalTensor, offset_, tilingData_->r);
-        Cast(xLocalTensor.template ReinterpretCast<half>(), rmsLocalTensor, RoundMode::CAST_NONE, tilingData_->r);
-        Cast(yLocalTensor, xLocalTensor.template ReinterpretCast<half>(), RoundMode::CAST_RINT, tilingData_->r);
+        Cast(rmsLocalTensor.template ReinterpretCast<half>(), rmsLocalTensor, RoundMode::CAST_NONE, tilingData_->r);
+        Cast(yLocalTensor, rmsLocalTensor.template ReinterpretCast<half>(), RoundMode::CAST_RINT, tilingData_->r);
         xInQueue_.FreeTensor(xInLocalTensor);
         yOutQueue_.EnQue<int8_t>(yLocalTensor);
     }
@@ -393,7 +393,7 @@ int32_t main(int argc, char *argv[])
     // 生成数据
     std::string exeDir = getExeDir();
     std::ostringstream cmd;
-    cmd << "python3 " << SOURCE_DIR << "/gen_input_data.py "
+    cmd << "python3 " << SOURCE_DIR << "/../ustls/gen_input_data.py "
         << "-r=" << r << " "
         << "-a=" << a << " "
         << "-d=float16 "
