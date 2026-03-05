@@ -24,8 +24,8 @@ data_type = np.float32
 
 def verify_result():
     # 1ulp对比方式
-    output = np.fromfile("./output/output_y.bin", dtype=data_type)
-    golden = np.fromfile("./output/golden_y.bin", dtype=data_type)
+    output = np.fromfile("./output/npu_out.bin", dtype=data_type)
+    golden = np.fromfile("./output/golden_out.bin", dtype=data_type)
     diff_results = np.abs(np.subtract(output, golden))
     diff_indices = np.where(diff_results > 1)[0]
 
