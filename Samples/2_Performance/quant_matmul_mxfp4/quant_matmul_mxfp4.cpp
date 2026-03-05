@@ -240,17 +240,17 @@ int main(int argc, char* argv[])
     quantMatmulTilingData.m = m;
     quantMatmulTilingData.n = n;
     quantMatmulTilingData.k = k;
-    quantMatmulTilingData.baseM = 32;
-    quantMatmulTilingData.baseN = 64;
+    quantMatmulTilingData.baseM = 256;
+    quantMatmulTilingData.baseN = 256;
     quantMatmulTilingData.baseK = 256;
-    quantMatmulTilingData.scaleKL1 = 256;
-    quantMatmulTilingData.stepKa = 1;
-    quantMatmulTilingData.stepKb = 1;
+    quantMatmulTilingData.scaleKL1 = 8192;
+    quantMatmulTilingData.stepKa = 2;
+    quantMatmulTilingData.stepKb = 2;
     quantMatmulTilingData.scaleFactorA = 1;
     quantMatmulTilingData.scaleFactorB = 1;
-    quantMatmulTilingData.nBufferNum = 4;
+    quantMatmulTilingData.nBufferNum = 2;
     quantMatmulTilingData.isBias = 0;
-    quantMatmulTilingData.dbL0C = 2;
+    quantMatmulTilingData.dbL0C = 1;
     quantMatmulTilingData.reserved = 0;
 
     quantMatmulTilingData.mTailTile = 1;
