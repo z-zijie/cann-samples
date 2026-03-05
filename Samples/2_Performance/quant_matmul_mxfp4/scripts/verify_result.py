@@ -91,7 +91,6 @@ def verify_result():
 
     return error_ratio <= ERROR_TOL
 
-
 if __name__ == "__main__":
 
     try:

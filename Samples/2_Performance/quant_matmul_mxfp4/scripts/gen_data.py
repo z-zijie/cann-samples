@@ -50,12 +50,11 @@ def gen_golden_data_simple():
     ).cpu()
     os.makedirs("input", exist_ok=True)
     os.makedirs("output", exist_ok=True)
-    cpu_x1.numpy().tofile("./input/input_x1.bin")
-    cpu_x2.numpy().tofile("./input/input_x2.bin")
-    scale_x1.numpy().tofile("./input/input_scale_x1.bin")
-    scale_x2.numpy().tofile("./input/input_scale_x2.bin")
-    npu_out.numpy().tofile("./output/golden_y.bin")
-
+    cpu_x1.numpy().tofile("./input/input_a.bin")
+    cpu_x2.numpy().tofile("./input/input_b.bin")
+    scale_x1.numpy().tofile("./input/input_scaleA.bin")
+    scale_x2.numpy().tofile("./input/input_scaleB.bin")
+    npu_out.numpy().tofile("./output/golden_out.bin")
 
 if __name__ == "__main__":
     gen_golden_data_simple()
