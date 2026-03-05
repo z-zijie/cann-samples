@@ -26,7 +26,7 @@
 #include "../utils/layout_utils.h"
 #include "../utils/tuple_utils.h"
 #include "../utils/coord_utils.h"
-#include "../block/block_scheduler_mxfp4.h"
+#include "../block/block_scheduler_mx.h"
 #include "../block/block_mmad_mx.h"
 
 namespace Kernel {

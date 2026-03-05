@@ -24,7 +24,7 @@
 #include "data_utils.h"
 #include "op_kernel/block/block_mmad_mx.h"
 #include "op_kernel/block/block_scheduler_policy.h"
-#include "op_kernel/block/block_scheduler_mxfp4.h"
+#include "op_kernel/block/block_scheduler_mx.h"
 #include "op_kernel/kernel/quant_matmul_mx_kernel_aswt_impl.h"
 #include "op_kernel/policy/dispatch_policy.h"
 #include "op_kernel/utils/common_utils.h"

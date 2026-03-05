@@ -9,12 +9,12 @@
  */
 
  /*!
- * \file block_scheduler_mxfp4.h
+ * \file block_scheduler_mx.h
  * \brief
  */
 
-#ifndef BLOCK_SCHEDULER_MXFP4_H
-#define BLOCK_SCHEDULER_MXFP4_H
+#ifndef BLOCK_SCHEDULER_MX_H
+#define BLOCK_SCHEDULER_MX_H
 
 #include "./block_scheduler_utils.h"
 #include "./block_scheduler_policy.h"
