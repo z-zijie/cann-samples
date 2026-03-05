@@ -68,6 +68,7 @@ public:
     using BlockSchedulerParams = typename BlockSchedulerOp::Params;
 
     struct QBMMTiling {
+        uint32_t kL0;
         uint32_t hasBias;
         uint32_t dbL0C;
     };
@@ -123,7 +124,7 @@ __aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS
     BlockSchedulerOp bs(params.problemShape, params.schParams);
     problemShape_ = ToShapeTuple(params.problemShape);
 
-    BlockShape l0TileShape{params.schParams.mL0, params.schParams.nL0_, params.l1Params.kL0, 0};
+    BlockShape l0TileShape{params.schParams.mL0, params.schParams.nL0, params.qbmmParams.kL0, 0};
     bool enableL0CPingPong = (params.qbmmParams.dbL0C > 1);
     mmadOp_.Init(problemShape_, l0TileShape, params.l1Params, hasBias_, enableL0CPingPong);
     Process(params, bs);
@@ -149,7 +150,7 @@ __aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS
 {
     CoordClass coord(
         params.problemShape.m, params.problemShape.n, params.problemShape.k, params.schParams.mL0,
-        params.schParams.nL0, params.l1Params.kL0);
+        params.schParams.nL0, params.qbmmParams.kL0);
     BlockCoord blockIdx;
     const int64_t mTailTile = params.schParams.mTailTile;
     const int64_t nTailTile = params.schParams.nTailTile;

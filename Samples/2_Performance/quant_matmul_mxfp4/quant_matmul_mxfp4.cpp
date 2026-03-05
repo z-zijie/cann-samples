@@ -92,7 +92,8 @@ __global__ __aicore__ void QuantMatmulMxfp4Kernel(
     using Params = typename QuantMatmulKernelImpl::Params;
 
     using QBMMTiling = typename QuantMatmulKernelImpl::QBMMTiling;
-    QBMMTiling qbmmParams{static_cast<uint32_t>(quantMatmulTilingData.hasBias),
+    QBMMTiling qbmmParams{quantMatmulTilingData.kL0,
+                          static_cast<uint32_t>(quantMatmulTilingData.hasBias),
                           static_cast<uint32_t>(quantMatmulTilingData.dbL0C)};
 
     Params params = {
