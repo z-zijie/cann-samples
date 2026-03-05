@@ -31,8 +31,8 @@ def verify_result():
 
     output_tensor = torch.from_numpy(output).reshape(256,256)
     golden_tensor = torch.from_numpy(golden).reshape(256,256)
-    print(output_tensor)
-    print(golden_tensor)
+    print("golden_data : ", golden_tensor)
+    print("output : ", output_tensor)
 
     npu_nan, golden_nan = np.isnan(output), np.isnan(golden)
     diff_nan = np.logical_and(npu_nan, golden_nan)
@@ -49,8 +49,7 @@ def verify_result():
             abs(output_data - golden_data) / golden_data))
         if index == 100:
             break
-    print("golden_data : ", golden)
-    print("output : ", output)
+    
     error_ratio = float(diff_indices.size) / golden.size
     print("error ratio: %.4f, tolerance: %.4f" % (error_ratio, ERROR_TOL))
     return error_ratio <= ERROR_TOL
@@ -58,7 +57,7 @@ def verify_result():
 
 if __name__ == '__main__':
     try:
-        res = verify_result(sys.argv[1], sys.argv[2])
+        res = verify_result()
         if not res:
             raise ValueError("[ERROR] result error")
         else:
