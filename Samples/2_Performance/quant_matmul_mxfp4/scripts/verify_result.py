@@ -22,12 +22,17 @@ import logging
 ERROR_TOL = 1e-3
 data_type = np.float32
 
-def verify_result(output, golden):
+def verify_result():
     # 1ulp对比方式
-    output = np.fromfile(output, dtype=data_type)
-    golden = np.fromfile(golden, dtype=data_type)
+    output = np.fromfile("./output/output_y.bin", dtype=data_type)
+    golden = np.fromfile("./output/golden_y.bin", dtype=data_type)
     diff_results = np.abs(np.subtract(output, golden))
     diff_indices = np.where(diff_results > 1)[0]
+
+    output_tensor = torch.from_numpy(output).reshape(256,256)
+    golden_tensor = torch.from_numpy(golden).reshape(256,256)
+    print(output_tensor)
+    print(golden_tensor)
 
     npu_nan, golden_nan = np.isnan(output), np.isnan(golden)
     diff_nan = np.logical_and(npu_nan, golden_nan)
