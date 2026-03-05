@@ -179,8 +179,6 @@ int main(int argc, char* argv[])
     uint8_t* hScaleB = nullptr;
     float* hBias = nullptr;
     float* hC = nullptr;
-    // matmul::FillRandomData<float>(hostInput, -2.0f, 2.0f);
-    // matmul::FillRandomData<float>(hostWeight, -2.0f, 2.0f);
 
     // device addr
     GM_ADDR dA = nullptr;
@@ -242,10 +240,6 @@ int main(int argc, char* argv[])
     ACLRT_CHECK_WITH_MSG(aclrtMalloc((void**)&dC, sizeC, ACL_MEM_MALLOC_HUGE_FIRST), "aclrtMalloc failed.");
 
     // memcpy h2d
-    // ACLRT_CHECK_WITH_MSG(aclrtMemcpy(dA, sizeA, hA, sizeA, ACL_MEMCPY_HOST_TO_DEVICE), "aclrtMemcpy failed.");
-    // ACLRT_CHECK_WITH_MSG(aclrtMemcpy(dB, sizeB, hB, sizeB, ACL_MEMCPY_HOST_TO_DEVICE), "aclrtMemcpy failed.");
-    // ACLRT_CHECK_WITH_MSG(aclrtMemcpy(dScaleA, sizeScaleA, hScaleA, sizeScaleA, ACL_MEMCPY_HOST_TO_DEVICE), "aclrtMemcpy failed.");
-    // ACLRT_CHECK_WITH_MSG(aclrtMemcpy(dScaleB, sizeScaleB, hScaleB, sizeScaleB, ACL_MEMCPY_HOST_TO_DEVICE), "aclrtMemcpy failed.");
     ACLRT_CHECK_WITH_MSG(aclrtMemcpyAsync(dA, sizeA, hA, sizeA, ACL_MEMCPY_HOST_TO_DEVICE, stream), "aclrtMemcpyAsync failed.");
     ACLRT_CHECK_WITH_MSG(aclrtMemcpyAsync(dB, sizeB, hB, sizeB, ACL_MEMCPY_HOST_TO_DEVICE, stream), "aclrtMemcpyAsync failed.");
     ACLRT_CHECK_WITH_MSG(aclrtMemcpyAsync(dScaleA, sizeScaleA, hScaleA, sizeScaleA, ACL_MEMCPY_HOST_TO_DEVICE, stream), "aclrtMemcpyAsync failed.");
@@ -263,9 +257,7 @@ int main(int argc, char* argv[])
     ACLRT_KERNEL_CHECK("Kernel launch fail");
 
     // memcpy d2h
-    // ACLRT_CHECK_WITH_MSG(aclrtMemcpy(hC.data(), sizeC, dC, sizeC, ACL_MEMCPY_DEVICE_TO_HOST), "aclrtMemcpy failed.");
     ACLRT_CHECK_WITH_MSG(aclrtMemcpyAsync(hC, sizeC, dC, sizeC, ACL_MEMCPY_DEVICE_TO_HOST, stream), "aclrtMemcpyAsync failed.");
-
     // Sync
     ACLRT_CHECK_WITH_MSG(aclrtSynchronizeStream(stream), "aclrtSynchronizeStream failed.");
 
