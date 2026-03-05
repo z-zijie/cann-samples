@@ -326,16 +326,6 @@ size_t segmentProduct(const std::vector<size_t> &vec, size_t i, size_t j)
     return product;
 }
 
-size_t calcTiling(size_t a, size_t r, RmsnormQuantTilingData &tilingData)
-{
-    size_t blockFactor = (a + BLOCK_NUM - 1) / BLOCK_NUM;
-    size_t blockNum = (a + blockFactor - 1) / blockFactor;
-    size_t blockTail = a - blockFactor * (blockNum - 1);
-    tilingData.blockFactor = blockFactor;
-    tilingData.blockTail = blockTail;
-    return blockNum;
-}
-
 int Init(int32_t deviceId, aclrtStream *stream)
 {
     // 固定写法，初始化
@@ -419,8 +409,6 @@ int32_t main(int argc, char *argv[])
     tilingData.a = a;
     tilingData.epsilon = espilon;
 
-    size_t blockNum = calcTiling(a, r, tilingData);
-
     outputType *yHost;
     outputType *yDevice;
 
@@ -458,7 +446,7 @@ int32_t main(int argc, char *argv[])
 
     // 调用算子
     rms_norm_quant<dataType, scaleType, offsetType, outputType>
-        <<<blockNum, 0, stream>>>(xDevice, gammaDevice, betaDevice, scaleDevice, offsetDevice, yDevice, tilingData);
+        <<<1, 0, stream>>>(xDevice, gammaDevice, betaDevice, scaleDevice, offsetDevice, yDevice, tilingData);
     CHECK_ACL(aclrtSynchronizeStream(stream));
     CHECK_ACL(aclrtMemcpy(yHost, ySize, yDevice, ySize, ACL_MEMCPY_DEVICE_TO_HOST));
 
