@@ -54,7 +54,6 @@ def verify_result():
     print("error ratio: %.4f, tolerance: %.4f" % (error_ratio, ERROR_TOL))
     return error_ratio <= ERROR_TOL
 
-
 if __name__ == '__main__':
     try:
         res = verify_result()
