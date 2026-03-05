@@ -106,8 +106,8 @@ private:
     AscendC::GlobalTensor<BType> bGlobal_;
     AscendC::GlobalTensor<CType> cGlobal_;
     AscendC::GlobalTensor<BiasType> biasGlobal_;
-    AscendC::GlobalTensor<fp8_e8m0_t> x1scaleGlobal_;
-    AscendC::GlobalTensor<fp8_e8m0_t> x2scaleGlobal_;
+    AscendC::GlobalTensor<fp8_e8m0_t> scaleAGlobal_;
+    AscendC::GlobalTensor<fp8_e8m0_t> scaleBGlobal_;
     bool isBias_{false};
 };
 
@@ -138,8 +138,8 @@ __aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS
         isBias_ = true;
         biasGlobal_.SetGlobalBuffer((__gm__ BiasType*)params.mmadParams.biasGmAddr);
     }
-    x1scaleGlobal_.SetGlobalBuffer((__gm__ fp8_e8m0_t*)params.mmadParams.pertokenScaleGmAddr);
-    x2scaleGlobal_.SetGlobalBuffer((__gm__ fp8_e8m0_t*)params.mmadParams.scaleGmAddr);
+    scaleAGlobal_.SetGlobalBuffer((__gm__ fp8_e8m0_t*)params.mmadParams.scaleAGmAddr);
+    scaleBGlobal_.SetGlobalBuffer((__gm__ fp8_e8m0_t*)params.mmadParams.scaleBGmAddr);
 }
 
 QBMM_MX_KERNEL_CLASS_TEM_PARAMS
@@ -169,8 +169,8 @@ __aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS
         mmadOp_(
             aGlobal_[Get<IDX_A_OFFSET>(blockOffset_)],
             bGlobal_[Get<IDX_B_OFFSET>(blockOffset_)],
-            x1scaleGlobal_[Get<IDX_X1SCALE_OFFSET>(blockOffset_)],
-            x2scaleGlobal_[Get<IDX_X2SCALE_OFFSET>(blockOffset_)],
+            scaleAGlobal_[Get<IDX_X1SCALE_OFFSET>(blockOffset_)],
+            scaleBGlobal_[Get<IDX_X2SCALE_OFFSET>(blockOffset_)],
             biasGlobal_[Get<IDX_BIAS_OFFSET>(blockOffset_)],
             cGlobal_[Get<IDX_C_OFFSET>(blockOffset_)], singleShape);
     }
