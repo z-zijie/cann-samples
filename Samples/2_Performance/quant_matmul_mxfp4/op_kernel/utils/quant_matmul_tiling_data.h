@@ -28,17 +28,16 @@ struct alignas(8) QuantMatmulTilingData {
     uint32_t baseN = 0;
     uint32_t baseK = 0;
     uint32_t scaleKL1 = 0;
-    uint16_t stepK = 0;
-    uint8_t nBufferNum = 0;
-    uint8_t isBias = 0;
-    uint8_t dbL0C = 0;
-
-    uint32_t mTailTile = 0;
-    uint32_t nTailTile = 0;
+    uint32_t mTailTile = 1;
+    uint32_t nTailTile = 1;
     uint32_t mBaseTailSplitCnt = 1;
     uint32_t nBaseTailSplitCnt = 1;
     uint32_t mTailMain = 0;
     uint32_t nTailMain = 0;
+    uint8_t stepK = 0;
+    uint8_t nBufferNum = 0;
+    uint8_t isBias = 0;
+    uint8_t dbL0C = 0;
 };
 #pragma pack(pop)
 
