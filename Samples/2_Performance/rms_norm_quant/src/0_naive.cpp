@@ -59,15 +59,13 @@ typedef int8_t offsetType;
 typedef int8_t outputType;
 
 static constexpr size_t BUF_NUM = 1;
-static constexpr size_t BLOCK_NUM = 64;
+static constexpr size_t BLOCK_NUM = 1;
 static constexpr int64_t BLOCK_BYTES = 32;
 static constexpr int MAX_ERROR_ELEM_NUM = 100;
 
 struct RmsnormQuantTilingData {
     int64_t a;
     int64_t r;
-    int64_t blockFactor;  // 单核处理a的行数
-    int64_t blockTail;    // 尾核处理a的行数
     float epsilon;
 };
 
@@ -126,18 +124,13 @@ public:
     {
         blockIdx_ = GetBlockIdx();
         tilingData_ = tilingData;
-        if (blockIdx_ == GetBlockNum() - 1) {
-            a_ = tilingData_->blockTail;
-        } else {
-            a_ = tilingData_->blockFactor;
-        }
 
-        xGm_.SetGlobalBuffer(x + blockIdx_ * tilingData_->blockFactor * tilingData_->r);
+        xGm_.SetGlobalBuffer(x);
         gammaGm_.SetGlobalBuffer(gamma);
         betaGm_.SetGlobalBuffer(beta);
         scaleGm_.SetGlobalBuffer(scale);
         offsetGm_.SetGlobalBuffer(offset);
-        yGm_.SetGlobalBuffer(y + blockIdx_ * tilingData_->blockFactor * tilingData_->r);
+        yGm_.SetGlobalBuffer(y);
 
         pipe_.InitBuffer(xInQueue_, BUF_NUM, AlignBytes(tilingData_->r, sizeof(DATA_TYPE)));
         pipe_.InitBuffer(gammaInQueue_, 1, AlignBytes(tilingData_->r, sizeof(DATA_TYPE)));
@@ -236,7 +229,7 @@ public:
     __aicore__ inline void Process()
     {
         CopyInR();
-        for (int64_t index = 0; index < a_; index++) {
+        for (int64_t index = 0; index < tilingData_->a; index++) {
             CopyInX(index);
             Compute();
             CopyOut(index);
