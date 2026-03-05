@@ -151,8 +151,10 @@ __aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS
         params.problemShape.m, params.problemShape.n, params.problemShape.k, params.qbmmParams.baseM,
         params.qbmmParams.baseN, params.qbmmParams.baseK);
     BlockCoord blockIdx;
+    const int64_t mTailTile = params.schParams.mTailTile;
+    const int64_t nTailTile = params.schParams.nTailTile;
     if ((bs.GetEndBlockIdx() + 1) * mTailTile * nTailTile <= AscendC::GetBlockNum()) {
-        bs.UpdateTailTile(params.schParams.mTailTile, params.schParams.nTailTile);
+        bs.UpdateTailTile(mTailTile, nTailTile);
     }
     while (bs.GetTileIdx(blockIdx)) {
         BlockShape singleShape = bs.GetBlockShape(blockIdx);
