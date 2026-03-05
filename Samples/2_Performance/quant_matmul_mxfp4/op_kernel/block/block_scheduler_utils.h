@@ -16,8 +16,6 @@
 #ifndef MATMUL_BLOCK_BLOCK_SCHEDULER_UTILS_H
 #define MATMUL_BLOCK_BLOCK_SCHEDULER_UTILS_H
 #include "../utils/common_utils.h"
-#include "../utils/status_utils.h"
-#include "../utils/host_utils.h"
 
 namespace Block {
 
