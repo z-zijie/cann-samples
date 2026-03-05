@@ -99,7 +99,7 @@ __global__ __aicore__ void QuantMatmulMxfp4Kernel(
     Params params = {
         {quantMatmulTilingData.m, quantMatmulTilingData.n, quantMatmulTilingData.k, 1},
         {dA, dB, dC, dBias, dScaleA, dScaleB},
-        {quantMatmulTilingData.stepKb * quantMatmulTilingData.baseK, quantMatmulTilingData.scaleKL1, quantMatmulTilingData.nBufferNum},
+        {quantMatmulTilingData.stepK * quantMatmulTilingData.baseK, quantMatmulTilingData.scaleKL1, quantMatmulTilingData.nBufferNum},
         {quantMatmulTilingData.baseM, quantMatmulTilingData.baseN, quantMatmulTilingData.mTailTile, quantMatmulTilingData.nTailTile,
          quantMatmulTilingData.mBaseTailSplitCnt, quantMatmulTilingData.nBaseTailSplitCnt, quantMatmulTilingData.mTailMain,
          quantMatmulTilingData.nTailMain},
@@ -206,14 +206,10 @@ int main(int argc, char* argv[])
     quantMatmulTilingData.baseN = 256;
     quantMatmulTilingData.baseK = 256;
     quantMatmulTilingData.scaleKL1 = 8192;
-    quantMatmulTilingData.stepKa = 2;
-    quantMatmulTilingData.stepKb = 2;
-    quantMatmulTilingData.scaleFactorA = 1;
-    quantMatmulTilingData.scaleFactorB = 1;
+    quantMatmulTilingData.stepK = 2;
     quantMatmulTilingData.nBufferNum = 2;
     quantMatmulTilingData.isBias = 0;
     quantMatmulTilingData.dbL0C = 1;
-    quantMatmulTilingData.reserved = 0;
 
     quantMatmulTilingData.mTailTile = 1;
     quantMatmulTilingData.nTailTile = 1;
