@@ -84,15 +84,10 @@ public:
     constexpr static int32_t C0_SIZE = AscendC::AuxGetC0Size<AType>();
     constexpr static int32_t BIAS_C0 = AscendC::AuxGetC0Size<BiasType>();
     constexpr static uint64_t BLOCK_CUBE = 16UL;
-    constexpr static uint64_t BLOCK_REDUCE_CUBE = 32UL;
     constexpr static uint64_t MXFP_GROUP_SIZE = 32UL;
     constexpr static uint64_t MXFP_DIVISOR_SIZE = 64UL;
     constexpr static uint64_t MXFP_MULTI_BASE_SIZE = 2;
     constexpr static uint64_t SCALE_BUFFER_NUM = 2;
-    constexpr static uint64_t EVEN_FACTOR = 2UL;
-    // Set unitflag state: 3 = final accumulation, 2 = non-final accumulation
-    constexpr static uint32_t FINAL_ACCUMULATION = 3;
-    constexpr static uint32_t NON_FINAL_ACCUMULATION = 2;
     uint64_t abL1LoopCnt_{0};
     uint64_t scaleLoopCnt_{0};
     uint64_t l0PingPong_{0};
