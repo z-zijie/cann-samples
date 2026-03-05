@@ -93,8 +93,7 @@ public:
     }
 
 private:
-    __aicore__ inline void ProcessSingleBatch(
-        const Params& params, BlockSchedulerOp& bs, uint64_t batchCnt, bool isTailRound);
+    __aicore__ inline void Process(const Params& params, BlockSchedulerOp& bs);
     __aicore__ inline TupleShape ToShapeTuple(const ProblemShape& problemShape)
     {
         return {problemShape.m, problemShape.n, problemShape.k};
@@ -127,7 +126,7 @@ __aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS
     BlockShape l0TileShape{params.qbmmParams.baseM, params.qbmmParams.baseN, params.qbmmParams.baseK, 0};
     bool enableL0CPingPong = (params.qbmmParams.dbL0C > 1);
     mmadOp_.Init(problemShape_, l0TileShape, params.l1Params, isBias_, enableL0CPingPong);
-    ProcessSingleBatch(params, bs, 0, true);
+    Process(params, bs);
 }
 
 QBMM_MX_KERNEL_CLASS_TEM_PARAMS
@@ -145,19 +144,15 @@ __aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS
 }
 
 QBMM_MX_KERNEL_CLASS_TEM_PARAMS
-__aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS>::ProcessSingleBatch(
-    const Params& params, BlockSchedulerOp& bs, uint64_t restBatch, bool isTailRound)
+__aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS>::Process(
+    const Params& params, BlockSchedulerOp& bs)
 {
     CoordClass coord(
         params.problemShape.m, params.problemShape.n, params.problemShape.k, params.qbmmParams.baseM,
         params.qbmmParams.baseN, params.qbmmParams.baseK);
     BlockCoord blockIdx;
-    auto& mTailTile = params.schParams.mTailTile;
-    auto& nTailTile = params.schParams.nTailTile;
-    // both tail of current batch and rest batch are tail round
-    if ((isTailRound && ((bs.GetEndBlockIdx() + 1) + (restBatch * bs.GetTotalCnt())) * mTailTile * nTailTile <=
-                            AscendC::GetBlockNum())) {
-        bs.UpdateTailTile(mTailTile, nTailTile);
+    if ((bs.GetEndBlockIdx() + 1) * mTailTile * nTailTile <= AscendC::GetBlockNum()) {
+        bs.UpdateTailTile(params.schParams.mTailTile, params.schParams.nTailTile);
     }
     while (bs.GetTileIdx(blockIdx)) {
         BlockShape singleShape = bs.GetBlockShape(blockIdx);
