@@ -18,7 +18,9 @@ set(CMAKE_CXX_COMPILER ${BISHENG})
 set(CMAKE_LINKER ${BISHENG})
 
 # rms_norm_quant
-add_executable(rms_norm_quant src/0_naive.cpp)
+# add_executable(rms_norm_quant src/0_naive.cpp)
+# add_executable(rms_norm_quant src/1_multi_core.cpp)
+add_executable(rms_norm_quant src/2_vf.cpp)
 target_include_directories(rms_norm_quant PRIVATE ${ASCEND_INCLUDE_DIRS})
 target_compile_definitions(rms_norm_quant PRIVATE SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_directories(rms_norm_quant PRIVATE ${ASCEND_DIR}/lib64)

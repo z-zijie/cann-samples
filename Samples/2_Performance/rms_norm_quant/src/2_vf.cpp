@@ -16,6 +16,7 @@
 #include "acl/acl.h"
 #include "acl/acl_rt.h"
 #include "kernel_operator.h"
+#include "kernel_micro_utils.h"
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -62,6 +63,28 @@ static constexpr size_t BUF_NUM = 1;
 static constexpr size_t BLOCK_NUM = 64;
 static constexpr int64_t BLOCK_BYTES = 32;
 static constexpr int MAX_ERROR_ELEM_NUM = 100;
+static constexpr uint32_t VL_FLOAT_SIZE = 256 / sizeof(float);
+
+static constexpr AscendC::MicroAPI::CastTrait castTraitB162B32 = {
+    AscendC::MicroAPI::RegLayout::ZERO,
+    AscendC::MicroAPI::SatMode::UNKNOWN,
+    AscendC::MicroAPI::MaskMergeMode::ZEROING,
+    AscendC::RoundMode::UNKNOWN,
+};
+
+static constexpr AscendC::MicroAPI::CastTrait castTraitB322Int16 = {
+    AscendC::MicroAPI::RegLayout::ZERO,
+    AscendC::MicroAPI::SatMode::NO_SAT,
+    AscendC::MicroAPI::MaskMergeMode::ZEROING,
+    AscendC::RoundMode::CAST_TRUNC,
+};
+
+static constexpr AscendC::MicroAPI::CastTrait castTraitB162Int8 = {
+    AscendC::MicroAPI::RegLayout::ZERO,
+    AscendC::MicroAPI::SatMode::NO_SAT,
+    AscendC::MicroAPI::MaskMergeMode::ZEROING,
+    AscendC::RoundMode::CAST_TRUNC,
+};
 
 struct RmsnormQuantTilingData {
     int64_t a;
@@ -84,6 +107,17 @@ __aicore__ inline int64_t Align(int64_t elementNum, int64_t bytes)
     return (elementNum * bytes + BLOCK_BYTES - 1) / BLOCK_BYTES * BLOCK_BYTES / bytes;
 }
 
+template <typename T1, typename T2>
+__aicore__ inline T1 CeilDiv(T1 x, T2 y)
+{
+    if (y != 0 && x != 0) {
+        const T1 quotient = x / y;
+        return (x % y != 0 && ((x ^ y) >= 0)) ? (quotient + 1) : quotient;
+    }
+
+    return x;
+}
+
 template <typename DATA_TYPE, typename SCALE_TYPE, typename OFFSET_TYPE, typename OUTPUT_DTYPE>
 class RmsNormQuant {
 private:
@@ -98,7 +132,6 @@ private:
     TBuf<QuePosition::VECCALC> gammaBuf_;
     TBuf<QuePosition::VECCALC> betaBuf_;
     TBuf<QuePosition::VECCALC> rmsBuf_;
-    TBuf<QuePosition::VECCALC> reduceBuf_;
 
     GlobalTensor<DATA_TYPE> xGm_;
     GlobalTensor<DATA_TYPE> gammaGm_;
@@ -147,8 +180,7 @@ public:
         pipe_.InitBuffer(xBuf_, AlignBytes(tilingData_->r, sizeof(float)));
         pipe_.InitBuffer(gammaBuf_, AlignBytes(tilingData_->r, sizeof(float)));
         pipe_.InitBuffer(betaBuf_, AlignBytes(tilingData_->r, sizeof(float)));
-        pipe_.InitBuffer(rmsBuf_, AlignBytes(tilingData_->r, sizeof(float)));
-        pipe_.InitBuffer(reduceBuf_, BLOCK_BYTES);
+        pipe_.InitBuffer(rmsBuf_, BLOCK_BYTES);
         
         scale_ = static_cast<float>(scaleGm_.GetValue(0));
         offset_ = static_cast<float>(offsetGm_.GetValue(0));
@@ -203,23 +235,77 @@ public:
         LocalTensor<float> gammaLocalTensor = gammaBuf_.Get<float>();
         LocalTensor<float> betaLocalTensor = betaBuf_.Get<float>();
         LocalTensor<float> rmsLocalTensor = rmsBuf_.Get<float>();
-        LocalTensor<float> reduceLocalTensor = reduceBuf_.Get<float>();
 
-        Cast(xLocalTensor, xInLocalTensor, RoundMode::CAST_NONE, tilingData_->r);
-        Mul(rmsLocalTensor, xLocalTensor, xLocalTensor, tilingData_->r);
-        ReduceSum(reduceLocalTensor, rmsLocalTensor, xInLocalTensor.template ReinterpretCast<float>(), tilingData_->r);
-        Duplicate(rmsLocalTensor, reduceLocalTensor, tilingData_->r);
+        __VEC_SCOPE__{
+            MicroAPI::RegTensor<half> vregXIn;
+            MicroAPI::RegTensor<float> vregX;
+            MicroAPI::RegTensor<float> vregXQuared;
+            MicroAPI::RegTensor<float> vregReduceSum;
+            MicroAPI::RegTensor<float> vregRms;
+            
+            MicroAPI::MaskReg preg = MicroAPI::CreateMask<float>();
+            uint32_t r = tilingData_->r;
+            uint16_t vfLoopNum = static_cast<uint16_t>(CeilDiv(r, VL_FLOAT_SIZE));
 
-        Muls(rmsLocalTensor, rmsLocalTensor, rInv_, tilingData_->r);
-        Adds(rmsLocalTensor, rmsLocalTensor, tilingData_->epsilon, tilingData_->r);
-        Sqrt(rmsLocalTensor, rmsLocalTensor, tilingData_->r);
-        Div(xLocalTensor, xLocalTensor, rmsLocalTensor, tilingData_->r);
-        Mul(rmsLocalTensor, xLocalTensor, gammaLocalTensor, tilingData_->r);
-        Add(rmsLocalTensor, rmsLocalTensor, betaLocalTensor, tilingData_->r);
-        Muls(rmsLocalTensor, rmsLocalTensor, scale_, tilingData_->r);
-        Adds(rmsLocalTensor, rmsLocalTensor, offset_, tilingData_->r);
-        Cast(rmsLocalTensor.template ReinterpretCast<half>(), rmsLocalTensor, RoundMode::CAST_NONE, tilingData_->r);
-        Cast(yLocalTensor, rmsLocalTensor.template ReinterpretCast<half>(), RoundMode::CAST_RINT, tilingData_->r);
+            __local_mem__ DATA_TYPE *xInAddr = (__local_mem__ DATA_TYPE *)xInLocalTensor.GetPhyAddr();
+            __local_mem__ float *xAddr = (__local_mem__ float *)xLocalTensor.GetPhyAddr();
+            __local_mem__ float *gammaAddr = (__local_mem__ float *)gammaLocalTensor.GetPhyAddr();
+            __local_mem__ float *betaAddr = (__local_mem__ float *)betaLocalTensor.GetPhyAddr();
+
+            __local_mem__ float *rmsAddr = (__local_mem__ float *)rmsLocalTensor.GetPhyAddr();
+            MicroAPI::Duplicate(vregReduceSum, 0);
+            for (uint16_t i = 0; i < vfLoopNum; i++) {
+                preg = MicroAPI::UpdateMask<float>(r);
+                DataCopy<half, MicroAPI::LoadDist::DIST_UNPACK_B16>(vregXIn, xInAddr + i * VL_FLOAT_SIZE);
+                Cast<float, half, castTraitB162B32>(vregX, vregXIn, preg);
+                MicroAPI::Mul(vregXQuared, vregX, vregX, preg);
+                MicroAPI::Add(vregReduceSum, vregReduceSum, vregXQuared, preg);
+                MicroAPI::DataCopy(xAddr + i * VL_FLOAT_SIZE, vregX, preg);
+            }
+
+            r = tilingData_->r;
+            preg = MicroAPI::UpdateMask<float>(r);
+            MicroAPI::ReduceSum(vregReduceSum, vregReduceSum, preg);
+            preg = MicroAPI::CreateMask<float, MicroAPI:: MaskPattern::VL1>();
+            MicroAPI::Muls(vregRms, vregReduceSum, rInv_, preg);
+            MicroAPI::Adds(vregRms, vregRms, tilingData_->epsilon, preg);
+            MicroAPI::Sqrt(vregRms, vregRms, preg);
+            MicroAPI::DataCopy(rmsAddr, vregRms, preg);
+        }
+
+
+        __VEC_SCOPE__{
+            MicroAPI::RegTensor<float> vregX, vregGamma, vregBeta, vregRms, vregNorm;
+            MicroAPI::RegTensor<half> VregYFp16;
+            MicroAPI::RegTensor<int8_t> VregY;
+            MicroAPI::MaskReg preg = MicroAPI::CreateMask<float>();
+            uint32_t r = tilingData_->r;
+            uint16_t vfLoopNum = static_cast<uint16_t>(CeilDiv(r, VL_FLOAT_SIZE));
+            
+            __local_mem__ float *xAddr = (__local_mem__ float *)xLocalTensor.GetPhyAddr();
+            __local_mem__ float *gammaAddr = (__local_mem__ float *)gammaLocalTensor.GetPhyAddr();
+            __local_mem__ float *betaAddr = (__local_mem__ float *)betaLocalTensor.GetPhyAddr();
+            __local_mem__ float *rmsAddr = (__local_mem__ float *)rmsLocalTensor.GetPhyAddr();
+            __local_mem__ int8_t *yAddr = (__local_mem__ int8_t *)yLocalTensor.GetPhyAddr();
+            
+            
+            DataCopy<float, AscendC::MicroAPI::LoadDist::DIST_BRC_B32>(vregRms, rmsAddr);
+            for (uint16_t i = 0; i < vfLoopNum; i++) {
+                preg = MicroAPI::UpdateMask<float>(r);
+                AscendC::MicroAPI::DataCopy(vregX, xAddr + i * VL_FLOAT_SIZE);
+                AscendC::MicroAPI::DataCopy(vregGamma, gammaAddr + i * VL_FLOAT_SIZE);
+                AscendC::MicroAPI::DataCopy(vregBeta, betaAddr + i * VL_FLOAT_SIZE);
+                MicroAPI::Div(vregNorm, vregX, vregRms, preg);
+                MicroAPI::Mul(vregNorm, vregNorm, vregGamma, preg);
+                MicroAPI::Add(vregNorm, vregNorm, vregBeta, preg);
+                MicroAPI::Muls(vregNorm, vregNorm, scale_, preg);
+                MicroAPI::Adds(vregNorm, vregNorm, offset_, preg);
+                Cast<half, float, castTraitB322Int16>(VregYFp16, vregNorm, preg);
+                Cast<int8_t, half, castTraitB162Int8>(VregY, VregYFp16, preg);
+                MicroAPI::DataCopy<int8_t, MicroAPI::StoreDist::DIST_PACK4_B32>(yAddr + i * VL_FLOAT_SIZE, VregY, preg);
+            }
+        }
+
         xInQueue_.FreeTensor(xInLocalTensor);
         yOutQueue_.EnQue<int8_t>(yLocalTensor);
     }

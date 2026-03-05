@@ -9,7 +9,7 @@
  */
 
 /*!
- * \file main.cpp
+ * \file 0_naive.cpp
  * \brief
  */
 
