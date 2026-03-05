@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2025 Huawei Technologies Co., Ltd.
+ * Copyright (c) 2026 Huawei Technologies Co., Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
  * CANN Open Software License Agreement Version 2.0 (the "License").
  * Please refer to the License for details. You may not use this file except in compliance with the License.
@@ -9,12 +9,12 @@
  */
 
  /*!
- * \file qbmm_block_scheduler.h
+ * \file block_scheduler_mxfp4.h
  * \brief
  */
 
-#ifndef CMCT_QBMM_BLOCK_SCHEDULER_H
-#define CMCT_QBMM_BLOCK_SCHEDULER_H
+#ifndef BLOCK_SCHEDULER_MXFP4_H
+#define BLOCK_SCHEDULER_MXFP4_H
 
 #include "./block_scheduler_utils.h"
 #include "./block_scheduler_policy.h"

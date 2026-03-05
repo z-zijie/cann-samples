@@ -17,7 +17,7 @@
 #define UTILS_COORD_UTILS_H
 
 #include "common_utils.h"
-#include "quant_batch_matmul_constant.h"
+#include "quant_matmul_constant.h"
 
 constexpr uint32_t OUTER_SIZE = 16;
 constexpr int IDX_M_BASE_NORM_CNT = 0;

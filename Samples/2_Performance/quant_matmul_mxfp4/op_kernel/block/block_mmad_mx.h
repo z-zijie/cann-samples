@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2025 Huawei Technologies Co., Ltd.
+ * Copyright (c) 2026 Huawei Technologies Co., Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
  * CANN Open Software License Agreement Version 2.0 (the "License").
  * Please refer to the License for details. You may not use this file except in compliance with the License.
@@ -17,7 +17,7 @@
 #define MATMUL_BLOCK_MMAD_MX_QUANT_H
 #include "../utils/layout_utils.h"
 #include "../utils/common_utils.h"
-#include "../utils/quant_batch_matmul_constant.h"
+#include "../utils/quant_matmul_constant.h"
 #include "../utils/tuple_utils.h"
 #include "../policy/dispatch_policy.h"
 

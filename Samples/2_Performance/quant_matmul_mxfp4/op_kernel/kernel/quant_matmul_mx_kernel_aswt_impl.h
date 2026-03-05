@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
+ * Copyright (c) 2026 Huawei Technologies Co., Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
  * CANN Open Software License Agreement Version 2.0 (the "License").
  * Please refer to the License for details. You may not use this file except in compliance with the License.
@@ -22,11 +22,11 @@
 #include "kernel_operator_intf.h"
 #endif
 #include "../utils/common_utils.h"
-#include "../utils/quant_batch_matmul_constant.h"
+#include "../utils/quant_matmul_constant.h"
 #include "../utils/layout_utils.h"
 #include "../utils/tuple_utils.h"
 #include "../utils/coord_utils.h"
-#include "../block/block_scheduler_qbmm.h"
+#include "../block/block_scheduler_mxfp4.h"
 #include "../block/block_mmad_mx.h"
 
 namespace Kernel {

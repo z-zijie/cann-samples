@@ -13,8 +13,8 @@
  * \brief
  */
 
-#ifndef MATMUL_BLOCK_BLOCK_SCHEDULER_UTILS_H
-#define MATMUL_BLOCK_BLOCK_SCHEDULER_UTILS_H
+#ifndef BLOCK_SCHEDULER_UTILS_H
+#define BLOCK_SCHEDULER_UTILS_H
 #include "../utils/common_utils.h"
 
 namespace Block {
