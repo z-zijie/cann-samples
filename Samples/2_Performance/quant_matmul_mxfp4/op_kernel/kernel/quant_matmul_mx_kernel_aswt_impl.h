@@ -69,19 +69,6 @@ public:
     using BlockSchedulerParams = typename BlockSchedulerOp::Params;
 
     struct QBMMTiling {
-        uint32_t batchA1;
-        uint32_t batchA2;
-        uint32_t batchA3;
-        uint32_t batchA4;
-        uint32_t batchB1;
-        uint32_t batchB2;
-        uint32_t batchB3;
-        uint32_t batchB4;
-        uint32_t batchC1;
-        uint32_t batchC2;
-        uint32_t batchC3;
-        uint32_t batchC4;
-        uint32_t biasThreeDim;
         uint32_t baseM;
         uint32_t baseN;
         uint32_t baseK;
@@ -108,12 +95,10 @@ public:
 private:
     __aicore__ inline void ProcessSingleBatch(
         const Params& params, BlockSchedulerOp& bs, uint64_t batchCnt, bool isTailRound);
-    __aicore__ inline void ProcessWithBatch(const Params& params, BlockSchedulerOp& bs);
     __aicore__ inline TupleShape ToShapeTuple(const ProblemShape& problemShape)
     {
         return {problemShape.m, problemShape.n, problemShape.k};
     }
-    __aicore__ inline void AddBatchOffset(const Params &params);
 
 private:
     BlockMmad mmadOp_;
@@ -125,13 +110,7 @@ private:
     AscendC::GlobalTensor<BiasType> biasGlobal_;
     AscendC::GlobalTensor<fp8_e8m0_t> x1scaleGlobal_;
     AscendC::GlobalTensor<fp8_e8m0_t> x2scaleGlobal_;
-    uint64_t blockIdx_;
-    uint64_t batchCOffset_{0};
-    uint64_t batchAOffset_{0};
-    uint64_t batchBOffset_{0};
-    bool isBiasThreeDim_{false};
     bool isBias_{false};
-    bool needUpdateTail_{false};
 };
 
 QBMM_MX_KERNEL_CLASS_TEM_PARAMS
@@ -148,12 +127,7 @@ __aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS
     BlockShape l0TileShape{params.qbmmParams.baseM, params.qbmmParams.baseN, params.qbmmParams.baseK, 0};
     bool enableL0CPingPong = (params.qbmmParams.dbL0C > 1);
     mmadOp_.Init(problemShape_, l0TileShape, params.l1Params, isBias_, enableL0CPingPong);
-
-    if (params.problemShape.b == 1) {
-        ProcessSingleBatch(params, bs, 0, true);
-    }
-
-    ProcessWithBatch(params, bs);
+    ProcessSingleBatch(params, bs, 0, true);
 }
 
 QBMM_MX_KERNEL_CLASS_TEM_PARAMS
@@ -163,84 +137,11 @@ __aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS
     bGlobal_.SetGlobalBuffer((__gm__ BType*)params.mmadParams.bGmAddr);
     cGlobal_.SetGlobalBuffer((__gm__ CType*)params.mmadParams.cGmAddr);
     if (params.qbmmParams.isBias == 1) {
-        if (params.qbmmParams.biasThreeDim == 1) {
-            isBiasThreeDim_ = true;
-        }
         isBias_ = true;
         biasGlobal_.SetGlobalBuffer((__gm__ BiasType*)params.mmadParams.biasGmAddr);
     }
     x1scaleGlobal_.SetGlobalBuffer((__gm__ fp8_e8m0_t*)params.mmadParams.pertokenScaleGmAddr);
     x2scaleGlobal_.SetGlobalBuffer((__gm__ fp8_e8m0_t*)params.mmadParams.scaleGmAddr);
-}
-
-QBMM_MX_KERNEL_CLASS_TEM_PARAMS
-__aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS>::ProcessWithBatch(
-    const Params& params, BlockSchedulerOp& bs)
-{
-    uint64_t batchC3C4 = static_cast<uint64_t>(params.qbmmParams.batchC3) * params.qbmmParams.batchC4;
-    uint64_t batchC2C3C4 = params.qbmmParams.batchC2 * batchC3C4;
-    uint64_t batchB3B4 = static_cast<uint64_t>(params.qbmmParams.batchB3) * params.qbmmParams.batchB4;
-    uint64_t batchB2B3B4 = params.qbmmParams.batchB2 * batchB3B4;
-    uint64_t batchA3A4 = static_cast<uint64_t>(params.qbmmParams.batchA3) * params.qbmmParams.batchA4;
-    uint64_t batchA2A3A4 = params.qbmmParams.batchA2 * batchA3A4;
-    uint32_t multiA1C1 = params.qbmmParams.batchA1 / params.qbmmParams.batchC1;
-    uint32_t multiA2C2 = params.qbmmParams.batchA2 / params.qbmmParams.batchC2;
-    uint32_t multiA3C3 = params.qbmmParams.batchA3 / params.qbmmParams.batchC3;
-    uint32_t multiA4C4 = params.qbmmParams.batchA4 / params.qbmmParams.batchC4;
-    uint32_t multiB1C1 = params.qbmmParams.batchB1 / params.qbmmParams.batchC1;
-    uint32_t multiB2C2 = params.qbmmParams.batchB2 / params.qbmmParams.batchC2;
-    uint32_t multiB3C3 = params.qbmmParams.batchB3 / params.qbmmParams.batchC3;
-    uint32_t multiB4C4 = params.qbmmParams.batchB4 / params.qbmmParams.batchC4;
-
-    uint64_t batchC1Offset = 0;
-    uint64_t batchA1Offset = 0;
-    uint64_t batchB1Offset = 0;
-    uint64_t curBatchC = 1UL;
-    uint64_t totalCnt = bs.GetTotalCnt() * params.problemShape.b;
-    for (uint64_t b1Index = 0; b1Index < params.qbmmParams.batchC1; ++b1Index) {
-        uint64_t batchC2Offset = batchC1Offset;
-        uint64_t batchA2Offset = batchA1Offset;
-        uint64_t batchB2Offset = batchB1Offset;
-        for (uint64_t b2Index = 0; b2Index < params.qbmmParams.batchC2; ++b2Index) {
-            uint64_t batchC3Offset = batchC2Offset;
-            uint64_t batchA3Offset = batchA2Offset;
-            uint64_t batchB3Offset = batchB2Offset;
-            for (uint64_t b3Index = 0; b3Index < params.qbmmParams.batchC3; ++b3Index) {
-                batchCOffset_ = batchC3Offset;
-                batchAOffset_ = batchA3Offset;
-                batchBOffset_ = batchB3Offset;
-                for (uint64_t b4Index = 0; b4Index < params.qbmmParams.batchC4; ++b4Index) {
-                    bool isTailRound =
-                        curBatchC * bs.GetTotalCnt() > (totalCnt / AscendC::GetBlockNum()) * AscendC::GetBlockNum();
-                    ProcessSingleBatch(params, bs, (params.problemShape.b - curBatchC), isTailRound);
-                    curBatchC++;
-                    batchCOffset_ += 1;
-                    batchAOffset_ += multiA4C4;
-                    batchBOffset_ += multiB4C4;
-                }
-                batchC3Offset += params.qbmmParams.batchC4;
-                batchA3Offset += params.qbmmParams.batchA4 * static_cast<uint64_t>(multiA3C3);
-                batchB3Offset += params.qbmmParams.batchB4 * static_cast<uint64_t>(multiB3C3);
-            }
-            batchC2Offset += batchC3C4;
-            batchA2Offset += batchA3A4 * multiA2C2;
-            batchB2Offset += batchB3B4 * multiB2C2;
-        }
-        batchC1Offset += batchC2C3C4;
-        batchA1Offset += batchA2A3A4 * multiA1C1;
-        batchB1Offset += batchB2B3B4 * multiB1C1;
-    }
-}
-
-QBMM_MX_KERNEL_CLASS_TEM_PARAMS
-__aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS>::AddBatchOffset(const Params &params)
-{
-    Get<IDX_A_OFFSET>(blockOffset_) += batchAOffset_ * params.problemShape.m * params.problemShape.k;
-    Get<IDX_B_OFFSET>(blockOffset_) += batchBOffset_ * params.problemShape.n * params.problemShape.k;
-    Get<IDX_C_OFFSET>(blockOffset_) += batchCOffset_ * params.problemShape.m * params.problemShape.n;
-    if (isBiasThreeDim_) {
-        Get<IDX_BIAS_OFFSET>(blockOffset_) += batchCOffset_ * params.problemShape.n;
-    }
 }
 
 QBMM_MX_KERNEL_CLASS_TEM_PARAMS
@@ -254,10 +155,8 @@ __aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS
     auto& mTailTile = params.schParams.mTailTile;
     auto& nTailTile = params.schParams.nTailTile;
     // both tail of current batch and rest batch are tail round
-    if (needUpdateTail_ ||
-        (isTailRound && ((bs.GetEndBlockIdx() + 1) + (restBatch * bs.GetTotalCnt())) * mTailTile * nTailTile <=
+    if ((isTailRound && ((bs.GetEndBlockIdx() + 1) + (restBatch * bs.GetTotalCnt())) * mTailTile * nTailTile <=
                             AscendC::GetBlockNum())) {
-        needUpdateTail_ = true;
         bs.UpdateTailTile(mTailTile, nTailTile);
     }
     while (bs.GetTileIdx(blockIdx)) {
@@ -271,7 +170,6 @@ __aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS
             Get<IDX_M_TAIL_SPLIT_TILEIDX>(singleShape),
             Get<IDX_N_TAIL_SPLIT_TILEIDX>(singleShape), loadBalanceInfo);
 
-        AddBatchOffset(params);
         mmadOp_(
             aGlobal_[Get<IDX_A_OFFSET>(blockOffset_)],
             bGlobal_[Get<IDX_B_OFFSET>(blockOffset_)],

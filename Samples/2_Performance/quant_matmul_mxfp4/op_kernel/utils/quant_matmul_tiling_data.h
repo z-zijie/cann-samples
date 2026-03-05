@@ -21,30 +21,6 @@
 
 #pragma pack(push, 8)
 struct alignas(8) QuantMatmulTilingData {
-    uint32_t batchA = 0;
-    uint32_t batchB = 0;
-    uint32_t batchC = 0;
-    uint32_t batchA1 = 0;
-    uint32_t batchA2 = 0;
-    uint32_t batchA3 = 0;
-    uint32_t batchA4 = 0;
-    uint32_t batchB1 = 0;
-    uint32_t batchB2 = 0;
-    uint32_t batchB3 = 0;
-    uint32_t batchB4 = 0;
-    uint32_t batchC1 = 0;
-    uint32_t batchC2 = 0;
-    uint32_t batchC3 = 0;
-    uint32_t batchC4 = 0;
-    uint32_t x1QuantMode = 0;
-    uint32_t x2QuantMode = 0;
-    uint32_t biasThreeDim = 0;
-    uint32_t biasDtype = 0;
-    uint32_t groupSizeM = 0;
-    uint32_t groupSizeN = 0;
-    uint32_t groupSizeK = 0;
-
-
     uint32_t m = 0;
     uint32_t n = 0;
     uint32_t k = 0;

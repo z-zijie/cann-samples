@@ -92,25 +92,12 @@ __global__ __aicore__ void QuantMatmulMxfp4Kernel(
     using Params = typename QuantMatmulKernelImpl::Params;
 
     using QBMMTiling = typename QuantMatmulKernelImpl::QBMMTiling;
-    QBMMTiling qbmmParams{quantMatmulTilingData.batchA1,
-                          quantMatmulTilingData.batchA2,
-                          quantMatmulTilingData.batchA3,
-                          quantMatmulTilingData.batchA4,
-                          quantMatmulTilingData.batchB1,
-                          quantMatmulTilingData.batchB2,
-                          quantMatmulTilingData.batchB3,
-                          quantMatmulTilingData.batchB4,
-                          quantMatmulTilingData.batchC1,
-                          quantMatmulTilingData.batchC2,
-                          quantMatmulTilingData.batchC3,
-                          quantMatmulTilingData.batchC4,
-                          quantMatmulTilingData.biasThreeDim,
-                          quantMatmulTilingData.baseM, quantMatmulTilingData.baseN, quantMatmulTilingData.baseK,
+    QBMMTiling qbmmParams{quantMatmulTilingData.baseM, quantMatmulTilingData.baseN, quantMatmulTilingData.baseK,
                           static_cast<uint32_t>(quantMatmulTilingData.isBias),
                           static_cast<uint32_t>(quantMatmulTilingData.dbL0C)};
 
     Params params = {
-        {quantMatmulTilingData.m, quantMatmulTilingData.n, quantMatmulTilingData.k, quantMatmulTilingData.batchC},
+        {quantMatmulTilingData.m, quantMatmulTilingData.n, quantMatmulTilingData.k, 1},
         {dA, dB, dC, dBias, dScaleA, dScaleB},
         {quantMatmulTilingData.stepKb * quantMatmulTilingData.baseK, quantMatmulTilingData.scaleKL1, quantMatmulTilingData.nBufferNum},
         {quantMatmulTilingData.baseM, quantMatmulTilingData.baseN, quantMatmulTilingData.mTailTile, quantMatmulTilingData.nTailTile,
@@ -212,29 +199,6 @@ int main(int argc, char* argv[])
     QuantMatmulTilingData quantMatmulTilingData;
     // QuantMatmulTilingEngine quantMatmulTilingEngine;
     // quantMatmulTilingEngine.GetTiling(m, n, k, true, false, quantMatmulTilingData);
-    quantMatmulTilingData.batchA = 1;
-    quantMatmulTilingData.batchB = 1;
-    quantMatmulTilingData.batchC = 1;
-    quantMatmulTilingData.batchA1 = 1;
-    quantMatmulTilingData.batchA2 = 1;
-    quantMatmulTilingData.batchA3 = 1;
-    quantMatmulTilingData.batchA4 = 1;
-    quantMatmulTilingData.batchB1 = 1;
-    quantMatmulTilingData.batchB2 = 1;
-    quantMatmulTilingData.batchB3 = 1;
-    quantMatmulTilingData.batchB4 = 1;
-    quantMatmulTilingData.batchC1 = 1;
-    quantMatmulTilingData.batchC2 = 1;
-    quantMatmulTilingData.batchC3 = 1;
-    quantMatmulTilingData.batchC4 = 1;
-    quantMatmulTilingData.x1QuantMode = 8;
-    quantMatmulTilingData.x2QuantMode = 8;
-    quantMatmulTilingData.biasThreeDim = 0;
-    quantMatmulTilingData.biasDtype = 3;
-    quantMatmulTilingData.groupSizeM = 1;
-    quantMatmulTilingData.groupSizeN = 1;
-    quantMatmulTilingData.groupSizeK = 32;
-
     quantMatmulTilingData.m = m;
     quantMatmulTilingData.n = n;
     quantMatmulTilingData.k = k;
