@@ -12,28 +12,29 @@
 # ----------------------------------------------------------------------------------------------------------
 
 import os
+import sys
+import math
+import logging
 import numpy as np
 import en_dtypes
-import math
 import torch
 import torch_npu
-import logging
 
 
 
-def gen_golden_data_simple():
-    M = 8192
-    K = 16384
-    N = 8192
-    cpu_x1 = torch.randint(-10, 10, (M, int(K/2)), dtype=torch.int8)
-    cpu_x2 = torch.randint(-10, 10, (N, int(K/2)), dtype=torch.int8)
-    scale_x2 = torch.randint(-10, 10, (N, math.ceil(K/64), 2), dtype=torch.int8)
-    scale_x1 = torch.randint(-10, 10, (M, math.ceil(K/64), 2), dtype=torch.int8)
+def gen_golden_data_simple(m, k, n):
+    M = m
+    K = k
+    N = n
+    cpu_x1 = torch.randint(-10, 10, (M, int(K / 2)), dtype=torch.int8)
+    cpu_x2 = torch.randint(-10, 10, (N, int(K / 2)), dtype=torch.int8)
+    scale_x1 = torch.randint(-10, 10, (M, math.ceil(K / 64), 2), dtype=torch.int8)
+    scale_x2 = torch.randint(-10, 10, (N, math.ceil(K / 64), 2), dtype=torch.int8)
 
     x1_npu = cpu_x1.npu()
     x2_npu = cpu_x2.npu().transpose(-1, -2)
-    scale_x2_npu = scale_x2.npu().transpose(0, 1)
     scale_x1_npu = scale_x1.npu()
+    scale_x2_npu = scale_x2.npu().transpose(0, 1)
 
     #调用npu_quant_matmul函数，指定x1_dtype和x2_dtpe为torch_npu.float4_e2m1fn_x2
     npu_out = torch_npu.npu_quant_matmul(
@@ -43,7 +44,7 @@ def gen_golden_data_simple():
         pertoken_scale=scale_x1_npu,
         pertoken_scale_dtype=torch_npu.float8_e8m0fnu,
         output_dtype=torch.float32,
-        group_sizes=[1,1,32],
+        group_sizes=[1, 1, 32],
         x1_dtype=torch_npu.float4_e2m1fn_x2,
         x2_dtype=torch_npu.float4_e2m1fn_x2,
         scale_dtype=torch_npu.float8_e8m0fnu
@@ -57,4 +58,12 @@ def gen_golden_data_simple():
     npu_out.numpy().tofile("./output/golden_out.bin")
 
 if __name__ == "__main__":
-    gen_golden_data_simple()
+    if len(sys.argv) != 4:
+        print("Usage: python3 gen_data.py m k n")
+        sys.exit(1)
+
+    # 获取参数
+    m = int(sys.argv[1])
+    k = int(sys.argv[2])
+    n = int(sys.argv[3])
+    gen_golden_data_simple(m, k, n)

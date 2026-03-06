@@ -13,56 +13,23 @@
  * \brief
  */
 #include <iostream>
-#include <vector>
-#include <cmath>
+#include <cstdlib>
 #include <memory>
-#include <random>
+
 #include "acl/acl.h"
 #include "tiling/platform/platform_ascendc.h"
-#include <cstdlib>
 #include "kernel_operator.h"
-#include "host_utils/data_utils.h"
+
+#include "host_utils/common_utils.h"
+#include "host_utils/io_utils.h"
 #include "kernel_utils/common_utils.h"
 #include "kernel_utils/layout_utils.h"
-#include "kernel_utils/quant_matmul_tiling_data.h"
 #include "../../include/block/block_mmad_mx.h"
 #include "../../include/block/block_scheduler_policy.h"
 #include "../../include/block/block_scheduler_mx.h"
 #include "../../include/kernel/quant_matmul_mx_kernel_aswt_impl.h"
 #include "../../include/policy/dispatch_policy.h"
-
-// todo: 这里宏可以移到公共文件中
-// 暂时没有 aclrtGetErrorString
-#define ACLRT_CHECK_WITH_MSG(call, msg)                                                             \
-    do {                                                                                            \
-        aclError err = call;                                                                        \
-        if (err != ACL_SUCCESS) {                                                                   \
-            std::cerr << "*** ACLRT Error in " << __FILE__ << " at line " << __LINE__ << std::endl; \
-            std::cerr << msg << std::endl;                                                          \
-            exit(EXIT_FAILURE);                                                                     \
-        }                                                                                           \
-    } while (0)
-
-#define ACLRT_KERNEL_CHECK(msg)                                                                     \
-    do {                                                                                            \
-        aclError err = aclrtGetLastError(aclrtLastErrLevel::ACL_RT_THREAD_LEVEL);                   \
-        if (err != ACL_SUCCESS) {                                                                   \
-            std::cerr << "*** ACLRT Error in " << __FILE__ << " at line " << __LINE__ << std::endl; \
-            std::cerr << msg << std::endl;                                                          \
-            exit(EXIT_FAILURE);                                                                     \
-        }                                                                                           \
-    } while (0)
-
-#define CHECK_COND(cond, msg)                           \
-    do {                                                \
-        if (!(cond)) {                                  \
-            std::cerr << "ERROR: " << msg << std::endl; \
-            exit(EXIT_FAILURE);                         \
-        }                                               \
-    } while (0)
-
-// constexpr static uint32_t MX_GROUP_SIZE = 32;
-constexpr static uint32_t MX_DIVISOR_SIZE = 64;
+#include "../../include/utils/quant_matmul_tiling_data.h"
 
 __global__ __aicore__ void QuantMatmulMxfp4Kernel(
     GM_ADDR dA, GM_ADDR dB, GM_ADDR dScaleA, GM_ADDR dScaleB, GM_ADDR dBias, GM_ADDR dC,
@@ -82,6 +49,8 @@ __global__ __aicore__ void QuantMatmulMxfp4Kernel(
     using L0TileShape = AscendC::Shape<_0, _0, _0>;
 
     using BlockScheduler = QuantMatmulMxAswtScheduler;
+    // disable A full load: QuantMatmulMxMultiBlockWithAswt<>
+    // enable A full load: QuantMatmulMxMultiBlockWithAswt<AscendC::Shape<_0, _0, _0, _0>, A_FULL_LOAD_MODE>
     using DispatchPolicy = QuantMatmulMxMultiBlockWithAswt<>;
     using BlockMmad = Block::BlockMmadMx<
         DispatchPolicy, L1TileShape, L0TileShape, AType, layoutA, BType, layoutB, CType, layoutC, BiasType, layoutC, void>;
@@ -144,9 +113,31 @@ void parseArguments(int argc, char* argv[], int& m, int& k, int& n)
         throw std::invalid_argument("ERROR: k must be an even number");
     }
 
-    if ((k / 32) % 2 != 0) {
-        throw std::invalid_argument("ERROR: k should satisfy that ceil(k, 32) is an even number");
+    if (CeilDiv(k, 32) % 2 != 0) {
+        throw std::invalid_argument("ERROR: k should satisfy that CeilDiv(k, 32) is an even number");
     }
+}
+
+void SetTilingData(QuantMatmulTilingData& quantMatmulTilingData, int m, int n, int k)
+{
+    quantMatmulTilingData.m = m;
+    quantMatmulTilingData.n = n;
+    quantMatmulTilingData.k = k;
+    quantMatmulTilingData.baseM = 256;
+    quantMatmulTilingData.baseN = 256;
+    quantMatmulTilingData.baseK = 256;
+    quantMatmulTilingData.scaleKL1 = 8192;
+    quantMatmulTilingData.stepK = 2;
+    quantMatmulTilingData.nBufferNum = 2;
+    quantMatmulTilingData.isBias = 0;
+    quantMatmulTilingData.dbL0C = 1;
+
+    quantMatmulTilingData.mTailTile = 1;
+    quantMatmulTilingData.nTailTile = 1;
+    quantMatmulTilingData.mBaseTailSplitCnt = 1;
+    quantMatmulTilingData.nBaseTailSplitCnt = 1;
+    quantMatmulTilingData.mTailMain = 0;
+    quantMatmulTilingData.nTailMain = 0;
 }
 
 int main(int argc, char* argv[])
@@ -165,11 +156,11 @@ int main(int argc, char* argv[])
     int32_t deviceId = 0;
     aclrtStream stream;
     uint32_t deviceCount;
-    ACLRT_CHECK_WITH_MSG(aclrtGetDeviceCount(&deviceCount), "Failed to get ACLRT devices");
-    CHECK_COND(deviceCount > 0U, "No ACLRT devices found");
-    ACLRT_CHECK_WITH_MSG(aclInit(nullptr), "aclInit failed.");
-    ACLRT_CHECK_WITH_MSG(aclrtSetDevice(deviceId), "aclrtSetDevice failed.");
-    ACLRT_CHECK_WITH_MSG(aclrtCreateStream(&stream), "aclrtCreateStream failed.");
+    CHECK_COND(aclrtGetDeviceCount(&deviceCount) == ACL_SUCCESS, "Failed to get ACLRT devices.");
+    CHECK_COND(deviceCount > 0U, "No ACLRT devices found.");
+    CHECK_COND(aclInit(nullptr) == ACL_SUCCESS, "aclInit failed.");
+    CHECK_COND(aclrtSetDevice(deviceId) == ACL_SUCCESS, "aclrtSetDevice failed.");
+    CHECK_COND(aclrtCreateStream(&stream) == ACL_SUCCESS, "aclrtCreateStream failed.");
 
     // host data
     uint8_t* hA = nullptr;
@@ -190,40 +181,27 @@ int main(int argc, char* argv[])
     // fp4 needs to be divided by 2.
     size_t sizeA = ((m * k + 1) >> 1) * sizeof(uint8_t);
     size_t sizeB = ((k * n + 1) >> 1) * sizeof(uint8_t);
-    size_t sizeScaleA = ((m * (k + MX_DIVISOR_SIZE) - 1 / MX_DIVISOR_SIZE)) * sizeof(uint8_t);
-    size_t sizeScaleB = ((n * (k + MX_DIVISOR_SIZE) - 1 / MX_DIVISOR_SIZE)) * sizeof(uint8_t);
+    size_t sizeScaleA = (m * CeilDiv(k, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE) * sizeof(uint8_t);
+    size_t sizeScaleB = (n * CeilDiv(k, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE) * sizeof(uint8_t);
     size_t sizeBias = n * sizeof(float);
     size_t sizeC = m * n * sizeof(float);
 
     QuantMatmulTilingData quantMatmulTilingData;
-    // QuantMatmulTilingEngine quantMatmulTilingEngine;
-    // quantMatmulTilingEngine.GetTiling(m, n, k, true, false, quantMatmulTilingData);
-    quantMatmulTilingData.m = m;
-    quantMatmulTilingData.n = n;
-    quantMatmulTilingData.k = k;
-    quantMatmulTilingData.baseM = 256;
-    quantMatmulTilingData.baseN = 256;
-    quantMatmulTilingData.baseK = 256;
-    quantMatmulTilingData.scaleKL1 = 8192;
-    quantMatmulTilingData.stepK = 2;
-    quantMatmulTilingData.nBufferNum = 2;
-    quantMatmulTilingData.isBias = 0;
-    quantMatmulTilingData.dbL0C = 1;
-
-    quantMatmulTilingData.mTailTile = 1;
-    quantMatmulTilingData.nTailTile = 1;
-    quantMatmulTilingData.mBaseTailSplitCnt = 1;
-    quantMatmulTilingData.nBaseTailSplitCnt = 1;
-    quantMatmulTilingData.mTailMain = 0;
-    quantMatmulTilingData.nTailMain = 0;
+    SetTilingData(quantMatmulTilingData, m, n, k);
 
     // malloc pinned memory
-    ACLRT_CHECK_WITH_MSG(aclrtMallocHost((void**)&hA, sizeA), "aclrtMallocHost failed.");
-    ACLRT_CHECK_WITH_MSG(aclrtMallocHost((void**)&hB, sizeB), "aclrtMallocHost failed.");
-    ACLRT_CHECK_WITH_MSG(aclrtMallocHost((void**)&hScaleA, sizeScaleA), "aclrtMallocHost failed.");
-    ACLRT_CHECK_WITH_MSG(aclrtMallocHost((void**)&hScaleB, sizeScaleB), "aclrtMallocHost failed.");
-    ACLRT_CHECK_WITH_MSG(aclrtMallocHost((void**)&hBias, sizeBias), "aclrtMallocHost failed.");
-    ACLRT_CHECK_WITH_MSG(aclrtMallocHost((void**)&hC, sizeC), "aclrtMallocHost failed.");
+    CHECK_COND(aclrtMallocHost((void**)&hA, sizeA) == ACL_SUCCESS, "aclrtMallocHost failed.");
+    std::unique_ptr<void, aclError (*)(void*)> HostA(hA, aclrtFreeHost);
+    CHECK_COND(aclrtMallocHost((void**)&hB, sizeB) == ACL_SUCCESS, "aclrtMallocHost failed.");
+    std::unique_ptr<void, aclError (*)(void*)> HostB(hB, aclrtFreeHost);
+    CHECK_COND(aclrtMallocHost((void**)&hScaleA, sizeScaleA) == ACL_SUCCESS, "aclrtMallocHost failed.");
+    std::unique_ptr<void, aclError (*)(void*)> HostScaleA(hScaleA, aclrtFreeHost);
+    CHECK_COND(aclrtMallocHost((void**)&hScaleB, sizeScaleB) == ACL_SUCCESS, "aclrtMallocHost failed.");
+    std::unique_ptr<void, aclError (*)(void*)> HostScaleB(hScaleB, aclrtFreeHost);
+    CHECK_COND(aclrtMallocHost((void**)&hBias, sizeBias) == ACL_SUCCESS, "aclrtMallocHost failed.");
+    std::unique_ptr<void, aclError (*)(void*)> HostBias(hBias, aclrtFreeHost);
+    CHECK_COND(aclrtMallocHost((void**)&hC, sizeC) == ACL_SUCCESS, "aclrtMallocHost failed.");
+    std::unique_ptr<void, aclError (*)(void*)> HostC(hC, aclrtFreeHost);
 
     ReadFile("./input/input_a.bin", sizeA, hA, sizeA);
     ReadFile("./input/input_b.bin", sizeB, hB, sizeB);
@@ -231,19 +209,35 @@ int main(int argc, char* argv[])
     ReadFile("./input/input_scaleB.bin", sizeScaleB, hScaleB, sizeScaleB);
 
     // malloc device memory
-    ACLRT_CHECK_WITH_MSG(aclrtMalloc((void**)&dA, sizeA, ACL_MEM_MALLOC_HUGE_FIRST), "aclrtMalloc failed.");
-    ACLRT_CHECK_WITH_MSG(aclrtMalloc((void**)&dB, sizeB, ACL_MEM_MALLOC_HUGE_FIRST), "aclrtMalloc failed.");
-    ACLRT_CHECK_WITH_MSG(aclrtMalloc((void**)&dScaleA, sizeScaleA, ACL_MEM_MALLOC_HUGE_FIRST), "aclrtMalloc failed.");
-    ACLRT_CHECK_WITH_MSG(aclrtMalloc((void**)&dScaleB, sizeScaleB, ACL_MEM_MALLOC_HUGE_FIRST), "aclrtMalloc failed.");
-    ACLRT_CHECK_WITH_MSG(aclrtMalloc((void**)&dBias, sizeBias, ACL_MEM_MALLOC_HUGE_FIRST), "aclrtMalloc failed.");
-    ACLRT_CHECK_WITH_MSG(aclrtMalloc((void**)&dC, sizeC, ACL_MEM_MALLOC_HUGE_FIRST), "aclrtMalloc failed.");
+    CHECK_COND(aclrtMalloc((void**)&dA, sizeA, ACL_MEM_MALLOC_HUGE_FIRST) == ACL_SUCCESS, "aclrtMalloc failed.");
+    std::unique_ptr<void, aclError (*)(void*)> DeviceA(dA, aclrtFree);
+    CHECK_COND(aclrtMalloc((void**)&dB, sizeB, ACL_MEM_MALLOC_HUGE_FIRST) == ACL_SUCCESS, "aclrtMalloc failed.");
+    std::unique_ptr<void, aclError (*)(void*)> DeviceB(dB, aclrtFree);
+    CHECK_COND(aclrtMalloc((void**)&dScaleA, sizeScaleA, ACL_MEM_MALLOC_HUGE_FIRST) == ACL_SUCCESS, "aclrtMalloc failed.");
+    std::unique_ptr<void, aclError (*)(void*)> DeviceScaleA(dScaleA, aclrtFree);
+    CHECK_COND(aclrtMalloc((void**)&dScaleB, sizeScaleB, ACL_MEM_MALLOC_HUGE_FIRST) == ACL_SUCCESS, "aclrtMalloc failed.");
+    std::unique_ptr<void, aclError (*)(void*)> DeviceScaleB(dScaleB, aclrtFree);
+    CHECK_COND(aclrtMalloc((void**)&dBias, sizeBias, ACL_MEM_MALLOC_HUGE_FIRST) == ACL_SUCCESS, "aclrtMalloc failed.");
+    std::unique_ptr<void, aclError (*)(void*)> DeviceBias(dBias, aclrtFree);
+    CHECK_COND(aclrtMalloc((void**)&dC, sizeC, ACL_MEM_MALLOC_HUGE_FIRST) == ACL_SUCCESS, "aclrtMalloc failed.");
+    std::unique_ptr<void, aclError (*)(void*)> DeviceC(dC, aclrtFree);
 
     // memcpy h2d
-    ACLRT_CHECK_WITH_MSG(aclrtMemcpyAsync(dA, sizeA, hA, sizeA, ACL_MEMCPY_HOST_TO_DEVICE, stream), "aclrtMemcpyAsync failed.");
-    ACLRT_CHECK_WITH_MSG(aclrtMemcpyAsync(dB, sizeB, hB, sizeB, ACL_MEMCPY_HOST_TO_DEVICE, stream), "aclrtMemcpyAsync failed.");
-    ACLRT_CHECK_WITH_MSG(aclrtMemcpyAsync(dScaleA, sizeScaleA, hScaleA, sizeScaleA, ACL_MEMCPY_HOST_TO_DEVICE, stream), "aclrtMemcpyAsync failed.");
-    ACLRT_CHECK_WITH_MSG(aclrtMemcpyAsync(dScaleB, sizeScaleB, hScaleB, sizeScaleB, ACL_MEMCPY_HOST_TO_DEVICE, stream), "aclrtMemcpyAsync failed.");
-    ACLRT_CHECK_WITH_MSG(aclrtMemcpyAsync(dBias, sizeBias, hBias, sizeBias, ACL_MEMCPY_HOST_TO_DEVICE, stream), "aclrtMemcpyAsync failed.");
+    CHECK_COND(
+        aclrtMemcpyAsync(dA, sizeA, hA, sizeA, ACL_MEMCPY_HOST_TO_DEVICE, stream) == ACL_SUCCESS,
+        "aclrtMemcpyAsync failed.");
+    CHECK_COND(
+        aclrtMemcpyAsync(dB, sizeB, hB, sizeB, ACL_MEMCPY_HOST_TO_DEVICE, stream) == ACL_SUCCESS,
+        "aclrtMemcpyAsync failed.");
+    CHECK_COND(
+        aclrtMemcpyAsync(dScaleA, sizeScaleA, hScaleA, sizeScaleA, ACL_MEMCPY_HOST_TO_DEVICE, stream) == ACL_SUCCESS,
+        "aclrtMemcpyAsync failed.");
+    CHECK_COND(
+        aclrtMemcpyAsync(dScaleB, sizeScaleB, hScaleB, sizeScaleB, ACL_MEMCPY_HOST_TO_DEVICE, stream) == ACL_SUCCESS,
+        "aclrtMemcpyAsync failed.");
+    CHECK_COND(
+        aclrtMemcpyAsync(dBias, sizeBias, hBias, sizeBias, ACL_MEMCPY_HOST_TO_DEVICE, stream) == ACL_SUCCESS,
+        "aclrtMemcpyAsync failed.");
 
     // get platform info
     auto ascendcPlatform = platform_ascendc::PlatformAscendCManager::GetInstance();
@@ -253,29 +247,17 @@ int main(int argc, char* argv[])
     // kernel launch
     QuantMatmulMxfp4Kernel<<<numBlocks, nullptr, stream>>>(dA, dB, dScaleA, dScaleB, dBias, dC, quantMatmulTilingData);
 
-    ACLRT_KERNEL_CHECK("Kernel launch fail");
-
     // memcpy d2h
-    ACLRT_CHECK_WITH_MSG(aclrtMemcpyAsync(hC, sizeC, dC, sizeC, ACL_MEMCPY_DEVICE_TO_HOST, stream), "aclrtMemcpyAsync failed.");
+    CHECK_COND(
+        aclrtMemcpyAsync(hC, sizeC, dC, sizeC, ACL_MEMCPY_DEVICE_TO_HOST, stream) == ACL_SUCCESS,
+        "aclrtMemcpyAsync failed.");
 
     // Sync
-    ACLRT_CHECK_WITH_MSG(aclrtSynchronizeStream(stream), "aclrtSynchronizeStream failed.");
+    CHECK_COND(aclrtSynchronizeStream(stream) == ACL_SUCCESS, "aclrtSynchronizeStream failed.");
 
     WriteFile("./output/npu_out.bin", hC, sizeC);
 
     // 资源释放
-    aclrtFreeHost(hA);
-    aclrtFreeHost(hB);
-    aclrtFreeHost(hScaleA);
-    aclrtFreeHost(hScaleB);
-    aclrtFreeHost(hBias);
-    aclrtFreeHost(hC);
-    aclrtFree(dA);
-    aclrtFree(dB);
-    aclrtFree(dScaleA);
-    aclrtFree(dScaleB);
-    aclrtFree(dBias);
-    aclrtFree(dC);
     aclrtDestroyStream(stream);
     aclrtResetDevice(deviceId);
     aclFinalize();

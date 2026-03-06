@@ -40,4 +40,10 @@ constexpr uint16_t SCALE_BUFFER_FLAG_0 = 4;
 constexpr uint16_t SCALE_BUFFER_FLAG_1 = 5;
 constexpr uint8_t MTE1_MTE2_EVENT_ID_NUM = 6;
 
+constexpr int32_t MXFP_DIVISOR_SIZE = 64;
+constexpr int32_t MXFP_MULTI_BASE_SIZE = 2;
+constexpr static uint64_t NONE_FULL_LOAD_MODE = 0UL;
+constexpr static uint64_t A_FULL_LOAD_MODE = 1UL;
+constexpr int64_t DOUBLE_BUFFER_COUNT = 2LL;
+
 #endif
