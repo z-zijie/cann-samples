@@ -15,8 +15,8 @@
 #ifndef DISPATCH_POLICY_H
 #define DISPATCH_POLICY_H
 
-#include "../utils/common_utils.h"
-#include "../utils/integral_constant.h"
+#include "kernel_utils/common_utils.h"
+#include "kernel_utils/integral_constant.h"
 
 /* block schedule policies */
 struct KernelMultiBlockOnKAxisWithScale {};
