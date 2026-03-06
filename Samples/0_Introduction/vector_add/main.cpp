@@ -143,19 +143,12 @@ __global__ __aicore__ __vector__ void add_kernel(
     }
 }
 
-int main()
+int run_vector_add(aclrtStream stream, int64_t numElements)
 {
     std::random_device rd;
     std::mt19937 gen(rd());
     std::uniform_real_distribution<float> dist(0.0f, 10.0f);
 
-    CHECK_ACL(aclInit(nullptr));
-    int32_t deviceId = 0;
-    CHECK_ACL(aclrtSetDevice(deviceId));
-    aclrtStream stream = nullptr;
-    CHECK_ACL(aclrtCreateStream(&stream));
-
-    int64_t numElements = 409600;
     size_t size = static_cast<size_t>(numElements) * sizeof(float);
 
     // Host 内存
@@ -193,6 +186,7 @@ int main()
     CHECK_ACL(aclrtMemcpy(h_C.data(), size, d_C, size, ACL_MEMCPY_DEVICE_TO_HOST));
     CHECK_ACL(aclrtSynchronizeStream(stream));
 
+    // 验证结果
     bool success = true;
     for (int64_t i = 0; i < numElements; ++i) {
         if (h_C[i] != h_A[i] + h_B[i]) {
@@ -207,10 +201,22 @@ int main()
         std::cout << "Vector add failed!" << std::endl;
     }
 
-    // 资源释放由智能指针自动管理，无需手动调用 aclrtFree 和 free
+    return success ? 0 : 1;
+}
+
+int main()
+{
+    CHECK_ACL(aclInit(nullptr));
+    int32_t deviceId = 0;
+    CHECK_ACL(aclrtSetDevice(deviceId));
+    aclrtStream stream = nullptr;
+    CHECK_ACL(aclrtCreateStream(&stream));
+
+    int result = run_vector_add(stream, 409600);
+
     CHECK_ACL(aclrtDestroyStream(stream));
     CHECK_ACL(aclrtResetDevice(deviceId));
     CHECK_ACL(aclFinalize());
 
-    return success ? 0 : 1;
+    return result;
 }
