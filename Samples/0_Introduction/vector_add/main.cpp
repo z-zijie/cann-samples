@@ -22,6 +22,17 @@
 #include "kernel_operator.h"
 #include "platform/platform_ascendc.h"
 
+// ACL 错误检查宏
+#define CHECK_ACL(call)                                              \
+    do {                                                             \
+        aclError err = (call);                                       \
+        if (err != ACL_SUCCESS) {                                    \
+            std::cerr << "ACL error: " << err << " at " << __FILE__ \
+                      << ":" << __LINE__ << std::endl;              \
+            return 1;                                                \
+        }                                                            \
+    } while (0)
+
 // 自定义删除器，安全处理空指针
 struct AclrtFreeDeleter {
     void operator()(void* ptr) const {
@@ -137,11 +148,11 @@ int main()
     std::mt19937 gen(rd());
     std::uniform_real_distribution<float> dist(0.0f, 10.0f);
 
-    aclInit(nullptr);
+    CHECK_ACL(aclInit(nullptr));
     int32_t deviceId = 0;
-    aclrtSetDevice(deviceId);
+    CHECK_ACL(aclrtSetDevice(deviceId));
     aclrtStream stream = nullptr;
-    aclrtCreateStream(&stream);
+    CHECK_ACL(aclrtCreateStream(&stream));
 
     int numElements = 409600;
     size_t size = numElements * sizeof(float);
@@ -161,25 +172,25 @@ int main()
     GM_ADDR d_A = nullptr;
     GM_ADDR d_B = nullptr;
     GM_ADDR d_C = nullptr;
-    aclrtMalloc((void **)&d_A, size, ACL_MEM_MALLOC_HUGE_FIRST);
-    aclrtMalloc((void **)&d_B, size, ACL_MEM_MALLOC_HUGE_FIRST);
-    aclrtMalloc((void **)&d_C, size, ACL_MEM_MALLOC_HUGE_FIRST);
+    CHECK_ACL(aclrtMalloc((void **)&d_A, size, ACL_MEM_MALLOC_HUGE_FIRST));
+    CHECK_ACL(aclrtMalloc((void **)&d_B, size, ACL_MEM_MALLOC_HUGE_FIRST));
+    CHECK_ACL(aclrtMalloc((void **)&d_C, size, ACL_MEM_MALLOC_HUGE_FIRST));
     std::unique_ptr<void, AclrtFreeDeleter> d_A_guard(d_A);
     std::unique_ptr<void, AclrtFreeDeleter> d_B_guard(d_B);
     std::unique_ptr<void, AclrtFreeDeleter> d_C_guard(d_C);
 
-    aclrtMemcpy(d_A, size, h_A.get(), size, ACL_MEMCPY_HOST_TO_DEVICE);
-    aclrtMemcpy(d_B, size, h_B.get(), size, ACL_MEMCPY_HOST_TO_DEVICE);
+    CHECK_ACL(aclrtMemcpy(d_A, size, h_A.get(), size, ACL_MEMCPY_HOST_TO_DEVICE));
+    CHECK_ACL(aclrtMemcpy(d_B, size, h_B.get(), size, ACL_MEMCPY_HOST_TO_DEVICE));
 
     // Kernel Call
     int64_t numBlocks, blockLength, tileSize;
     std::tie(numBlocks, blockLength, tileSize) = calc_tiling_params(numElements);
-    aclrtSynchronizeStream(stream);
+    CHECK_ACL(aclrtSynchronizeStream(stream));
     add_kernel<float><<<numBlocks, nullptr, stream>>>(d_A, d_B, d_C, numElements, blockLength, tileSize);
-    aclrtSynchronizeStream(stream);
+    CHECK_ACL(aclrtSynchronizeStream(stream));
 
-    aclrtMemcpy(h_C.get(), size, d_C, size, ACL_MEMCPY_DEVICE_TO_HOST);
-    aclrtSynchronizeStream(stream);
+    CHECK_ACL(aclrtMemcpy(h_C.get(), size, d_C, size, ACL_MEMCPY_DEVICE_TO_HOST));
+    CHECK_ACL(aclrtSynchronizeStream(stream));
 
     bool success = true;
     for (int i = 0; i < numElements; ++i) {
@@ -196,9 +207,9 @@ int main()
     }
 
     // 资源释放由智能指针自动管理，无需手动调用 aclrtFree 和 free
+    CHECK_ACL(aclrtDestroyStream(stream));
+    CHECK_ACL(aclrtResetDevice(deviceId));
+    CHECK_ACL(aclFinalize());
 
-    aclrtDestroyStream(stream);
-    aclrtResetDevice(deviceId);
-    aclFinalize();
-    return 0;
+    return success ? 0 : 1;
 }
