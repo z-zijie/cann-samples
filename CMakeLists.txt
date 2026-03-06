@@ -11,4 +11,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(ops-samples LANGUAGES C CXX)
 include(cmake/ascend.cmake)
+include_directories(Common)
 add_subdirectory(Samples)
+add_subdirectory(Common)

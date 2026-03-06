@@ -71,22 +71,6 @@ struct MatmulShape {
     int64_t b;
 };
 
-__host_aicore__ inline int64_t CeilDiv(int64_t a, int64_t b)
-{
-    if (b == 0) {
-        return a;
-    }
-    return (a + b - 1) / b;
-}
-
-__host_aicore__ inline int64_t CeilAlign(int64_t a, int64_t b)
-{
-    if (b == 0) {
-        return a;
-    }
-    return (a + b - 1) / b * b;
-}
-
 template <typename T>
 __aicore__ inline T Max(T a, T b)
 {
@@ -107,6 +91,22 @@ __aicore__ inline uint64_t CeilDiv(uint64_t a, uint64_t b)
     return (a + b - 1) / b;
 }
 
+__host_aicore__ inline int64_t CeilDiv(int64_t a, int64_t b) 
+{ 
+    if (b == 0) { 
+        return a; 
+    } 
+    return (a + b - 1) / b; 
+} 
+
+
+__host_aicore__ inline int64_t CeilAlign(int64_t a, int64_t b) 
+{ 
+    if (b == 0) { 
+        return a; 
+    } 
+    return (a + b - 1) / b * b; 
+}
 __aicore__ inline uint64_t Align(uint64_t a, uint64_t b)
 {
     if (b == 0) {
