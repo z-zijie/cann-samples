@@ -13,12 +13,12 @@
 
 import os
 import sys
+import math
+import logging
 import numpy as np
 import en_dtypes
-import math
 import torch
 import torch_npu
-import logging
 
 
 
@@ -26,10 +26,10 @@ def gen_golden_data_simple(m, k, n):
     M = m
     K = k
     N = n
-    cpu_x1 = torch.randint(-10, 10, (M, int(K/2)), dtype=torch.int8)
-    cpu_x2 = torch.randint(-10, 10, (N, int(K/2)), dtype=torch.int8)
-    scale_x1 = torch.randint(-10, 10, (M, math.ceil(K/64), 2), dtype=torch.int8)
-    scale_x2 = torch.randint(-10, 10, (N, math.ceil(K/64), 2), dtype=torch.int8)
+    cpu_x1 = torch.randint(-10, 10, (M, int(K / 2)), dtype=torch.int8)
+    cpu_x2 = torch.randint(-10, 10, (N, int(K / 2)), dtype=torch.int8)
+    scale_x1 = torch.randint(-10, 10, (M, math.ceil(K / 64), 2), dtype=torch.int8)
+    scale_x2 = torch.randint(-10, 10, (N, math.ceil(K / 64), 2), dtype=torch.int8)
 
     x1_npu = cpu_x1.npu()
     x2_npu = cpu_x2.npu().transpose(-1, -2)
@@ -44,7 +44,7 @@ def gen_golden_data_simple(m, k, n):
         pertoken_scale=scale_x1_npu,
         pertoken_scale_dtype=torch_npu.float8_e8m0fnu,
         output_dtype=torch.float32,
-        group_sizes=[1,1,32],
+        group_sizes=[1, 1, 32],
         x1_dtype=torch_npu.float4_e2m1fn_x2,
         x2_dtype=torch_npu.float4_e2m1fn_x2,
         scale_dtype=torch_npu.float8_e8m0fnu
