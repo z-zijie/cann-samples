@@ -85,11 +85,7 @@ public:
 
 public:
     __aicore__ inline void Init(const Params& params);
-    __aicore__ inline void Run(const Params& params);
-    __aicore__ inline void operator()(const Params& params)
-    {
-        Run(params);
-    }
+    __aicore__ inline void operator()(const Params& params);
 
 private:
     __aicore__ inline void Process(const Params& params, BlockSchedulerOp& bs);
@@ -112,7 +108,7 @@ private:
 };
 
 QBMM_MX_KERNEL_CLASS_TEM_PARAMS
-__aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS>::Run(const Params& params)
+__aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS>::operator()(const Params& params)
 {
     if ASCEND_IS_AIV {
         return;
@@ -152,15 +148,19 @@ __aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS
     BlockCoord blockIdx;
     const int64_t mTailTile = params.schParams.mTailTile;
     const int64_t nTailTile = params.schParams.nTailTile;
+    // 尾轮负载均衡
     if ((bs.GetEndBlockIdx() + 1) * mTailTile * nTailTile <= AscendC::GetBlockNum()) {
         bs.UpdateTailTile(mTailTile, nTailTile);
     }
+    // 每个核依次处理 block
     while (bs.GetTileIdx(blockIdx)) {
+        // 获取当前处理的 blokc 的 shape
         BlockShape singleShape = bs.GetBlockShape(blockIdx);
         if (Get<MNK_M>(singleShape) <= 0 || Get<MNK_N>(singleShape) <= 0) {
             return;
         }
         AscendC::Std::tuple<uint32_t, uint32_t, uint32_t, uint32_t> loadBalanceInfo = bs.GetLoadBalanceInfo();
+        // 找到当前 block 在 gm 上的 index
         blockOffset_ = coord.template GetQuantOffset<true>(
             Get<IDX_M_TILEIDX>(blockIdx), Get<IDX_N_TILEIDX>(blockIdx),
             Get<IDX_M_TAIL_SPLIT_TILEIDX>(singleShape),

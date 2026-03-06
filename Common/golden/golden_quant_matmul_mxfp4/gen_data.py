@@ -27,13 +27,13 @@ def gen_golden_data_simple():
     N = 8192
     cpu_x1 = torch.randint(-10, 10, (M, int(K/2)), dtype=torch.int8)
     cpu_x2 = torch.randint(-10, 10, (N, int(K/2)), dtype=torch.int8)
-    scale_x2 = torch.randint(-10, 10, (N, math.ceil(K/64), 2), dtype=torch.int8)
     scale_x1 = torch.randint(-10, 10, (M, math.ceil(K/64), 2), dtype=torch.int8)
+    scale_x2 = torch.randint(-10, 10, (N, math.ceil(K/64), 2), dtype=torch.int8)
 
     x1_npu = cpu_x1.npu()
     x2_npu = cpu_x2.npu().transpose(-1, -2)
-    scale_x2_npu = scale_x2.npu().transpose(0, 1)
     scale_x1_npu = scale_x1.npu()
+    scale_x2_npu = scale_x2.npu().transpose(0, 1)
 
     #调用npu_quant_matmul函数，指定x1_dtype和x2_dtpe为torch_npu.float4_e2m1fn_x2
     npu_out = torch_npu.npu_quant_matmul(
