@@ -17,9 +17,19 @@
 #include <random>
 #include <tuple>
 #include <algorithm>
+#include <memory>
 #include "acl/acl.h"
 #include "kernel_operator.h"
 #include "platform/platform_ascendc.h"
+
+// 自定义删除器，安全处理空指针
+struct AclrtFreeDeleter {
+    void operator()(void* ptr) const {
+        if (ptr != nullptr) {
+            aclrtFree(ptr);
+        }
+    }
+};
 
 std::tuple<int64_t, int64_t, int64_t> calc_tiling_params(int64_t totalLength)
 {
@@ -135,26 +145,31 @@ int main()
 
     int numElements = 409600;
     size_t size = numElements * sizeof(float);
-    float *h_A = (float *)malloc(size);
-    float *h_B = (float *)malloc(size);
-    float *h_C = (float *)malloc(size);
+
+    // Host 内存 - 使用智能指针管理
+    std::unique_ptr<float, decltype(&free)> h_A((float *)malloc(size), free);
+    std::unique_ptr<float, decltype(&free)> h_B((float *)malloc(size), free);
+    std::unique_ptr<float, decltype(&free)> h_C((float *)malloc(size), free);
 
     for (int i = 0; i < numElements; ++i) {
-        h_A[i] = dist(gen);
-        h_B[i] = dist(gen);
-        h_C[i] = 0.0f;  // 初始化为0
+        h_A.get()[i] = dist(gen);
+        h_B.get()[i] = dist(gen);
+        h_C.get()[i] = 0.0f;  // 初始化为0
     }
 
+    // Device 内存 - 使用智能指针管理
     GM_ADDR d_A = nullptr;
     GM_ADDR d_B = nullptr;
     GM_ADDR d_C = nullptr;
-
     aclrtMalloc((void **)&d_A, size, ACL_MEM_MALLOC_HUGE_FIRST);
     aclrtMalloc((void **)&d_B, size, ACL_MEM_MALLOC_HUGE_FIRST);
     aclrtMalloc((void **)&d_C, size, ACL_MEM_MALLOC_HUGE_FIRST);
+    std::unique_ptr<void, AclrtFreeDeleter> d_A_guard(d_A);
+    std::unique_ptr<void, AclrtFreeDeleter> d_B_guard(d_B);
+    std::unique_ptr<void, AclrtFreeDeleter> d_C_guard(d_C);
 
-    aclrtMemcpy(d_A, size, h_A, size, ACL_MEMCPY_HOST_TO_DEVICE);
-    aclrtMemcpy(d_B, size, h_B, size, ACL_MEMCPY_HOST_TO_DEVICE);
+    aclrtMemcpy(d_A, size, h_A.get(), size, ACL_MEMCPY_HOST_TO_DEVICE);
+    aclrtMemcpy(d_B, size, h_B.get(), size, ACL_MEMCPY_HOST_TO_DEVICE);
 
     // Kernel Call
     int64_t numBlocks, blockLength, tileSize;
@@ -163,12 +178,12 @@ int main()
     add_kernel<float><<<numBlocks, nullptr, stream>>>(d_A, d_B, d_C, numElements, blockLength, tileSize);
     aclrtSynchronizeStream(stream);
 
-    aclrtMemcpy(h_C, size, d_C, size, ACL_MEMCPY_DEVICE_TO_HOST);
+    aclrtMemcpy(h_C.get(), size, d_C, size, ACL_MEMCPY_DEVICE_TO_HOST);
     aclrtSynchronizeStream(stream);
 
     bool success = true;
     for (int i = 0; i < numElements; ++i) {
-        if (h_C[i] != h_A[i] + h_B[i]) {
+        if (h_C.get()[i] != h_A.get()[i] + h_B.get()[i]) {
             success = false;
             break;
         }
@@ -180,13 +195,7 @@ int main()
         std::cout << "Vector add failed!" << std::endl;
     }
 
-    aclrtFree(d_A);
-    aclrtFree(d_B);
-    aclrtFree(d_C);
-
-    free(h_A);
-    free(h_B);
-    free(h_C);
+    // 资源释放由智能指针自动管理，无需手动调用 aclrtFree 和 free
 
     aclrtDestroyStream(stream);
     aclrtResetDevice(deviceId);
