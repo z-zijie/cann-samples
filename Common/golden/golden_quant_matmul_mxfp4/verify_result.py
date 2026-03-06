@@ -95,10 +95,8 @@ if __name__ == "__main__":
 
     try:
         res = verify_result()
-
         if not res:
             raise ValueError("[ERROR] result error")
-
         print("test pass")
 
     except Exception as e:

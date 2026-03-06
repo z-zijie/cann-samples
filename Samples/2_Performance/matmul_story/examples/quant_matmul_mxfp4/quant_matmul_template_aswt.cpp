@@ -21,15 +21,15 @@
 #include "tiling/platform/platform_ascendc.h"
 #include <cstdlib>
 #include "kernel_operator.h"
-#include "data_utils.h"
-#include "op_kernel/block/block_mmad_mx.h"
-#include "op_kernel/block/block_scheduler_policy.h"
-#include "op_kernel/block/block_scheduler_mx.h"
-#include "op_kernel/kernel/quant_matmul_mx_kernel_aswt_impl.h"
-#include "op_kernel/policy/dispatch_policy.h"
-#include "op_kernel/utils/common_utils.h"
-#include "op_kernel/utils/layout_utils.h"
-#include "op_kernel/utils/quant_matmul_tiling_data.h"
+#include "host_utils/data_utils.h"
+#include "include/block/block_mmad_mx.h"
+#include "include/block/block_scheduler_policy.h"
+#include "include/block/block_scheduler_mx.h"
+#include "include/kernel/quant_matmul_mx_kernel_aswt_impl.h"
+#include "include/policy/dispatch_policy.h"
+#include "kernel_utils/utils/common_utils.h"
+#include "kernel_utils/utils/layout_utils.h"
+#include "kernel_utils/utils/quant_matmul_tiling_data.h"
 
 // todo: 这里宏可以移到公共文件中
 // 暂时没有 aclrtGetErrorString
