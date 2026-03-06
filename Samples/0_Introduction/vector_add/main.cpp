@@ -155,15 +155,15 @@ int main()
     aclrtStream stream = nullptr;
     CHECK_ACL(aclrtCreateStream(&stream));
 
-    int numElements = 409600;
-    size_t size = numElements * sizeof(float);
+    int64_t numElements = 409600;
+    size_t size = static_cast<size_t>(numElements) * sizeof(float);
 
     // Host 内存
     std::vector<float> h_A(numElements);
     std::vector<float> h_B(numElements);
     std::vector<float> h_C(numElements);
 
-    for (int i = 0; i < numElements; ++i) {
+    for (int64_t i = 0; i < numElements; ++i) {
         h_A[i] = dist(gen);
         h_B[i] = dist(gen);
         h_C[i] = 0.0f;
@@ -194,7 +194,7 @@ int main()
     CHECK_ACL(aclrtSynchronizeStream(stream));
 
     bool success = true;
-    for (int i = 0; i < numElements; ++i) {
+    for (int64_t i = 0; i < numElements; ++i) {
         if (h_C[i] != h_A[i] + h_B[i]) {
             success = false;
             break;
