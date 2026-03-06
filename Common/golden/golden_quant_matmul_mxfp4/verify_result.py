@@ -11,9 +11,9 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------------------------------------
 
+import sys
 import numpy as np
 import torch
-import sys
 
 ERROR_TOL = 1e-3
 DATA_TYPE = np.float32
