@@ -18,6 +18,7 @@
 #include <tuple>
 #include <algorithm>
 #include <memory>
+#include <vector>
 #include "acl/acl.h"
 #include "kernel_operator.h"
 #include "platform/platform_ascendc.h"
@@ -157,15 +158,15 @@ int main()
     int numElements = 409600;
     size_t size = numElements * sizeof(float);
 
-    // Host 内存 - 使用智能指针管理
-    std::unique_ptr<float, decltype(&free)> h_A((float *)malloc(size), free);
-    std::unique_ptr<float, decltype(&free)> h_B((float *)malloc(size), free);
-    std::unique_ptr<float, decltype(&free)> h_C((float *)malloc(size), free);
+    // Host 内存
+    std::vector<float> h_A(numElements);
+    std::vector<float> h_B(numElements);
+    std::vector<float> h_C(numElements);
 
     for (int i = 0; i < numElements; ++i) {
-        h_A.get()[i] = dist(gen);
-        h_B.get()[i] = dist(gen);
-        h_C.get()[i] = 0.0f;  // 初始化为0
+        h_A[i] = dist(gen);
+        h_B[i] = dist(gen);
+        h_C[i] = 0.0f;
     }
 
     // Device 内存 - 使用智能指针管理
@@ -179,8 +180,8 @@ int main()
     std::unique_ptr<void, AclrtFreeDeleter> d_B_guard(d_B);
     std::unique_ptr<void, AclrtFreeDeleter> d_C_guard(d_C);
 
-    CHECK_ACL(aclrtMemcpy(d_A, size, h_A.get(), size, ACL_MEMCPY_HOST_TO_DEVICE));
-    CHECK_ACL(aclrtMemcpy(d_B, size, h_B.get(), size, ACL_MEMCPY_HOST_TO_DEVICE));
+    CHECK_ACL(aclrtMemcpy(d_A, size, h_A.data(), size, ACL_MEMCPY_HOST_TO_DEVICE));
+    CHECK_ACL(aclrtMemcpy(d_B, size, h_B.data(), size, ACL_MEMCPY_HOST_TO_DEVICE));
 
     // Kernel Call
     int64_t numBlocks, blockLength, tileSize;
@@ -189,12 +190,12 @@ int main()
     add_kernel<float><<<numBlocks, nullptr, stream>>>(d_A, d_B, d_C, numElements, blockLength, tileSize);
     CHECK_ACL(aclrtSynchronizeStream(stream));
 
-    CHECK_ACL(aclrtMemcpy(h_C.get(), size, d_C, size, ACL_MEMCPY_DEVICE_TO_HOST));
+    CHECK_ACL(aclrtMemcpy(h_C.data(), size, d_C, size, ACL_MEMCPY_DEVICE_TO_HOST));
     CHECK_ACL(aclrtSynchronizeStream(stream));
 
     bool success = true;
     for (int i = 0; i < numElements; ++i) {
-        if (h_C.get()[i] != h_A.get()[i] + h_B.get()[i]) {
+        if (h_C[i] != h_A[i] + h_B[i]) {
             success = false;
             break;
         }
