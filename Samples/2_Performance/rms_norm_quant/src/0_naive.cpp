@@ -107,7 +107,7 @@ private:
 
     RmsnormQuantTilingData *tilingData_;
     int64_t blockIdx_ = 0;
-    int64_t a_ = 0;
+    int64_t curblockFactor_ = 0;
     int64_t rAlign_ = 0;
 
     float scale_ = 0.0f;
@@ -142,7 +142,7 @@ public:
         pipe_.InitBuffer(betaBuf_, AlignBytes(tilingData_->r, sizeof(float)));
         pipe_.InitBuffer(rmsBuf_, AlignBytes(tilingData_->r, sizeof(float)));
         pipe_.InitBuffer(reduceBuf_, BLOCK_BYTES);
-        
+
         scale_ = static_cast<float>(scaleGm_.GetValue(0));
         offset_ = static_cast<float>(offsetGm_.GetValue(0));
         rInv_ = static_cast<float>(1.0f / tilingData_->r);
@@ -166,16 +166,9 @@ public:
 
         gammaInQueue_.EnQue<DATA_TYPE>(gammaInLocalTensor);
         betaInQueue_.EnQue<DATA_TYPE>(betaInLocalTensor);
-        gammaInLocalTensor = gammaInQueue_.DeQue<DATA_TYPE>();
-        betaInLocalTensor = betaInQueue_.DeQue<DATA_TYPE>();
-
-        Cast(gammaLocalTensor, gammaInLocalTensor, RoundMode::CAST_NONE, tilingData_->r);
-        Cast(betaLocalTensor, betaInLocalTensor, RoundMode::CAST_NONE, tilingData_->r);
-        gammaInQueue_.FreeTensor(gammaInLocalTensor);
-        betaInQueue_.FreeTensor(betaInLocalTensor);
     }
 
-    __aicore__ inline void CopyInX(int64_t index)
+    __aicore__ inline void CopyInX(int64_t loop)
     {
         LocalTensor<DATA_TYPE> xInLocalTensor = xInQueue_.AllocTensor<DATA_TYPE>();
         DataCopyExtParams dataCopyParams;
@@ -184,28 +177,33 @@ public:
         dataCopyParams.srcStride = 0;
         dataCopyParams.dstStride = 0;
         DataCopyPadExtParams dataCopyPadParams{false, 0, 0, static_cast<DATA_TYPE>(0)};
-        DataCopyPad(xInLocalTensor, xGm_[index * tilingData_->r], dataCopyParams, dataCopyPadParams);
+        DataCopyPad(xInLocalTensor, xGm_[loop * tilingData_->r], dataCopyParams, dataCopyPadParams);
         xInQueue_.EnQue(xInLocalTensor);
     }
 
     __aicore__ inline void Compute()
     {
         LocalTensor<DATA_TYPE> xInLocalTensor = xInQueue_.DeQue<DATA_TYPE>();
-        LocalTensor<int8_t> yLocalTensor = yOutQueue_.AllocTensor<int8_t>();
+        LocalTensor<DATA_TYPE> gammaInLocalTensor = gammaInQueue_.DeQue<DATA_TYPE>();
+        LocalTensor<DATA_TYPE> betaInLocalTensor = betaInQueue_.DeQue<DATA_TYPE>();
+        LocalTensor<OUTPUT_DTYPE> yLocalTensor = yOutQueue_.AllocTensor<OUTPUT_DTYPE>();
         LocalTensor<float> xLocalTensor = xBuf_.Get<float>();
         LocalTensor<float> gammaLocalTensor = gammaBuf_.Get<float>();
         LocalTensor<float> betaLocalTensor = betaBuf_.Get<float>();
         LocalTensor<float> rmsLocalTensor = rmsBuf_.Get<float>();
         LocalTensor<float> reduceLocalTensor = reduceBuf_.Get<float>();
 
+        Cast(gammaLocalTensor, gammaInLocalTensor, RoundMode::CAST_NONE, tilingData_->r);
+        Cast(betaLocalTensor, betaInLocalTensor, RoundMode::CAST_NONE, tilingData_->r);
         Cast(xLocalTensor, xInLocalTensor, RoundMode::CAST_NONE, tilingData_->r);
+
         Mul(rmsLocalTensor, xLocalTensor, xLocalTensor, tilingData_->r);
         ReduceSum(reduceLocalTensor, rmsLocalTensor, xInLocalTensor.template ReinterpretCast<float>(), tilingData_->r);
         Duplicate(rmsLocalTensor, reduceLocalTensor, tilingData_->r);
-
         Muls(rmsLocalTensor, rmsLocalTensor, rInv_, tilingData_->r);
         Adds(rmsLocalTensor, rmsLocalTensor, tilingData_->epsilon, tilingData_->r);
         Sqrt(rmsLocalTensor, rmsLocalTensor, tilingData_->r);
+
         Div(xLocalTensor, xLocalTensor, rmsLocalTensor, tilingData_->r);
         Mul(rmsLocalTensor, xLocalTensor, gammaLocalTensor, tilingData_->r);
         Add(rmsLocalTensor, rmsLocalTensor, betaLocalTensor, tilingData_->r);
@@ -214,25 +212,27 @@ public:
         Cast(rmsLocalTensor.template ReinterpretCast<half>(), rmsLocalTensor, RoundMode::CAST_NONE, tilingData_->r);
         Cast(yLocalTensor, rmsLocalTensor.template ReinterpretCast<half>(), RoundMode::CAST_RINT, tilingData_->r);
         xInQueue_.FreeTensor(xInLocalTensor);
-        yOutQueue_.EnQue<int8_t>(yLocalTensor);
+        gammaInQueue_.FreeTensor(gammaInLocalTensor);
+        betaInQueue_.FreeTensor(betaInLocalTensor);
+        yOutQueue_.EnQue<OUTPUT_DTYPE>(yLocalTensor);
     }
 
-    __aicore__ inline void CopyOut(int64_t index)
+    __aicore__ inline void CopyOut(int64_t loop)
     {
-        LocalTensor<int8_t> yLocalTensor = yOutQueue_.DeQue<int8_t>();
+        LocalTensor<OUTPUT_DTYPE> yLocalTensor = yOutQueue_.DeQue<OUTPUT_DTYPE>();
         DataCopyExtParams dataCopyParams{
-            static_cast<uint16_t>(1), static_cast<uint32_t>(tilingData_->r * sizeof(int8_t)), 0, 0, 0};
-        DataCopyPad(yGm_[index * tilingData_->r], yLocalTensor, dataCopyParams);
+            static_cast<uint16_t>(1), static_cast<uint32_t>(tilingData_->r * sizeof(OUTPUT_DTYPE)), 0, 0, 0};
+        DataCopyPad(yGm_[loop * tilingData_->r], yLocalTensor, dataCopyParams);
         yOutQueue_.FreeTensor(yLocalTensor);
     }
 
     __aicore__ inline void Process()
     {
-        CopyInR();
-        for (int64_t index = 0; index < tilingData_->a; index++) {
-            CopyInX(index);
+        for (int64_t loop = 0; loop < tilingData_->a; loop++) {
+            CopyInR();
+            CopyInX(loop);
             Compute();
-            CopyOut(index);
+            CopyOut(loop);
         }
     }
 };
@@ -341,7 +341,7 @@ int Init(int32_t deviceId, aclrtStream *stream)
 int32_t main(int argc, char *argv[])
 {
     size_t a = 4096;
-    size_t r = 8192;
+    size_t r = 4096;
     float espilon = 1e-6f;
 
     int32_t deviceId = 0;
@@ -352,12 +352,8 @@ int32_t main(int argc, char *argv[])
     std::vector<size_t> xShape = {a, r};
     std::vector<size_t> gammaShape = {r};
     std::vector<size_t> betaShape = {r};
-    std::vector<size_t> scaleShape = {
-        1,
-    };
-    std::vector<size_t> offsetShape = {
-        1,
-    };
+    std::vector<size_t> scaleShape = {1};
+    std::vector<size_t> offsetShape = {1};
     std::vector<size_t> yShape = {a, r};
 
     size_t xEleNum = segmentProduct(xShape, 0, xShape.size());
