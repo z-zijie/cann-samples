@@ -15,10 +15,10 @@
 
 #ifndef MATMUL_BLOCK_MMAD_MX_QUANT_H
 #define MATMUL_BLOCK_MMAD_MX_QUANT_H
-#include "../utils/layout_utils.h"
-#include "../utils/common_utils.h"
-#include "../utils/quant_matmul_constant.h"
-#include "../utils/tuple_utils.h"
+#include "kernel_utils/utils/layout_utils.h"
+#include "kernel_utils/utils/common_utils.h"
+#include "kernel_utils/utils/quant_matmul_constant.h"
+#include "kernel_utils/utils/tuple_utils.h"
 #include "../policy/dispatch_policy.h"
 
 namespace Block {

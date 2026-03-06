@@ -18,7 +18,7 @@
 
 #include "./block_scheduler_utils.h"
 #include "./block_scheduler_policy.h"
-#include "../utils/common_utils.h"
+#include "kernel_utils/utils/common_utils.h"
 
 namespace Block {
 

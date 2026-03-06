@@ -21,11 +21,11 @@
 #include "kernel_operator.h"
 #include "kernel_operator_intf.h"
 #endif
-#include "../utils/common_utils.h"
-#include "../utils/quant_matmul_constant.h"
-#include "../utils/layout_utils.h"
-#include "../utils/tuple_utils.h"
-#include "../utils/coord_utils.h"
+#include "kernel_utils/utils/common_utils.h"
+#include "kernel_utils/utils/quant_matmul_constant.h"
+#include "kernel_utils/utils/layout_utils.h"
+#include "kernel_utils/utils/tuple_utils.h"
+#include "kernel_utils/utils/coord_utils.h"
 #include "../block/block_scheduler_mx.h"
 #include "../block/block_mmad_mx.h"
 

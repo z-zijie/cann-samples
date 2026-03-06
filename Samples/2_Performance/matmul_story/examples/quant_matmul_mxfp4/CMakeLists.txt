@@ -17,19 +17,19 @@ set(CMAKE_C_COMPILER ${BISHENG})
 set(CMAKE_CXX_COMPILER ${BISHENG})
 set(CMAKE_LINKER ${BISHENG})
 
-add_executable(quant_matmul_mxfp4 quant_matmul_mxfp4.cpp)
+add_executable(quant_matmul_template_aswt quant_matmul_template_aswt.cpp)
 
-target_include_directories(quant_matmul_mxfp4 PRIVATE ${ASCEND_INCLUDE_DIRS})
-target_link_directories(quant_matmul_mxfp4 PRIVATE ${ASCEND_DIR}/lib64)
+target_include_directories(quant_matmul_template_aswt PRIVATE ${ASCEND_INCLUDE_DIRS})
+target_link_directories(quant_matmul_template_aswt PRIVATE ${ASCEND_DIR}/lib64)
 
-target_compile_options(quant_matmul_mxfp4 PRIVATE
+target_compile_options(quant_matmul_template_aswt PRIVATE
     "-xasc"
     "--npu-arch=dav-3101"
     "-w"
     "-O3"
 )
 
-target_link_libraries(quant_matmul_mxfp4
+target_link_libraries(quant_matmul_template_aswt
     PRIVATE
     m
     dl
@@ -37,13 +37,13 @@ target_link_libraries(quant_matmul_mxfp4
     tiling_api
 )
 
-install(TARGETS quant_matmul_mxfp4
-    RUNTIME DESTINATION 2_Performance/quant_matmul_mxfp4
+install(TARGETS quant_matmul_template_aswt
+    RUNTIME DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
 install(DIRECTORY
-    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/
-    DESTINATION 2_Performance/quant_matmul_mxfp4
+    Common/golden/golden_quant_matmul_mxfp4/
+    DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}
     FILES_MATCHING
     PATTERN "*.py"
 )
