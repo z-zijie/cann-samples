@@ -90,22 +90,15 @@ public:
         if (blockIdx_ > endBlockIdx_) {
             round_ -= 1;
         }
-        if constexpr (!TransA_) {
-            mBaseNormCnt_ = mCnt_ - params.mBaseTailSplitCnt;
-            int64_t mMergeSize = m_ - mBaseNormCnt_ * baseM_;
-            mBaseTailMain_ = params.mBaseTailSplitCnt == 1 ? mMergeSize : params.mTailMain;
-            mBaseTailLast_ = mMergeSize - (params.mBaseTailSplitCnt - 1) * mBaseTailMain_;
-        } else {
-            mBaseTailMain_ = m_ - (mCnt_ - 1) * baseM_;
-        }
-        if constexpr (TransB_) {
-            nBaseNormCnt_ = nCnt_ - params.nBaseTailSplitCnt;
-            int64_t nMergeSize = n_ - nBaseNormCnt_ * baseN_;
-            nBaseTailMain_ = params.nBaseTailSplitCnt == 1 ? nMergeSize : params.nTailMain;
-            nBaseTailLast_ = nMergeSize - (params.nBaseTailSplitCnt - 1) * nBaseTailMain_;
-        } else {
-            nBaseTailMain_ = n_ - (nCnt_ - 1) * baseN_;
-        }
+        mBaseNormCnt_ = mCnt_ - params.mBaseTailSplitCnt;
+        int64_t mMergeSize = m_ - mBaseNormCnt_ * baseM_;
+        mBaseTailMain_ = params.mBaseTailSplitCnt == 1 ? mMergeSize : params.mTailMain;
+        mBaseTailLast_ = mMergeSize - (params.mBaseTailSplitCnt - 1) * mBaseTailMain_;
+
+        nBaseNormCnt_ = nCnt_ - params.nBaseTailSplitCnt;
+        int64_t nMergeSize = n_ - nBaseNormCnt_ * baseN_;
+        nBaseTailMain_ = params.nBaseTailSplitCnt == 1 ? nMergeSize : params.nTailMain;
+        nBaseTailLast_ = nMergeSize - (params.nBaseTailSplitCnt - 1) * nBaseTailMain_;
     }
 
     __aicore__ inline void UpdateTailTile(uint32_t mTailTile, uint32_t nTailTile)
@@ -140,23 +133,12 @@ public:
     {
         int64_t singleCoreM = baseM_;
         int64_t singleCoreN = baseN_;
-        if constexpr (!TransA_) {
-            if (Get<MNK_M>(blockCoord) >= mBaseNormCnt_) {
-                singleCoreM = Get<MNK_M>(blockCoord) < mCnt_ - 1 ? mBaseTailMain_ : mBaseTailLast_;
-            }
-        } else {
-            if (Get<MNK_M>(blockCoord) == mCnt_ - 1) {
-                singleCoreM = mBaseTailMain_;
-            }
+
+        if (Get<MNK_M>(blockCoord) >= mBaseNormCnt_) {
+            singleCoreM = Get<MNK_M>(blockCoord) < mCnt_ - 1 ? mBaseTailMain_ : mBaseTailLast_;
         }
-        if constexpr (TransB_) {
-            if (Get<MNK_N>(blockCoord) >= nBaseNormCnt_) {
-                singleCoreN = Get<MNK_N>(blockCoord) < nCnt_ - 1 ? nBaseTailMain_ : nBaseTailLast_;
-            }
-        } else {
-            if (Get<MNK_N>(blockCoord) == nCnt_ - 1) {
-                singleCoreN = nBaseTailMain_;
-            }
+        if (Get<MNK_N>(blockCoord) >= nBaseNormCnt_) {
+            singleCoreN = Get<MNK_N>(blockCoord) < nCnt_ - 1 ? nBaseTailMain_ : nBaseTailLast_;
         }
 
         if (totalTailTile_ == 1 || roundIdx_ < round_) {

@@ -19,7 +19,6 @@
 #include "common_utils.h"
 #include "quant_matmul_constant.h"
 
-constexpr uint32_t OUTER_SIZE = 16;
 constexpr int IDX_M_BASE_NORM_CNT = 0;
 constexpr int IDX_M_BASE_TAIL_MAIN = 1;
 constexpr int IDX_N_BASE_NORM_CNT = 2;
