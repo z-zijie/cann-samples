@@ -22,12 +22,12 @@
 #include "kernel_operator_intf.h"
 #endif
 #include "kernel_utils/common_utils.h"
-#include "kernel_utils/quant_matmul_constant.h"
 #include "kernel_utils/layout_utils.h"
 #include "kernel_utils/tuple_utils.h"
-#include "kernel_utils/coord_utils.h"
 #include "../block/block_scheduler_mx.h"
 #include "../block/block_mmad_mx.h"
+#include "../utils/coord_utils.h"
+#include "../utils/quant_matmul_constant.h"
 
 namespace Kernel {
 #define QBMM_MX_KERNEL_CLASS_TEM_PARAMS \

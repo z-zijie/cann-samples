@@ -15,7 +15,6 @@
 
 #ifndef BLOCK_SCHEDULER_UTILS_H
 #define BLOCK_SCHEDULER_UTILS_H
-#include "kernel_utils/common_utils.h"
 
 namespace Block {
 

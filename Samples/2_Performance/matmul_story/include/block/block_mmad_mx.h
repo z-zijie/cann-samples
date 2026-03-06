@@ -17,9 +17,9 @@
 #define MATMUL_BLOCK_MMAD_MX_QUANT_H
 #include "kernel_utils/layout_utils.h"
 #include "kernel_utils/common_utils.h"
-#include "kernel_utils/quant_matmul_constant.h"
 #include "kernel_utils/tuple_utils.h"
 #include "../policy/dispatch_policy.h"
+#include "../utils/quant_matmul_constant.h"
 
 namespace Block {
 using namespace AscendC;
