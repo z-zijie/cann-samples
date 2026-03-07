@@ -151,6 +151,7 @@ private:
     int64_t ubFactor_ = 0;
     int64_t ubFactorTail_ = 0;
     int64_t rAlign_ = 0;
+    uint16_t vfLoopRNum_ = 0;
 
     float scale_ = 0.0f;
     float offset_ = 0.0f;
@@ -173,6 +174,7 @@ public:
         }
         ubFactor_ = tilingData_->ubFactor;
         rAlign_ = CeilDiv(tilingData_->r, BLOCK_BYTES) * BLOCK_BYTES;
+        vfLoopRNum_ = static_cast<uint16_t>(CeilDiv(static_cast<uint32_t>(tilingData_->r), VL_FLOAT_SIZE));
 
         curUbLoops_ = CeilDiv(curBlockFactor_, ubFactor_);
         ubFactorTail_ = curBlockFactor_ - (curUbLoops_ - 1) * ubFactor_;
@@ -240,8 +242,8 @@ public:
         xInQueue_.EnQue(xInLocalTensor);
     }
 
-    __simd_vf__ inline void ComputeRmsVf(__ubuf__ DATA_TYPE *xInAddr, __ubuf__ float *xAddr, __ubuf__ float *rmsAddr,
-        uint16_t vfLoopRNum, uint16_t ubFactor)
+    __simd_vf__ inline void ComputeRmsVf(
+        __ubuf__ DATA_TYPE *xInAddr, __ubuf__ float *xAddr, __ubuf__ float *rmsAddr, uint16_t ubFactor)
     {
         MicroAPI::RegTensor<half> vregXIn;
         MicroAPI::RegTensor<float> vregX;
@@ -253,7 +255,7 @@ public:
         for (uint16_t loopA = 0; loopA < ubFactor; loopA++) {
             uint32_t r = tilingData_->r;
             MicroAPI::Duplicate(vregReduceSum, 0);
-            for (uint16_t i = 0; i < vfLoopRNum; i++) {
+            for (uint16_t i = 0; i < vfLoopRNum_; i++) {
                 preg = MicroAPI::UpdateMask<float>(r);
                 DataCopy<half, MicroAPI::LoadDist::DIST_UNPACK_B16>(
                     vregXIn, xInAddr + loopA * rAlign_ + i * VL_FLOAT_SIZE);
@@ -275,8 +277,7 @@ public:
     }
 
     __simd_vf__ inline void ComputeNormQuantVf(__ubuf__ float *xAddr, __ubuf__ float *gammaAddr,
-        __ubuf__ float *betaAddr, __ubuf__ float *rmsAddr, __ubuf__ OUTPUT_DTYPE *yAddr, uint16_t vfLoopRNum,
-        uint16_t ubFactor)
+        __ubuf__ float *betaAddr, __ubuf__ float *rmsAddr, __ubuf__ OUTPUT_DTYPE *yAddr, uint16_t ubFactor)
     {
         MicroAPI::RegTensor<float> vregX, vregGamma, vregBeta, vregRms, vregNorm;
         MicroAPI::RegTensor<half> VregYFp16;
@@ -286,7 +287,7 @@ public:
         for (uint16_t loopA = 0; loopA < ubFactor; loopA++) {
             uint32_t r = tilingData_->r;
             DataCopy<float, AscendC::MicroAPI::LoadDist::DIST_BRC_B32>(vregRms, rmsAddr + loopA * BLOCK_FLOAT_SIZE);
-            for (uint16_t i = 0; i < vfLoopRNum; i++) {
+            for (uint16_t i = 0; i < vfLoopRNum_; i++) {
                 preg = MicroAPI::UpdateMask<float>(r);
                 AscendC::MicroAPI::DataCopy(vregX, xAddr + loopA * rAlign_ + i * VL_FLOAT_SIZE);
                 AscendC::MicroAPI::DataCopy(vregGamma, gammaAddr + i * VL_FLOAT_SIZE);
@@ -312,7 +313,6 @@ public:
         LocalTensor<float> gammaLocalTensor = gammaBuf_.Get<float>();
         LocalTensor<float> betaLocalTensor = betaBuf_.Get<float>();
         LocalTensor<float> rmsLocalTensor = rmsBuf_.Get<float>();
-        uint16_t vfLoopRNum = static_cast<uint16_t>(CeilDiv(static_cast<uint32_t>(tilingData_->r), VL_FLOAT_SIZE));
         __ubuf__ DATA_TYPE *xInAddr = (__ubuf__ DATA_TYPE *)xInLocalTensor.GetPhyAddr();
         __ubuf__ float *xAddr = (__ubuf__ float *)xLocalTensor.GetPhyAddr();
         __ubuf__ float *gammaAddr = (__ubuf__ float *)gammaLocalTensor.GetPhyAddr();
@@ -320,8 +320,8 @@ public:
         __ubuf__ float *rmsAddr = (__ubuf__ float *)rmsLocalTensor.GetPhyAddr();
         __ubuf__ OUTPUT_DTYPE *yAddr = (__ubuf__ OUTPUT_DTYPE *)yLocalTensor.GetPhyAddr();
 
-        ComputeRmsVf(xInAddr, xAddr, rmsAddr, vfLoopRNum, ubFactor);
-        ComputeNormQuantVf(xAddr, gammaAddr, betaAddr, rmsAddr, yAddr, vfLoopRNum, ubFactor);
+        ComputeRmsVf(xInAddr, xAddr, rmsAddr, ubFactor);
+        ComputeNormQuantVf(xAddr, gammaAddr, betaAddr, rmsAddr, yAddr, ubFactor);
 
         xInQueue_.FreeTensor(xInLocalTensor);
         yOutQueue_.EnQue<OUTPUT_DTYPE>(yLocalTensor);
