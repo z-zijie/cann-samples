@@ -19,3 +19,6 @@ add_subdirectory(1_Features)
 
 set(CMAKE_FOLDER "2_Performance")
 add_subdirectory(2_Performance)
+
+set(CMAKE_FOLDER "3_Dispatch")
+add_subdirectory(3_Dispatch)
