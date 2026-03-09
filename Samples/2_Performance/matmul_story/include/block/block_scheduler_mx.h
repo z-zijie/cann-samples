@@ -22,6 +22,12 @@
 
 namespace Block {
 
+// Block scheduler for quant matmul MX.
+//
+// Scheduling strategy:
+// - Use a fixed window on the M axis (`WINDOW_LEN`) to balance workloads when M tiles are small.
+// - Traverse N in a serpentine ("Z") pattern to improve cache locality.
+// - Optionally split the last round into smaller pieces (`mTailTile_` x `nTailTile_`) to reduce tail imbalance.
 template <class ProblemShape_, class L1TileShape_, class L0TileShape_, bool TransA_, bool TransB_>
 class BlockSchedulerQuantMatmulMx {
 public:
@@ -82,6 +88,7 @@ public:
         mCnt_ = CeilDiv(m_, baseM_);
         nCnt_ = CeilDiv(n_, baseN_);
         totalCnt_ = mCnt_ * nCnt_;
+        // Limit parallelism on M when `mCnt_` is small.
         mCoreNum_ = Min(WINDOW_LEN, mCnt_);
         mainRow_ = mCnt_ / mCoreNum_ - 1;
         mTailCoreNum_ = mCnt_ - mCoreNum_ * mainRow_;
@@ -106,6 +113,7 @@ public:
         mTailTile_ = mTailTile;
         nTailTile_ = nTailTile;
         totalTailTile_ = mTailTile * nTailTile;
+        // Expand the last round into `totalTailTile_` micro-tiles per original tile.
         uint64_t tailOriCnt = AscendC::Std::min(totalCnt_, endBlockIdx_ + 1);
         int64_t newEndBlockIdx = endBlockIdx_ + tailOriCnt * (totalTailTile_ - 1);
         if (blockIdx_ > endBlockIdx_ && blockIdx_ <= newEndBlockIdx) {
@@ -134,6 +142,7 @@ public:
         int64_t singleCoreM = baseM_;
         int64_t singleCoreN = baseN_;
 
+        // Handle M/N tail tiles (last tiles may be smaller).
         if (Get<MNK_M>(blockCoord) >= mBaseNormCnt_) {
             singleCoreM = Get<MNK_M>(blockCoord) < mCnt_ - 1 ? mBaseTailMain_ : mBaseTailLast_;
         }
@@ -145,6 +154,7 @@ public:
             return {singleCoreM, singleCoreN, 0, 0};
         }
 
+        // Tail split: return sub-shape and its (m,n) offsets inside the original tile.
         int64_t singleCoreMSplit = CeilDiv(singleCoreM, mTailTile_);
         int64_t singleCoreNSplit = CeilDiv(singleCoreN, nTailTile_);
         int64_t mSplitIdx = (blockIdx_ % totalTailTile_) % mTailTile_;
@@ -191,6 +201,7 @@ public:
             Get<MNK_N>(blockCoord) = (tailIdx / mTailCoreNum_) % nCnt_;
         }
         if (rowIdx & 1) {
+            // Serpentine scan on N.
             Get<MNK_N>(blockCoord) = nCnt_ - 1 - Get<MNK_N>(blockCoord);
         }
         roundIdx_++;

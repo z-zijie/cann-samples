@@ -42,9 +42,14 @@ public:
         int64_t mTileIdx, int64_t nTileIdx, int64_t mSplitOffset = 0, int64_t nSplitOffset = 0,
         const AscendC::Std::tuple<uint32_t, uint32_t, uint32_t, uint32_t>& loadBalanceParam = {0u, 0u, 0u, 0u})
     {
+        // Convert tile indices (and optional tail-split offsets) into element offsets in GM buffers.
+        //
+        // Offset tuple fields:
+        //   0: A, 1: B, 2: scaleA, 3: scaleB, 4: bias, 5: C.
         int64_t mOffset = mTileIdx * l1M + mSplitOffset;
         int64_t nOffset = nTileIdx * l1N + nSplitOffset;
         if constexpr (enableLoadBalance) {
+            // When tail blocks are merged/split, linear `tileIdx * base` mapping needs correction.
             if constexpr (!isTransA) {
                 if (mTileIdx > Get<IDX_M_BASE_NORM_CNT>(loadBalanceParam)) {
                     mOffset -= (mTileIdx - Get<IDX_M_BASE_NORM_CNT>(loadBalanceParam)) *

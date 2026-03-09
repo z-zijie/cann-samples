@@ -76,7 +76,7 @@ __global__ __aicore__ void QuantMatmulMxfp4Kernel(
     quantMatmulKernelImpl(params);
 }
 
-// 打印使用说明
+// Print usage information.
 void printUsage(const std::string& programName)
 {
     std::cerr << "Usage: " << programName << " m k n" << std::endl;
@@ -87,7 +87,7 @@ void printUsage(const std::string& programName)
     std::cerr << "Example: " << programName << " 100 50 200" << std::endl;
 }
 
-// 解析命令行参数
+// Parse command-line arguments.
 void parseArguments(int argc, char* argv[], int& m, int& k, int& n)
 {
     if (argc >= 2 && (std::string(argv[1]) == "--help" || std::string(argv[1]) == "-h")) {
@@ -142,7 +142,7 @@ void SetTilingData(QuantMatmulTilingData& quantMatmulTilingData, int m, int n, i
 
 int main(int argc, char* argv[])
 {
-    // get inputShape
+    // Get input shapes.
     int m, k, n;
     try {
         parseArguments(argc, argv, m, k, n);
@@ -152,7 +152,7 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    // init
+    // Runtime initialization.
     int32_t deviceId = 0;
     aclrtStream stream;
     uint32_t deviceCount;
@@ -162,7 +162,7 @@ int main(int argc, char* argv[])
     CHECK_COND(aclrtSetDevice(deviceId) == ACL_SUCCESS, "aclrtSetDevice failed.");
     CHECK_COND(aclrtCreateStream(&stream) == ACL_SUCCESS, "aclrtCreateStream failed.");
 
-    // host data
+    // Host buffers.
     uint8_t* hA = nullptr;
     uint8_t* hB = nullptr;
     uint8_t* hScaleA = nullptr;
@@ -170,7 +170,7 @@ int main(int argc, char* argv[])
     float* hBias = nullptr;
     float* hC = nullptr;
 
-    // device addr
+    // Device buffers.
     GM_ADDR dA = nullptr;
     GM_ADDR dB = nullptr;
     GM_ADDR dScaleA = nullptr;
@@ -178,7 +178,7 @@ int main(int argc, char* argv[])
     GM_ADDR dBias = nullptr;
     GM_ADDR dC = nullptr;
 
-    // fp4 needs to be divided by 2.
+    // fp4x2 packs two values per byte.
     size_t sizeA = ((m * k + 1) >> 1) * sizeof(uint8_t);
     size_t sizeB = ((k * n + 1) >> 1) * sizeof(uint8_t);
     size_t sizeScaleA = (m * CeilDiv(k, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE) * sizeof(uint8_t);
@@ -189,7 +189,7 @@ int main(int argc, char* argv[])
     QuantMatmulTilingData quantMatmulTilingData;
     SetTilingData(quantMatmulTilingData, m, n, k);
 
-    // malloc pinned memory
+    // Allocate pinned host memory.
     CHECK_COND(aclrtMallocHost((void**)&hA, sizeA) == ACL_SUCCESS, "aclrtMallocHost failed.");
     std::unique_ptr<void, aclError (*)(void*)> HostA(hA, aclrtFreeHost);
     CHECK_COND(aclrtMallocHost((void**)&hB, sizeB) == ACL_SUCCESS, "aclrtMallocHost failed.");
@@ -208,7 +208,7 @@ int main(int argc, char* argv[])
     ReadFile("./input/input_scaleA.bin", sizeScaleA, hScaleA, sizeScaleA);
     ReadFile("./input/input_scaleB.bin", sizeScaleB, hScaleB, sizeScaleB);
 
-    // malloc device memory
+    // Allocate device memory.
     CHECK_COND(aclrtMalloc((void**)&dA, sizeA, ACL_MEM_MALLOC_HUGE_FIRST) == ACL_SUCCESS, "aclrtMalloc failed.");
     std::unique_ptr<void, aclError (*)(void*)> DeviceA(dA, aclrtFree);
     CHECK_COND(aclrtMalloc((void**)&dB, sizeB, ACL_MEM_MALLOC_HUGE_FIRST) == ACL_SUCCESS, "aclrtMalloc failed.");
@@ -222,7 +222,7 @@ int main(int argc, char* argv[])
     CHECK_COND(aclrtMalloc((void**)&dC, sizeC, ACL_MEM_MALLOC_HUGE_FIRST) == ACL_SUCCESS, "aclrtMalloc failed.");
     std::unique_ptr<void, aclError (*)(void*)> DeviceC(dC, aclrtFree);
 
-    // memcpy h2d
+    // H2D copies.
     CHECK_COND(
         aclrtMemcpyAsync(dA, sizeA, hA, sizeA, ACL_MEMCPY_HOST_TO_DEVICE, stream) == ACL_SUCCESS,
         "aclrtMemcpyAsync failed.");
@@ -239,25 +239,25 @@ int main(int argc, char* argv[])
         aclrtMemcpyAsync(dBias, sizeBias, hBias, sizeBias, ACL_MEMCPY_HOST_TO_DEVICE, stream) == ACL_SUCCESS,
         "aclrtMemcpyAsync failed.");
 
-    // get platform info
+    // Get platform info and launch kernel with AIC core count.
     auto ascendcPlatform = platform_ascendc::PlatformAscendCManager::GetInstance();
     CHECK_COND(ascendcPlatform != nullptr, "Get ascendcPlatform failed.");
     uint32_t numBlocks = ascendcPlatform->GetCoreNumAic();
 
-    // kernel launch
+    // Kernel launch.
     QuantMatmulMxfp4Kernel<<<numBlocks, nullptr, stream>>>(dA, dB, dScaleA, dScaleB, dBias, dC, quantMatmulTilingData);
 
-    // memcpy d2h
+    // D2H copy.
     CHECK_COND(
         aclrtMemcpyAsync(hC, sizeC, dC, sizeC, ACL_MEMCPY_DEVICE_TO_HOST, stream) == ACL_SUCCESS,
         "aclrtMemcpyAsync failed.");
 
-    // Sync
+    // Synchronize and dump output.
     CHECK_COND(aclrtSynchronizeStream(stream) == ACL_SUCCESS, "aclrtSynchronizeStream failed.");
 
     WriteFile("./output/npu_out.bin", hC, sizeC);
 
-    // 资源释放
+    // Release resources.
     aclrtDestroyStream(stream);
     aclrtResetDevice(deviceId);
     aclFinalize();

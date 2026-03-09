@@ -142,25 +142,28 @@ QBMM_MX_KERNEL_CLASS_TEM_PARAMS
 __aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS>::Process(
     const Params& params, BlockSchedulerOp& bs)
 {
+    // Addressing relies on `Coordinate` to translate tile indices + tail split offsets into GM offsets.
     CoordClass coord(
         params.problemShape.m, params.problemShape.n, params.problemShape.k, params.qbmmParams.baseM,
         params.qbmmParams.baseN, params.qbmmParams.baseK);
     BlockCoord blockIdx;
     const int64_t mTailTile = params.schParams.mTailTile;
     const int64_t nTailTile = params.schParams.nTailTile;
-    // 尾轮负载均衡
+    // Tail-round load balance: split the last scheduled tiles into smaller pieces if needed.
     if ((bs.GetEndBlockIdx() + 1) * mTailTile * nTailTile <= AscendC::GetBlockNum()) {
         bs.UpdateTailTile(mTailTile, nTailTile);
     }
-    // 每个核依次处理 block
+    // Each block (hardware core) processes a sequence of tiles.
     while (bs.GetTileIdx(blockIdx)) {
-        // 获取当前处理的 block 的 shape
+        // Get the current tile shape (with optional tail-split offsets).
         BlockShape singleShape = bs.GetBlockShape(blockIdx);
         if (Get<MNK_M>(singleShape) <= 0 || Get<MNK_N>(singleShape) <= 0) {
+            // If an invalid shape is returned, stop processing for this core.
+            // (Keep behavior unchanged; only comment is added/translated.)
             return;
         }
         AscendC::Std::tuple<uint32_t, uint32_t, uint32_t, uint32_t> loadBalanceInfo = bs.GetLoadBalanceInfo();
-        // 找到当前 block 在 gm 上的 index
+        // Compute GM offsets for A/B/scales/bias/C based on tile indices and tail strategy.
         blockOffset_ = coord.template GetQuantOffset<true>(
             Get<IDX_M_TILEIDX>(blockIdx), Get<IDX_N_TILEIDX>(blockIdx),
             Get<IDX_M_TAIL_SPLIT_TILEIDX>(singleShape),

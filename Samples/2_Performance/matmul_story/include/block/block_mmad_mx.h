@@ -31,8 +31,8 @@ struct TileL1L0Param {
     uint64_t curAlignN = 0;
     uint64_t curGmAKL1 = 0; 
     uint64_t curGmBKL1 = 0;
-    uint64_t curPadAKL1 = 0;  // pad to 64 align
-    uint64_t curPadBKL1 = 0;  // pad to 64 align
+    uint64_t curPadAKL1 = 0;  // padded to 64 alignment
+    uint64_t curPadBKL1 = 0;  // padded to 64 alignment
     uint64_t curKL0 = 0;
 };
 
@@ -120,7 +120,8 @@ public:
         }
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(ZERO_FLAG);
         AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(FIRST_FLAG);
-        AscendC::SetMMLayoutTransform(true); // true means column first when fixpipe_l0c2out
+        // Fixpipe output layout: column-first layout matches CO1->GM nz2nd conversion expectations here.
+        AscendC::SetMMLayoutTransform(true);
     }
 
     __aicore__ inline ~BlockMmadMx()
@@ -131,7 +132,8 @@ public:
         }
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(ZERO_FLAG);
         AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(FIRST_FLAG);
-        AscendC::SetMMLayoutTransform(false); // false means row first when fixpipe_l0c2out
+        // Restore default layout transform for other kernels.
+        AscendC::SetMMLayoutTransform(false);
     }
 
 public:
@@ -149,6 +151,9 @@ public:
         isBias_ = isBias;
         l1BufNum_ = l1Params.l1BufNum;
         enableL0cPingPong_ = dbL0C;
+        // L1 buffer layout depends on `fullLoadMode`:
+        // - Non-full-load: A/B and their scales are double-buffered across `l1BufNum_`.
+        // - A-full-load: A and scaleA are kept resident, only B/scaleB are double-buffered.
         bL1OneBuffer_ = baseN_ * kL1_;
         scaleBL1OneBuffer_ = baseN_ * CeilDiv(scaleKL1_, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE;
         if (isBias_) {
@@ -158,8 +163,9 @@ public:
             aL1OneBuffer_ = baseM_ * Align(kL1_, MXFP_DIVISOR_SIZE);
             scaleAL1OneBuffer_ = baseM_ * CeilDiv(scaleKL1_, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE;
             for (int32_t bufferId = 0; bufferId < l1BufNum_; bufferId++) {
-                // 2 buffer: L1 space is : A0|B0|AScale0|BScale0|bias0|...|A1|B1|AScale1|BScale1|bias1|...
-                // 4 buffer: L1 space is : A0A2|B0B2|AScale0|BScale0|bias0|...|A1A3|B1B3|AScale1|BScale1|bias1|...
+                // L1 space example:
+                // - 2 buffers: A0|B0|AScale0|BScale0|bias0|...|A1|B1|AScale1|BScale1|bias1|...
+                // - 4 buffers: A0A2|B0B2|AScale0|BScale0|bias0|...|A1A3|B1B3|AScale1|BScale1|bias1|...
                 uint64_t l1Offset = L1_SIZE * (bufferId & 1);
                 l1BufferAOffset_[bufferId] = l1Offset + aL1OneBuffer_ * (bufferId >> 1);
                 l1BufferBOffset_[bufferId] =
@@ -234,9 +240,9 @@ public:
     __aicore__ inline void CopyInBias(const AscendC::GlobalTensor<BiasType> &biasGlobal,
                                       const AscendC::LocalTensor<BiasType> &cl1Local, uint64_t curNL1)
     {
-        // No need to add sync flag for bias L1 loading because bias loading operation can be covered by A/B/ScaleA/ScaleB load.
+        // Bias load does not need a dedicated sync: it is covered by the existing A/B/scale load pipeline.
         AscendC::DataCopyPadParams padParams;
-        // 单位为Byte
+        // `DataCopyParams` length is in bytes.
         AscendC::DataCopyParams biasParam{1, static_cast<uint16_t>(curNL1 * sizeof(BiasType)), 0, 0};
         AscendC::DataCopyPad(cl1Local, biasGlobal, biasParam, padParams);
     }
@@ -308,11 +314,11 @@ public:
         if (!needBias) {
             return;
         }
-        // s32场景要对齐到2 因此是align(nl1Align / 8, 2)
+        // Bias is copied to BT (C2) in cube-aligned layout.
         uint64_t btAlign = AscendC::BLOCK_CUBE / BIAS_C0;
         uint16_t burstLength = Align(nl1Align / BIAS_C0, btAlign);
         AscendC::DataCopyParams biasParam{1, static_cast<uint16_t>(burstLength), 0, 0};
-        // 当dstlocal位于C2时，C2中至少为fp32*16
+        // When dst tensor is in C2, the minimal granularity is fp32 * 16.
         AscendC::DataCopy(biasBt, biasL1Local, biasParam);
     }
 
@@ -374,7 +380,7 @@ public:
         intriParams.mSize = baseM;
         intriParams.dstStride = n_;
         intriParams.srcStride = Align(baseM, AscendC::BLOCK_CUBE);
-        // set mode according to dtype
+        // Select cast mode by output dtype.
         if constexpr (AscendC::IsSameType<CType, bfloat16_t>::value) {
             intriParams.quantPre = QuantMode_t::F322BF16;
         } else if (AscendC::IsSameType<CType, half>::value) {
@@ -383,7 +389,9 @@ public:
             intriParams.quantPre = QuantMode_t::NoQuant;
         }
         intriParams.nz2ndEn = true;
-        intriParams.unitFlag = FINAL_ACCUMULATION;  // 3 unitflag
+        // `unitFlag` must indicate final accumulation for CO1->GM conversion.
+        // The MMAD path uses unitFlag=NON_FINAL/FINAL per K-iteration; output always uses FINAL.
+        intriParams.unitFlag = FINAL_ACCUMULATION;
         AscendC::SetFixpipeNz2ndFlag(1, 1, 1);
         AscendC::DataCopy(cGlobal, c1Local, intriParams);
     }
@@ -462,7 +470,9 @@ public:
         uint64_t kL0Iter = CeilDiv(tileL1L0Param.curGmBKL1, baseK_);
         for (uint16_t iter1 = 0; iter1 < kL0Iter; ++iter1) {
             UpdateKL0(tileL1L0Param, iter1);
-            // Load data to L0 and open DB
+            // Load data to L0 with ping-pong buffering. The flag pairing is:
+            // - Wait M_MTE1 before issuing LoadData into L0 (avoid clobbering).
+            // - Set MTE1_M after LoadData, then Wait MTE1_M before issuing MMAD.
             uint64_t l0Offset = (HALF_L0_SIZE << 1) * (l0PingPong_ & 0x1);
             AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0PingPong_ & 0x1);
             uint64_t offsetScaleL1 = BLOCK_CUBE * (l1Iter % (scaleKL1_ / kL1_)) * (kL1_ / MXFP_GROUP_SIZE);
@@ -539,7 +549,7 @@ public:
         }
         // Copy out to GM
         AscendC::LocalTensor<float> c1Local = c1Local_[l0cOffset];
-        // 数据搬出到GM或ub
+        // Copy CO1 to GM (with nz2nd conversion enabled).
         CopyOut(cGlobal, c1Local, mmadParams.m, mmadParams.n);
         if (enableL0cPingPong_) {
             l0cPingPong_++;
