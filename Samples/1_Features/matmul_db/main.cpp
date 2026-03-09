@@ -45,6 +45,8 @@ __global__ __aicore__ void MatmulKernel(GM_ADDR aGm, GM_ADDR bGm, GM_ADDR cGm, u
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIC_ONLY);
 
     constexpr static uint16_t CUBE_BLOCK_SIZE = 16;
+    constexpr static uint64_t HALF_L0C_SIZE = AscendC::TOTAL_L0C_SIZE / DOUBLE_BUFFER_COUNT /sizeof(T);
+    constexpr static uint64_t HALF_L0_SIZE = L0A_SIZE / DOUBLE_BUFFER_COUNT /sizeof(T);
 
     // 初始化变量
     uint64_t baseM = 256;
@@ -62,6 +64,13 @@ __global__ __aicore__ void MatmulKernel(GM_ADDR aGm, GM_ADDR bGm, GM_ADDR cGm, u
     uint64_t curBlockIdx = AscendC::GetBlockIdx();
     uint64_t blockNum = AscendC::GetBlockNum();
 
+    // 初始化db变量
+    uint64_t l0PingPong_ = 0;
+    uint64_t l1PingPong = 0;
+    uint64_t l0CPingPong = 0;
+    uint64_t l1BufferAOffset[2] = {0UL};
+    uint64_t l1BufferBOffset[2] = {0UL};
+
     // 构造gm tensor
     auto layoutA = AscendC::Te::MakeNDLayout<T>(m, k);
     auto layoutB = AscendC::Te::MakeNDLayout<T>(k, n);
@@ -73,7 +82,11 @@ __global__ __aicore__ void MatmulKernel(GM_ADDR aGm, GM_ADDR bGm, GM_ADDR cGm, u
 
     // 设置首次MTE1_MTE2 M_MTE1
     AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(ZERO_FLAG);
+    AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(FIRST_FLAG);
     AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(ZERO_FLAG);
+    AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(FIRST_FLAG);
+    AscendC::SetFlag<AscendC::HardEvent::FIX_M>(ZERO_FLAG);
+    AscendC::SetFlag<AscendC::HardEvent::FIX_M>(FIRST_FLAG);
 
     // 多核处理不同块
     for (uint64_t tileIdx = curBlockIdx; tileIdx < tileNum; tileIdx += blockNum) {
@@ -86,7 +99,8 @@ __global__ __aicore__ void MatmulKernel(GM_ADDR aGm, GM_ADDR bGm, GM_ADDR cGm, u
         uint64_t actualCurN = nTileIdx == (nTileNum - 1) ? (n - nTileIdx * baseN) : baseN;
 
         // slice gm to l1
-        uint64_t l0cOffset = 0;
+        uint64_t l0cOffset = (l0CPingPong & 1) * HALF_L0C_SIZE;
+
 
         auto gmBlockA_ = gmA(AscendC::Te::MakeCoord(mTileIdx * baseM, 0L), AscendC::Te::MakeShape(curM, k));
         auto gmBlockB_ = gmB(AscendC::Te::MakeCoord(0L, nTileIdx * baseN), AscendC::Te::MakeShape(k, curN));
@@ -95,20 +109,25 @@ __global__ __aicore__ void MatmulKernel(GM_ADDR aGm, GM_ADDR bGm, GM_ADDR cGm, u
 
         auto layoutL0C = AscendC::Te::MakeL0CLayout(curM, curN);
         auto tensorL0C = AscendC::Te::MakeTensor(MakeL0CmemPtr((__cc__ float*)l0cOffset), layoutL0C);
+        // 避免L0C数据被覆盖
+        AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(l0CPingPong & 1);
+
         for (uint64_t iter0 = 0; iter0 < kL1TileNum; ++iter0) {
-            AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(ZERO_FLAG);
+            uint64_t l1BufId = l1PingPong & 1;
+            AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(l1BufId);
 
             auto curGmBKL1 = (iter0 + 1 == kL1TileNum) ? (k - iter0 * kL1) : kL1;
             auto curGmAKL1 = curGmBKL1;
 
             // A, B GM->L1
-            uint64_t l1BufferAOffset =  0;
-            uint64_t l1BufferBOffset =  baseM * kL1 * sizeof(T);
+            uint64_t l1Offset = (AscendC::TOTAL_L1_SIZE >> 1) * l1BufId;
+            l1BufferAOffset[l1BufId] =  l1Offset;
+            l1BufferBOffset[l1BufId] =  l1Offset + baseM * kL1;
 
             auto layoutAL1 = AscendC::Te::MakeNzLayout<T>(curM, curGmAKL1);
             auto layoutBL1 = AscendC::Te::MakeNzLayout<T>(curGmBKL1, curN);
-            auto tensorAL1 = AscendC::Te::MakeTensor(AscendC::Te::MakeL1memPtr((__cbuf__ T*)l1BufferAOffset), layoutAL1);
-            auto tensorBL1 = AscendC::Te::MakeTensor(AscendC::Te::MakeL1memPtr((__cbuf__ T*)l1BufferBOffset), layoutBL1);
+            auto tensorAL1 = AscendC::Te::MakeTensor(AscendC::Te::MakeL1memPtr((__cbuf__ T*)l1BufferAOffset[l1BufId]), layoutAL1);
+            auto tensorBL1 = AscendC::Te::MakeTensor(AscendC::Te::MakeL1memPtr((__cbuf__ T*)l1BufferBOffset[l1BufId]), layoutBL1);
 
             // slice l1 to l0
             auto gmBlockA = gmBlockA_(AscendC::Te::MakeCoord(0, iter0 * kL1), AscendC::Te::MakeShape(curM, curGmAKL1));
@@ -122,21 +141,23 @@ __global__ __aicore__ void MatmulKernel(GM_ADDR aGm, GM_ADDR bGm, GM_ADDR cGm, u
                     AscendC::Te::CopyTraits<AscendC::Te::CopyGM2L1, AscendC::Te::DataCopyTraitDefault>>{},
                 tensorBL1, gmBlockB);
 
-            AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(ZERO_FLAG);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(ZERO_FLAG);
+            AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(l1BufId);
+            AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(l1BufId);
 
             uint64_t kL0IterNum = CeilDiv(curGmBKL1, baseK);
             uint64_t tailKL0 = curGmBKL1 - (kL0IterNum - 1) * baseK;
             for (uint16_t iter1 = 0; iter1 < kL0IterNum; ++iter1) {
-                AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(ZERO_FLAG);
+                uint64_t l0BufId = l0PingPong_ & 1;
+                uint64_t l0Offset = HALF_L0_SIZE * l0BufId;
+                AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0BufId);
 
                 uint64_t curKL0 = (iter1 + 1 == kL0IterNum) ? tailKL0 : baseK;
 
                 // A, B L1->L0
                 auto layoutAL0 = AscendC::Te::MakeNzLayout<T>(curM, curKL0);
                 auto layoutBL0 = AscendC::Te::MakeZnLayout<T>(curKL0, curN);
-                auto tensorAL0 = AscendC::Te::MakeTensor(AscendC::Te::MakeL0AmemPtr((__ca__ T*) 0), layoutAL0);
-                auto tensorBL0 = AscendC::Te::MakeTensor(AscendC::Te::MakeL0BmemPtr((__cb__ T*) 0), layoutBL0);
+                auto tensorAL0 = AscendC::Te::MakeTensor(AscendC::Te::MakeL0AmemPtr((__ca__ T*)l0Offset), layoutAL0);
+                auto tensorBL0 = AscendC::Te::MakeTensor(AscendC::Te::MakeL0BmemPtr((__cb__ T*)l0Offset), layoutBL0);
 
                 // slice l0 to mmad
                 auto tensorBlockAL1 =
@@ -151,8 +172,8 @@ __global__ __aicore__ void MatmulKernel(GM_ADDR aGm, GM_ADDR bGm, GM_ADDR cGm, u
                     AscendC::Te::CopyAtom<AscendC::Te::CopyTraits<AscendC::Te::CopyL12L0, LoadData2BTrait>>{},
                     tensorBL0, tensorBlockBL1);
 
-                AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(ZERO_FLAG);
-                AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(ZERO_FLAG);
+                AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(l0BufId);
+                AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(l0BufId);
 
                 // mmad
                 MmadParams para;
@@ -160,9 +181,11 @@ __global__ __aicore__ void MatmulKernel(GM_ADDR aGm, GM_ADDR bGm, GM_ADDR cGm, u
                 AscendC::Te::Mad(
                     MmadAtom<MmadTraits<MmadOperation, MmadTraitDefault>>{}, tensorL0C, tensorAL0, tensorBL0, para);
 
-                AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(ZERO_FLAG);
+                AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0BufId);
+                l0PingPong_++;
             }
-            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(ZERO_FLAG);
+            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(l1BufId);
+            l1PingPong++;
         }
         AscendC::SetFlag<AscendC::HardEvent::M_FIX>(ZERO_FLAG);
         AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(ZERO_FLAG);
@@ -171,9 +194,15 @@ __global__ __aicore__ void MatmulKernel(GM_ADDR aGm, GM_ADDR bGm, GM_ADDR cGm, u
         AscendC::Te::Copy(
             AscendC::Te::CopyAtom<AscendC::Te::CopyTraits<AscendC::Te::CopyL0C2GM, AscendC::Te::FixpipeTraitDefault>>{},
             gmBlockC_, tensorL0C);
+        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(l0CPingPong & 1);
+        l0CPingPong++;
     }
     AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(ZERO_FLAG);
     AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(ZERO_FLAG);
+    AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(FIRST_FLAG);
+    AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(FIRST_FLAG);
+    AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(ZERO_FLAG);
+    AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(FIRST_FLAG);
 }
 
 } // namespace matmul
