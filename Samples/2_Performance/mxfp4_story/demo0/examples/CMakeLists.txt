@@ -24,7 +24,7 @@ target_link_directories(mxfp4 PRIVATE ${ASCEND_DIR}/lib64)
 
 target_compile_options(mxfp4 PRIVATE
     "-xasc"
-    "--npu-arch=dav-3101"
+    "--npu-arch=dav-3510"
     "-w"
     "-O3"
 )

@@ -17,10 +17,11 @@
 #include "kernel_operator.h"
 #include "acl/acl.h"
 #include "tiling/platform/platform_ascendc.h"
-#include "data_utils.h"
-#include "../include/kernel./quant_matmul_mx_kernel_base_impl.h"
+#include "host_utils/io_utils.h"
+#include "../include/kernel/quant_matmul_mx_kernel_base_impl.h"
 #include "../include/blcok/block_mmad_mx.h"
 #include "../include/blcok/block_scheduler_mx_base.h"
+#include "../include/utils/quant_matmul_constant.h"
 
 #define CHECK_COND(cond, message, return_expr)                                                                         \
     do {                                                                                                               \
@@ -88,8 +89,8 @@ int main(int argc, char* argv[])
     // 构造Host侧输入输出
     std::vector<uint8_t> hostA((m * k + 1) >> 1, 0);
     std::vector<uint8_t> hostB((k * n + 1) >> 1, 0);
-    std::vector<uint8_t> hostScaleA(m * ((k + 1) / 64) * 2, 0);
-    std::vector<uint8_t> hostScaleB(n * ((k + 1) / 64) * 2, 0);
+    std::vector<uint8_t> hostScaleA(m * ((k + 1) / MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE, 0);
+    std::vector<uint8_t> hostScaleB(n * ((k + 1) / MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE, 0);
     std::vector<float> hostOutput(m * n, 0);
     auto sizeA = static_cast<size_t>(1) * hostA.size() * sizeof(uint8_t);
     auto sizeB = static_cast<size_t>(1) * hostB.size() * sizeof(uint8_t);
@@ -100,7 +101,6 @@ int main(int argc, char* argv[])
     ReadFile("./input/input_b.bin", sizeB, hostB.data(), sizeB);
     ReadFile("./input/input_scaleA.bin", sizeScaleA, hostScaleA.data(), sizeScaleA);
     ReadFile("./input/input_scaleB.bin", sizeScaleB, hostScaleB.data(), sizeScaleB);
-    // ((m * (k + 64) - 1 / 64)) 
 
     // 申请Device侧地址
     GM_ADDR deviceA = nullptr;
@@ -138,7 +138,6 @@ int main(int argc, char* argv[])
     auto ascendcPlatform = platform_ascendc::PlatformAscendCManager::GetInstance();
     CHECK_COND(ascendcPlatform != nullptr, "get ascendcPlatform failed.", return 1);
     uint32_t blockDim = ascendcPlatform->GetCoreNumAic();
-    // matmul::MatmulKernel<<<blockDim, nullptr, stream>>>(deviceA, deviceB, deviceOutput, m, k, n);
     Kernel::QuantMatmulMxfp4BaseKernel<<<blockDim, nullptr, stream>>>(m, k, n, deviceA, deviceB, deviceScaleA, deviceScaleB, deviceOutput);
     
     // 同步等待算子执行结束
@@ -149,7 +148,7 @@ int main(int argc, char* argv[])
     ret = aclrtMemcpy(hostOutput.data(), sizeOutput, deviceOutput, sizeOutput, ACL_MEMCPY_DEVICE_TO_HOST);
     CHECK_COND(ret == ACL_SUCCESS, "aclrtMemcpy deviceOutput failed.", return 1);
 
-    WriteFile("./output/output_y.bin", hostOutput.data(), sizeOutput);
+    WriteFile("./output/npu_out.bin", hostOutput.data(), sizeOutput);
 
     aclrtDestroyStream(stream);
     aclrtResetDevice(deviceId);

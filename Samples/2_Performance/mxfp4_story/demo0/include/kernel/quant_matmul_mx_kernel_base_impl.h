@@ -21,8 +21,12 @@
 #include "kernel_operator.h"
 #include "kernel_operator_intf.h"
 #endif
-#include "../block/block_scheduler_mx_base.h"
-#include "../block/block_mmad_mx.h"
+#include "kernel_utils/common_utils.h"
+#include "kernel_utils/layout_utils.h"
+#include "kernel_utils/tuple_utils.h"
+#include "../blcok/block_scheduler_mx_base.h"
+#include "../blcok/block_mmad_mx.h"
+#include "../utils/coord_utils.h"
 
 namespace Kernel {
 #define QBMM_MX_KERNEL_CLASS_TEM_PARAMS \
@@ -141,25 +145,18 @@ __aicore__ inline void QuantMatmulMxKernelBaseImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS
         params.problemShape.m, params.problemShape.n, params.problemShape.k, params.qbmmParams.baseM,
         params.qbmmParams.baseN, params.qbmmParams.baseK);
     BlockCoord blockIdx;
-    const int64_t mTailTile = params.schParams.mTailTile;
-    const int64_t nTailTile = params.schParams.nTailTile;
-    // 尾轮负载均衡
-    if ((bs.GetEndBlockIdx() + 1) * mTailTile * nTailTile <= AscendC::GetBlockNum()) {
-        bs.UpdateTailTile(mTailTile, nTailTile);
-    }
     // 每个核依次处理 block
     while (bs.GetTileIdx(blockIdx)) {
-        // 获取当前处理的 blokc 的 shape
+        // 获取当前处理的 block 的 shape
         BlockShape singleShape = bs.GetBlockShape(blockIdx);
         if (Get<MNK_M>(singleShape) <= 0 || Get<MNK_N>(singleShape) <= 0) {
             return;
         }
-        AscendC::Std::tuple<uint32_t, uint32_t, uint32_t, uint32_t> loadBalanceInfo = bs.GetLoadBalanceInfo();
-        // 找到当前 block 在 gm 上的 index
-        blockOffset_ = coord.template GetQuantOffset<true>(
+        // 找到当前 block 在 gm 上的 index（不做负载均衡）
+        blockOffset_ = coord.template GetQuantOffset<false>(
             Get<IDX_M_TILEIDX>(blockIdx), Get<IDX_N_TILEIDX>(blockIdx),
             Get<IDX_M_TAIL_SPLIT_TILEIDX>(singleShape),
-            Get<IDX_N_TAIL_SPLIT_TILEIDX>(singleShape), loadBalanceInfo);
+            Get<IDX_N_TAIL_SPLIT_TILEIDX>(singleShape));
 
         mmadOp_(
             aGlobal_[Get<IDX_A_OFFSET>(blockOffset_)],
@@ -171,7 +168,7 @@ __aicore__ inline void QuantMatmulMxKernelBaseImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS
     }
 }
 
-// test tmp Kernel
+// Kernel 入口：完全走 Process() 路径，由 Scheduler 驱动多次调用 Mmad
 __global__ __aicore__ void QuantMatmulMxfp4BaseKernel(uint64_t m, uint64_t k, uint64_t n,
         GM_ADDR aGM, GM_ADDR bGM, GM_ADDR aScaleGM, GM_ADDR bScaleGM, GM_ADDR cGM)
 {
@@ -185,21 +182,37 @@ __global__ __aicore__ void QuantMatmulMxfp4BaseKernel(uint64_t m, uint64_t k, ui
     using layoutB = layout::ColumnMajor;
     using layoutC = layout::RowMajor;
 
-    using BlockScheduler = QuantMatmulMxBaseScheduler;
+    using BlockScheduler = Block::QuantMatmulMxBaseScheduler;
     using BlockMmad = Block::BlockMmadMx<
         void, void, void, AType, layoutA, BType, layoutB, CType, layoutC, BiasType, layoutC, void>;
     using ProblemShape = MatmulShape;
-    using QBMMTiling = typename QuantMatmulKernelImpl::QBMMTiling;
     using QuantMatmulKernelImpl = Kernel::QuantMatmulMxKernelBaseImpl<ProblemShape, BlockMmad, BlockScheduler>;
+    using Params = typename QuantMatmulKernelImpl::Params;
 
-    // using Params = typename QuantMatmulKernelImpl::Params;
-    // QBMMTiling qbmmParams{quantMatmulTilingData.baseM, quantMatmulTilingData.baseN, quantMatmulTilingData.baseK,
-    //                       static_cast<uint32_t>(quantMatmulTilingData.isBias),
-    //                       static_cast<uint32_t>(quantMatmulTilingData.dbL0C)};
+    constexpr uint32_t BASE_M = 256;
+    constexpr uint32_t BASE_N = 256;
+    constexpr uint32_t BASE_K = 128 / sizeof(fp4x2_e2m1_t);
 
-    MmadMx mmadMx;
-    mmadMx.Init(m, k, n, aGM, bGM, aScaleGM, bScaleGM, cGM);
-    mmadMx.KernelRun();
+    Params params;
+    params.problemShape.m = static_cast<int64_t>(m);
+    params.problemShape.n = static_cast<int64_t>(n);
+    params.problemShape.k = static_cast<int64_t>(k);
+    params.mmadParams.aGmAddr = aGM;
+    params.mmadParams.bGmAddr = bGM;
+    params.mmadParams.scaleAGmAddr = aScaleGM;
+    params.mmadParams.scaleBGmAddr = bScaleGM;
+    params.mmadParams.cGmAddr = cGM;
+    params.mmadParams.biasGmAddr = nullptr;
+    params.schParams.baseM = BASE_M;
+    params.schParams.baseN = BASE_N;
+    params.qbmmParams.baseM = BASE_M;
+    params.qbmmParams.baseN = BASE_N;
+    params.qbmmParams.baseK = BASE_K;
+    params.qbmmParams.isBias = 0;
+    params.qbmmParams.dbL0C = 0;
+
+    QuantMatmulKernelImpl impl;
+    impl(params);
 }
 
 } // namespace Kernel
