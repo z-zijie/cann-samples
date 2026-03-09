@@ -9,6 +9,34 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 
-add_subdirectory(matmul_story)
-add_subdirectory(rms_norm_quant_story)
-add_subdirectory(moe_init_routing_story)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+set(CMAKE_C_COMPILER ${BISHENG})
+set(CMAKE_CXX_COMPILER ${BISHENG})
+set(CMAKE_LINKER ${BISHENG})
+
+add_executable(moe_init_routing src/main_final.cpp)
+
+target_include_directories(moe_init_routing PRIVATE ${ASCEND_INCLUDE_DIRS})
+target_link_directories(moe_init_routing PRIVATE ${ASCEND_DIR}/lib64)
+
+target_compile_options(moe_init_routing PRIVATE
+    "-xasc"
+    "--npu-arch=dav-3101"
+    "-w"
+    "-O3"
+)
+
+target_link_libraries(moe_init_routing
+    PRIVATE
+    m
+    dl
+    platform
+    tiling_api
+)
+
+install(TARGETS moe_init_routing
+    RUNTIME DESTINATION 2_Performance/moe_init_routing_story
+)
