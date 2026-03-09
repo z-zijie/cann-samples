@@ -67,6 +67,12 @@ public:
     using CoordClass = Coordinate<transA, transB, CubeFormat::ND, CubeFormat::ND, CubeFormat::ND>;
     using BlockSchedulerParams = typename BlockSchedulerOp::Params;
 
+    // Tile-level runtime knobs.
+    //
+    // These values describe how one logical block is computed:
+    // - baseM/baseN/baseK define the block tile shape
+    // - isBias controls whether bias is loaded/accumulated
+    // - dbL0C enables ping-pong buffering on the L0C output tile
     struct QBMMTiling {
         uint32_t baseM;
         uint32_t baseN;
@@ -75,6 +81,10 @@ public:
         uint32_t dbL0C;
     };
 
+    // Aggregate kernel parameters passed from host code.
+    //
+    // Keeping these grouped makes the kernel launch site compact while still
+    // exposing the same conceptual layers used inside the implementation.
     struct Params {
         ProblemShape problemShape;
         BlockMmadParams mmadParams;
@@ -110,14 +120,18 @@ private:
 QBMM_MX_KERNEL_CLASS_TEM_PARAMS
 __aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS>::operator()(const Params& params)
 {
+    // This path is implemented for AIC only. The example launches no AIV work.
     if ASCEND_IS_AIV {
         return;
     }
 
+    // Bind GM tensors, construct the scheduler, initialize the MMAD pipeline,
+    // then let `Process()` iterate over tiles assigned to the current hardware block.
     Init(params);
     BlockSchedulerOp bs(params.problemShape, params.schParams);
     problemShape_ = ToShapeTuple(params.problemShape);
 
+    // `BlockMmad` expects the block tile shape in [M, N, K] form.
     BlockShape l0TileShape{params.qbmmParams.baseM, params.qbmmParams.baseN, params.qbmmParams.baseK, 0};
     bool enableL0CPingPong = (params.qbmmParams.dbL0C > 1);
     mmadOp_.Init(problemShape_, l0TileShape, params.l1Params, isBias_, enableL0CPingPong);
@@ -127,6 +141,8 @@ __aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS
 QBMM_MX_KERNEL_CLASS_TEM_PARAMS
 __aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS>::Init(const Params& params)
 {
+    // The host has already allocated GM buffers and passed raw addresses here.
+    // The kernel-side wrapper converts those addresses into typed GlobalTensor views.
     aGlobal_.SetGlobalBuffer((__gm__ AType*)params.mmadParams.aGmAddr);
     bGlobal_.SetGlobalBuffer((__gm__ BType*)params.mmadParams.bGmAddr);
     cGlobal_.SetGlobalBuffer((__gm__ CType*)params.mmadParams.cGmAddr);
@@ -169,6 +185,10 @@ __aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS
             Get<IDX_M_TAIL_SPLIT_TILEIDX>(singleShape),
             Get<IDX_N_TAIL_SPLIT_TILEIDX>(singleShape), loadBalanceInfo);
 
+        // Execute one logical block:
+        // 1. load the tile of A/B/scale/bias from the computed GM offsets
+        // 2. iterate over K using the configured L1/L0 staging policy
+        // 3. write the result tile back to the corresponding C location
         mmadOp_(
             aGlobal_[Get<IDX_A_OFFSET>(blockOffset_)],
             bGlobal_[Get<IDX_B_OFFSET>(blockOffset_)],

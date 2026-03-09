@@ -160,6 +160,8 @@ public:
             biasL1OneBuffer_ = baseN_ * sizeof(BiasType);
         }
         if constexpr (DispatchPolicy::fullLoadMode == 0) {
+            // Standard mode:
+            // every K-slice loads both A and B into L1, then pushes them down to L0.
             aL1OneBuffer_ = baseM_ * Align(kL1_, MXFP_DIVISOR_SIZE);
             scaleAL1OneBuffer_ = baseM_ * CeilDiv(scaleKL1_, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE;
             for (int32_t bufferId = 0; bufferId < l1BufNum_; bufferId++) {
@@ -178,6 +180,8 @@ public:
                 l1BufferBiasOffset_[bufferId] = l1BufferScaleBOffset_[bufferId] + scaleBL1OneBuffer_;
             }
         } else {
+            // A-full-load mode:
+            // keep the entire A tile (and its scales) resident in L1 and only rotate B.
             uint64_t mAlign = Align(baseM_, BLOCK_CUBE);
             uint64_t kAlign = Align(k_, MXFP_DIVISOR_SIZE);
             aL1OneBuffer_ = mAlign * kAlign;
@@ -204,6 +208,11 @@ public:
     __aicore__ inline void CopyInA1(const AscendC::GlobalTensor<AType> &aGlobal,
         const AscendC::LocalTensor<AType> &al1Local, TileL1L0Param &tileL1L0Param)
     {
+        // Copy A from GM to L1 and convert ND -> NZ.
+        //
+        // This is an MXFP4 path. The concrete GM storage type is packed, so D
+        // values are counted in bytes (`(dDim + 1) >> 1`) instead of logical
+        // fp4 elements.
         AscendC::Nd2NzParams nd2nzParams;
         nd2nzParams.ndNum = 1;
         uint64_t nDim = tileL1L0Param.curM;
@@ -222,6 +231,10 @@ public:
     __aicore__ inline void CopyInB1(const AscendC::GlobalTensor<BType> &bGlobal,
         const AscendC::LocalTensor<BType> &bl1Local, TileL1L0Param &tileL1L0Param)
     {
+        // Same idea as `CopyInA1`, but for B.
+        //
+        // The scheduler has already selected the correct logical tile; this helper
+        // only performs the layout conversion required by the L1/L0 pipeline.
         AscendC::Nd2NzParams nd2nzParams;
         nd2nzParams.ndNum = 1;
         uint64_t nDim = tileL1L0Param.curN;
@@ -251,6 +264,7 @@ public:
                                         const LocalTensor<fp8_e8m0_t> &aScaleL1Local, uint64_t curML1, uint64_t curKL1,
                                         uint64_t kL1Offset)
     {
+        // In A-full-load mode, scaleA is loaded once together with the resident A tile.
         if (DispatchPolicy::fullLoadMode != 0 && kL1Offset != 0) {
             return;
         }
@@ -263,6 +277,8 @@ public:
 
         uint64_t offsetScaleAGM = kL1Offset / MXFP_DIVISOR_SIZE;
 
+        // MX scale values are manipulated as `half` here because the hardware copy
+        // path expects a 16-bit view for DN -> NZ movement.
         GlobalTensor<half> aScaleGlobalB16;
         aScaleGlobalB16.SetGlobalBuffer(((__gm__ half*)(aScaleGlobal.GetPhyAddr())));
         auto aScaleL1LocalImpl = aScaleL1Local.template ReinterpretCast<half>();
@@ -283,6 +299,7 @@ public:
                                         const LocalTensor<fp8_e8m0_t> &bScaleL1Local, uint64_t curNL1,
                                         uint64_t kL1Offset)
     {
+        // scaleB always follows the K slices loaded for B.
         uint64_t curScaleKL1 = scaleKL1_;
         if (kL1Offset + curScaleKL1 > k_) {
             curScaleKL1 = k_ - kL1Offset;
@@ -327,6 +344,13 @@ public:
         const AscendC::LocalTensor<fp8_e8m0_t>& scaleAl1Local, uint64_t iter, TileL1L0Param& tileL1L0Param,
         uint64_t curScaleKL1)
     {
+        // Move one K-fragment of A from L1 to L0A.
+        //
+        // `LoadData()` consumes both:
+        // - the quantized data fragment
+        // - the corresponding MX scale fragment
+        //
+        // so both coordinate systems must advance in lockstep.
         AscendC::LoadData2DParamsV2 loadDataParams;
         AscendC::LoadData2DMxParams loadData2DMxParams;
         uint64_t m1 = CeilDiv(tileL1L0Param.curM, AscendC::BLOCK_CUBE);
@@ -352,6 +376,7 @@ public:
                                      const AscendC::LocalTensor<fp8_e8m0_t> &scaleBl1Local, uint64_t iter,
                                      TileL1L0Param &tileL1L0Param)
     {
+        // Mirror of `CopyInL0A` for B / scaleB.
         AscendC::LoadData2DParamsV2 loadDataParams;
         AscendC::LoadData2DMxParams loadData2DMxParams;
         uint64_t n1 = CeilDiv(tileL1L0Param.curN, AscendC::BLOCK_CUBE);
@@ -398,14 +423,17 @@ public:
 
     __aicore__ inline void UpdateKL1(TileL1L0Param &tileL1L0Param, uint64_t iter0)
     {
+        // `curGm*KL1` is the real remaining K length for this L1 iteration.
+        // `curPad*KL1` is the padded length required by the MX/L0 pipeline.
         tileL1L0Param.curGmBKL1 = (iter0 + 1 == kL1Iter_) ? (k_ - iter0 * kL1_) : kL1_;
         tileL1L0Param.curPadBKL1 = CeilAlign(tileL1L0Param.curGmBKL1, MXFP_DIVISOR_SIZE);
         tileL1L0Param.curGmAKL1 = tileL1L0Param.curGmBKL1;
-        tileL1L0Param.curPadAKL1 = tileL1L0Param.curPadBKL1;  // pad to 64 align
+        tileL1L0Param.curPadAKL1 = tileL1L0Param.curPadBKL1;  // padded to 64 alignment
     }
 
     __aicore__ inline void UpdateKL0(TileL1L0Param &tileL1L0Param, uint64_t iter1)
     {
+        // Split one L1 K-slice into smaller L0 K-fragments of size `baseK_`.
         if (iter1 * baseK_ + baseK_ > tileL1L0Param.curPadBKL1) {
             tileL1L0Param.curKL0 = tileL1L0Param.curPadBKL1 - iter1 * baseK_;
         } else {
@@ -415,6 +443,7 @@ public:
 
     __aicore__ inline void GetAlignMN(TileL1L0Param& tileL1L0Param)
     {
+        // Cube instructions operate on BLOCK_CUBE granularity on M/N.
         tileL1L0Param.curAlignM = CeilAlign(tileL1L0Param.curM, BLOCK_CUBE);
         tileL1L0Param.curAlignN = CeilAlign(tileL1L0Param.curN, BLOCK_CUBE);
     }
@@ -425,6 +454,7 @@ public:
     {
         uint64_t kL1Offset = l1Iter * kL1_;
         if constexpr (DispatchPolicy::fullLoadMode == 0) {
+            // scaleA / scaleB are reused across several K iterations when `scaleKL1_ > kL1_`.
             if (l1Iter % (scaleKL1_ / kL1_) == 0) {
                 AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(SCALE_BUFFER_FLAG_0 + (scaleL1BufId));
                 CopyInScaleA(scaleAGlobal, scaleAL1Local_[l1BufferScaleAOffset_[scaleL1BufId]], tileL1L0Param.curM,
@@ -433,6 +463,9 @@ public:
                              kL1Offset);
             }
         } else {
+            // In A-full-load mode:
+            // - scaleB still follows the streamed B tiles
+            // - scaleA is loaded once together with resident A
             if (l1Iter % (scaleKL1_ / kL1_) == 0) {
                 AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(SCALE_BUFFER_FLAG_0 + (scaleL1BufId));
                 CopyInScaleB(scaleBGlobal, scaleBL1Local_[l1BufferScaleBOffset_[scaleL1BufId]], tileL1L0Param.curN,
@@ -467,6 +500,8 @@ public:
     __aicore__ inline void Iterate(TileL1L0Param &tileL1L0Param, MmadParams &mmadParams, uint64_t l1Iter, uint64_t l1BufId,
                                    uint64_t scaleL1BufId, uint64_t offsetAl1, uint64_t l0cOffset)
     {
+        // One L1 slice may still be too large for a single MMAD step.
+        // Break it into `baseK_`-sized L0 fragments and accumulate over them.
         uint64_t kL0Iter = CeilDiv(tileL1L0Param.curGmBKL1, baseK_);
         for (uint16_t iter1 = 0; iter1 < kL0Iter; ++iter1) {
             UpdateKL0(tileL1L0Param, iter1);
@@ -486,13 +521,15 @@ public:
                 CopyInL0A(l0aLocal_[l0Offset], aL1Local_[offsetAl1],
                           scaleAL1Local_[l1BufferScaleAOffset_[0] + offsetScaleAL1], iter1, tileL1L0Param, k_);
             }
-            // copy bias to bt
+            // Bias is only needed on the very first accumulation step of the tile.
+            // It is staged into BT/C2 so MMAD can consume it directly.
             CopyInC2(biasL1Local_[l1BufferBiasOffset_[biasBufId_] / sizeof(BiasType)], biasBt_[baseN_ * biasBufId_],
                      Align(mmadParams.n, AscendC::BLOCK_CUBE), NeedBias(l1Iter, iter1));
             CopyInL0B(l0bLocal_[l0Offset], bL1Local_[l1BufferBOffset_[l1BufId]],
                       scaleBL1Local_[l1BufferScaleBOffset_[scaleL1BufId] + offsetScaleL1], iter1, tileL1L0Param);
             AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(l0PingPong_ & 0x1);
             AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(l0PingPong_ & 0x1);
+            // MMAD sees the K fragment after hardware-required padding.
             mmadParams.k = CeilAlign(tileL1L0Param.curKL0, MXFP_DIVISOR_SIZE);
             mmadParams.unitFlag =
                 (l1Iter + 1 == kL1Iter_ && iter1 + 1 == kL0Iter) ? FINAL_ACCUMULATION : NON_FINAL_ACCUMULATION;
@@ -511,6 +548,12 @@ public:
                                       AscendC::GlobalTensor<CType> cGlobal,
                                       BlockShape singleShape)
     {
+        // High-level execution order for one output tile:
+        // 1. derive aligned M/N sizes for the tile
+        // 2. stream K through L1 in chunks of `kL1_`
+        // 3. stream each L1 chunk through L0 in chunks of `baseK_`
+        // 4. accumulate into CO1 / L0C
+        // 5. write the completed tile back to GM
         TileL1L0Param tileL1L0Param;
         tileL1L0Param.curM = Get<IDX_M_TILEIDX>(singleShape);
         tileL1L0Param.curN = Get<IDX_N_TILEIDX>(singleShape);
@@ -521,7 +564,8 @@ public:
         mmadParams.disableGemv = true;
         uint64_t l0cOffset = (l0cPingPong_ & 1) * HALF_L0C_SIZE;
         for (uint64_t iter0 = 0; iter0 < kL1Iter_; ++iter0) {
-            // Load data to L1 and open DB
+            // L1 double buffering:
+            // while one buffer feeds L0/MMAD, the other can be refilled from GM.
             uint64_t l1BufId = abL1LoopCnt_ & (l1BufNum_ - 1);
             uint64_t scaleL1BufId = scaleLoopCnt_ & 1;
             uint64_t offsetA = iter0 * kL1_;
@@ -542,6 +586,8 @@ public:
             Iterate(tileL1L0Param, mmadParams, iter0, l1BufId, scaleL1BufId, offsetAl1, l0cOffset);
             AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(l1BufId);
             if ((iter0 + 1) % (scaleKL1_ / kL1_) == 0 || iter0 == kL1Iter_ - 1) {
+                // Scale buffers may live longer than A/B buffers when one scale chunk
+                // covers multiple `kL1_` compute iterations.
                 AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(SCALE_BUFFER_FLAG_0 + (scaleL1BufId));
                 scaleLoopCnt_++;
             }
@@ -559,12 +605,16 @@ public:
 private:
     __aicore__ inline bool NeedBias(uint64_t kIter0, uint64_t kIter1)
     {
+        // Bias is added once at the beginning of accumulation.
         return isBias_ && kIter0 == 0 && kIter1 == 0;
     }
 
     __aicore__ inline void Mmad(
         AscendC::MmadParams &mmadParams, uint64_t l0cOffset, uint64_t l0abOffset, uint64_t biasOffset, bool needBias)
     {
+        // MMAD supports two sources for the initial accumulator state:
+        // - bias from BT/C2 on the first step
+        // - the existing partial sum in CO1 on all following steps
         mmadParams.cmatrixSource = needBias;
         if (needBias) {
             AscendC::Mmad(
