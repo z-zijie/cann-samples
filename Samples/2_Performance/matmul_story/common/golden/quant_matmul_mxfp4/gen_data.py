@@ -14,10 +14,8 @@
 import os
 import sys
 import math
-import logging
 import numpy as np
 import torch
-import torch_npu
 from ml_dtypes import float4_e2m1fn
 from en_dtypes import float8_e8m0
 
