@@ -9,7 +9,7 @@
  */
 
 /*!
- * \file moe_common.h
+ * \file moe_kernel_common.h
  * \brief
  */
 
@@ -17,12 +17,13 @@
 #define MOE_COMMON_H
 
 constexpr static int64_t BLOCK_BYTES = 32;
+constexpr static int64_t PIPELINE_DEPTH = 1;
 constexpr static int64_t SIMT_THREAD_NUM = 2048;
 
 constexpr static int64_t ONE_REPEAT_SORT_NUM = 32; // 排序元素对齐32，sort api要求
 constexpr static int64_t SORT_API_MAX_ELEM = 32 * 255LL; // AscendC::Sort全排序模式最多支持一次排序(32*255rep)个元素
 constexpr static int64_t MRG_LIST_NUM = 4LL;
-const static int64_t MRG_SORT_API_MAX_ELEM = 1024LL;
+constexpr static int64_t MRG_SORT_API_MAX_ELEM = 1024LL;
 constexpr static int64_t FP32_ONE_REPEAT_NUM = 64;
 constexpr static float MIN_FP32 = -3.4e38f;
 constexpr static int64_t MERGE_LIST_TWO = 2;
