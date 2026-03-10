@@ -10,33 +10,72 @@
 # ----------------------------------------------------------------------------
 #
 # CI Build Script for ops-samples
-# 功能: 清理、配置、编译、安装 ops-samples 项目
-# 用法: bash .ci/build.sh
+# Usage: bash .ci/build.sh
 
-set -e  # 任何命令失败时立即退出脚本
-set -x  # 打印执行的命令，便于 CI 日志调试
+set -e
+set -x
 
-# 定位项目根目录（.ci 的上级目录）
+# ==============================================================================
+# Constants
+# ==============================================================================
+readonly BUILD_DIR="build"
+readonly OUTPUT_DIR="build_out"
+
+# ==============================================================================
+# Setup
+# ==============================================================================
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${PROJECT_ROOT}"
 
-# 清理旧的构建产物
-rm -rf build
-rm -rf build_out
+# ==============================================================================
+# Environment Info
+# ==============================================================================
+print_environment_info() {
+    echo "========== Build Environment =========="
+    bisheng -v
+    echo "======================================="
+}
 
-# CMake 配置
-cmake -S . -B build
+# ==============================================================================
+# Build Steps
+# ==============================================================================
+clean() {
+    rm -rf "${BUILD_DIR}" "${OUTPUT_DIR}"
+}
 
-# 并行编译
-cmake --build build --parallel
+configure() {
+    cmake -S . -B "${BUILD_DIR}"
+}
 
-# 安装到 build_out 目录
-cmake --install build --prefix ./build_out
+build() {
+    cmake --build "${BUILD_DIR}" --parallel
+}
 
-# 打包 build_out 目录为 zip 文件
-GIT_HASH=$(git rev-parse --short HEAD)
-ZIP_NAME="build_out_${GIT_HASH}.zip"
-cd "${PROJECT_ROOT}"
-zip -r "${ZIP_NAME}" build_out
-echo "Build output packaged: ${ZIP_NAME}"
+install() {
+    cmake --install "${BUILD_DIR}" --prefix "./${OUTPUT_DIR}"
+}
+
+package() {
+    local git_hash
+    git_hash=$(git rev-parse --short HEAD)
+
+    local zip_name="${OUTPUT_DIR}_${git_hash}.zip"
+    zip -r "${zip_name}" "${OUTPUT_DIR}"
+
+    echo "Packaged: ${zip_name}"
+}
+
+# ==============================================================================
+# Main
+# ==============================================================================
+main() {
+    print_environment_info
+    clean
+    configure
+    build
+    install
+    package
+}
+
+main "$@"
