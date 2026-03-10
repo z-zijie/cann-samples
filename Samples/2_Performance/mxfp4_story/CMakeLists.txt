@@ -9,6 +9,5 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 
-add_subdirectory(matmul_story)
-add_subdirectory(rms_norm_quant_story)
-add_subdirectory(mxfp4_story)
+add_subdirectory(demo0)
+
