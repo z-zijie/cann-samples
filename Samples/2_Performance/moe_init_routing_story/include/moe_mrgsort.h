@@ -16,7 +16,7 @@
 #ifndef MOE_MRGSORT_H
 #define MOE_MRGSORT_H
 
-#include "moe_common.h"
+#include "moe_kernel_common.h"
 #include "kernel_operator.h"
 
 using namespace AscendC;
@@ -91,12 +91,12 @@ __aicore__ inline void MoeMrgsort::SetOutput(GlobalTensor<float> &gmOutput, Loca
 __aicore__ inline void MoeMrgsort::UpdateMrgParam()
 {
     if (this->remainListNum == MERGE_LIST_TWO) {
+        validBitTail = 0b0011;
         elementCountListTail[MERGE_LIST_IDX_TWO] = 0;
         elementCountListTail[MERGE_LIST_IDX_THREE] = 0;
-        validBitTail = 0b0011;
     } else if (this->remainListNum == MERGE_LIST_THREE) {
-        elementCountListTail[MERGE_LIST_IDX_THREE] = 0;
         validBitTail = 0b0111;
+        elementCountListTail[MERGE_LIST_IDX_THREE] = 0;
     } else if (this->remainListNum == MERGE_LIST_FOUR) {
         validBitTail = 0b1111;
     } else {
@@ -115,8 +115,8 @@ __aicore__ inline void MoeMrgsort::CopyIn()
         if (lengths[i] > 0) {
             DataCopy(this->ubInputs[i], this->gmInputs[i][offsets[i]],
                      Align(GetSortLen<float>(lengths[i]), sizeof(float)));
-            tmpUbInputs[j] = this->ubInputs[i];
             elementCountListTail[j] = lengths[i];
+            tmpUbInputs[j] = this->ubInputs[i];
             this->remainListNum += 1;
             j++;
         }
@@ -152,8 +152,8 @@ __aicore__ inline void MoeMrgsort::UpdateSortInfo()
     for (int64_t i = 0, j = 0; i < listNum; i++) {
         if (lengths[i] > 0) {
             // update remain size
-            listRemainElements[i] -= listSortedNums[j];
             allRemainElements -= listSortedNums[j];
+            listRemainElements[i] -= listSortedNums[j];
             // update offset
             offsets[i] += GetSortOffset<float>(listSortedNums[j]);
             // update current loop sorted nums
@@ -182,10 +182,10 @@ __aicore__ inline void MoeMrgsort::Init(MoeMrgsortParam *param)
 
     for (int64_t i = 0; i < listNum; i++) {
         offsets[i] = GetSortOffset<float>(param->perListElements * i);
-        if (i == listNum - 1) {
-            listRemainElements[i] = param->lastListElements;
-        } else {
+        if (i < listNum - 1) {
             listRemainElements[i] = param->perListElements;
+        } else {
+            listRemainElements[i] = param->lastListElements;
         }
         allRemainElements += listRemainElements[i];
     }

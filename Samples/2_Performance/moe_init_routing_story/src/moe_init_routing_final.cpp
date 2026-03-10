@@ -33,86 +33,24 @@
 #include "kernel_operator.h"
 #include "platform/platform_ascendc.h"
 #include "simt_api/asc_simt.h"
-#include "../include/moe_common.h"
-#include "../include/moe_mrgsort.h"
-#include "../include/moe_mrgsort_out.h"
+#include "moe_kernel_common.h"
+#include "moe_mrgsort.h"
+#include "moe_mrgsort_out.h"
+#include "moe_tiling_def.h"
+#include "moe_util.h"
 
 using namespace AscendC;
 
-constexpr int64_t BLOCK_NUM = 64;
-constexpr int64_t UB_BLOCK_SIZE = 32;
-constexpr int64_t UB_SIZE = 212992; // TOTAL_UB - UB_FOR_SIMT
-
-// 单核排序阶段
-struct MoeVBSComputeTilingData {
-    int64_t needCoreNum{0};
-    int64_t perCoreElements{0};
-    int64_t perCoreLoops{0};
-    int64_t perCorePerLoopElements{0};
-    int64_t perCoreLastLoopElements{0};
-    int64_t lastCoreElements{0};
-    int64_t lastCoreLoops{0};
-    int64_t lastCorePerLoopElements{0};
-    int64_t lastCoreLastLoopElements{0};
-    int64_t oneLoopMaxElements{0};
-};
-
-// 多核归并排序阶段
-struct MoeVMSMiddleComputeTilingData {
-    int64_t needCoreNum{0};
-};
-
-// 排序输出阶段
-struct MoeSortOutComputeTilingData {
-    int64_t oneLoopMaxElements{0};
-};
-
-struct MoeTokensCountTilingData {
-    int64_t needCoreNum{0};
-    int64_t perCoreElements{0};
-    int64_t perCoreLoops{0};
-    int64_t perCorePerLoopElements{0};
-    int64_t perCoreLastLoopElements{0};
-    int64_t lastCoreElements{0};
-    int64_t lastCoreLoops{0};
-    int64_t lastCorePerLoopElements{0};
-    int64_t lastCoreLastLoopElements{0};
-};
-
-struct MoeGatherOutTilingData {
-    int64_t needCoreNum{0};
-    int64_t perCoreIndicesElements{0};
-    int64_t lastCoreIndicesElements{0};
-    int64_t perCoreIndicesLoops{0};
-    int64_t perCorePerLoopIndicesElements{0};
-    int64_t perCoreLastLoopIndicesElements{0};
-    int64_t lastCoreIndicesLoops{0};
-    int64_t lastCorePerLoopIndicesElements{0};
-    int64_t lastCoreLastLoopIndicesElements{0};
-    int64_t colsLoops{0};
-    int64_t perLoopCols{0};
-    int64_t lastLoopCols{0};
-    int64_t activeNum{0};
-};
-
-struct MoeInitRoutingTilingData {
-    MoeVBSComputeTilingData vbsComputeTilingData;
-    MoeVMSMiddleComputeTilingData vmsMiddleComputeTilingData;
-    MoeSortOutComputeTilingData sortOutComputeParamsOp;
-    MoeTokensCountTilingData countTilingData;
-    MoeGatherOutTilingData gatherTilingData;
-    int64_t n{0};
-    int64_t cols{0};
-    int64_t k{0};
-    int64_t expertStart{0};
-    int64_t expertEnd{0};
-    int64_t expertNum{0};
-    int64_t expertTokensNumType{0};
-};
+constexpr int64_t SIMT_DCACHE_SIZE = 64 * 1024LL; // UB要给SIMT预留64k的DCache空间
+constexpr int64_t KV_FACTOR = 2;
+constexpr int32_t SIZE_16 = 16;
+constexpr int32_t LENGTH_1024 = 1024;
+constexpr int64_t NUM_TWO = 2LL;
+constexpr int64_t NUM_THREE = 3LL;
+constexpr int64_t NUM_FOUR = 4LL;
 
 class MoeSortBase {
 protected:
-    constexpr static int64_t PIPELINE_DEPTH = 1;
     constexpr static int64_t DST_BLK_STRIDE = 1;
     constexpr static int64_t DST_REP_STRIDE = 8;
     constexpr static int64_t MAX_MRGSORT_LIST = 4;
@@ -141,11 +79,11 @@ protected:
     int64_t n;
     int64_t k;
     int64_t rowIdxType = 0;
+    int64_t vmsNeedCoreNum =0;
+    int64_t sortOutOneLoopMaxElements = 0;
 
     MoeInitRoutingTilingData *tilingData_;
     MoeVBSComputeTilingData *vbsTilingData;
-    MoeVMSMiddleComputeTilingData *vmsTilingData;
-    MoeSortOutComputeTilingData *sortOutTilingData;
 
 public:
     __aicore__ inline MoeSortBase(){};
@@ -183,8 +121,7 @@ public:
         }
 
         // key and value
-        int64_t kvFactor = 2;
-        int64_t bufferSize = this->sortNum * sizeof(int32_t) * kvFactor;
+        int64_t bufferSize = this->sortNum * sizeof(int32_t) * KV_FACTOR;
         pipe->InitBuffer(sortDataCopyInQueue, PIPELINE_DEPTH, bufferSize);
         pipe->InitBuffer(sortDataCopyOutQueue, PIPELINE_DEPTH, bufferSize);
         pipe->InitBuffer(sortedBuffer, bufferSize);
@@ -218,10 +155,9 @@ public:
 
         __VEC_SCOPE__
         {
+            MicroAPI::RegTensor<float> inRegToFloat, infFloat, vDstReg0;
             MicroAPI::MaskReg maskRegLoop, cmpMaskReg;
             MicroAPI::MaskReg pregMain = MicroAPI::CreateMask<float, MicroAPI::MaskPattern::ALL>();
-
-            MicroAPI::RegTensor<float> inRegToFloat, infFloat, vDstReg0;
             Duplicate(infFloat, static_cast<float>(MIN_FP32), pregMain);
 
             for (uint16_t i = 0; i < repeatTimes; i++) {
@@ -289,6 +225,7 @@ class ExpertIdxSortMultiCore : public MoeSortBase {
 private:
     constexpr static int64_t WORK_GM_NUM = 2;
 
+
     GlobalTensor<float> workspaceGms[2];
 
     int64_t srcWsIndex = 0;
@@ -307,8 +244,6 @@ private:
 
     MoeInitRoutingTilingData *tilingData_;
     MoeVBSComputeTilingData *vbsTilingData;
-    MoeVMSMiddleComputeTilingData *vmsTilingData;
-    MoeSortOutComputeTilingData *sortOutTilingData;
 
     MoeMrgsort mrgsorter;
     MoeMrgsortParam mrgsortParam;
@@ -321,8 +256,8 @@ public:
     {
         this->totalLength = tilingData->n * tilingData->k;
         this->vbsTilingData = &(tilingData->vbsComputeTilingData);
-        this->vmsTilingData = &(tilingData->vmsMiddleComputeTilingData);
-        this->sortOutTilingData = &(tilingData->sortOutComputeParamsOp);
+        this->vmsNeedCoreNum = tilingData->vmsNeedCoreNum;
+        this->sortOutOneLoopMaxElements = tilingData->sortOutOneLoopMaxElements;
 
         this->blockIdx = GetBlockIdx();
         this->tileLength = this->vbsTilingData->perCorePerLoopElements;
@@ -350,11 +285,11 @@ public:
         }
 
         this->pipe = tPipe;
-        expertIdxGm.SetGlobalBuffer(expertIdx +
-                                    this->blockIdx * tilingData->vbsComputeTilingData.perCoreElements,
+        int64_t totalLengthAlign = Align(this->totalLength, sizeof(int32_t));
+        expertIdxGm.SetGlobalBuffer(expertIdx + this->blockIdx * tilingData->vbsComputeTilingData.perCoreElements,
                                     this->sortTotalLength);
-        sortedexpertIdxGm.SetGlobalBuffer(workspace, Align(this->totalLength, sizeof(int32_t)));
-        expandedRowIdxGm.SetGlobalBuffer(expandedRowIdx, Align(this->totalLength, sizeof(int32_t)));
+        sortedexpertIdxGm.SetGlobalBuffer(workspace, totalLengthAlign);
+        expandedRowIdxGm.SetGlobalBuffer(expandedRowIdx, totalLengthAlign);
 
         if (this->blockIdx == 0) {
             expertCountTempGm.SetGlobalBuffer(workspace + Align(n * k, sizeof(int32_t)) * 2, actualExpertNum);
@@ -365,17 +300,13 @@ public:
         }
 
         // key and value
-        int64_t kvFactor = 2;
-        workspaceGms[0].SetGlobalBuffer((__gm__ float *)workspace + 
-                                        Align(this->totalLength, sizeof(int32_t)) * 2 + actualExpertNum, 
-                                        Align(this->totalLength, sizeof(int32_t)) * kvFactor);
-        workspaceGms[1].SetGlobalBuffer((__gm__ float *)workspace + 
-                                        Align(this->totalLength, sizeof(int32_t)) * (kvFactor + 2) + actualExpertNum,
-                                        Align(this->totalLength, sizeof(int32_t)) * kvFactor);
+        workspaceGms[0].SetGlobalBuffer((__gm__ float *)workspace + totalLengthAlign * 2 + actualExpertNum, 
+                                        totalLengthAlign * KV_FACTOR);
+        workspaceGms[1].SetGlobalBuffer((__gm__ float *)workspace + totalLengthAlign * (KV_FACTOR + 2) + 
+                                        actualExpertNum, totalLengthAlign * KV_FACTOR);
 
-        int64_t bufferSize = Ceil(Max(this->sortOutTilingData->oneLoopMaxElements * MAX_MRGSORT_LIST, 
-                                sortCoreLoopElements), ONE_REPEAT_SORT_NUM) * ONE_REPEAT_SORT_NUM * 
-                                sizeof(int32_t) * kvFactor;
+        int64_t bufferSize = Ceil(Max(this->sortOutOneLoopMaxElements * MAX_MRGSORT_LIST, sortCoreLoopElements), 
+            ONE_REPEAT_SORT_NUM) * ONE_REPEAT_SORT_NUM * sizeof(int32_t) * KV_FACTOR;
         pipe->InitBuffer(sortDataCopyInQueue, PIPELINE_DEPTH, bufferSize);
         pipe->InitBuffer(sortDataCopyOutQueue, PIPELINE_DEPTH, bufferSize);
         pipe->InitBuffer(sortedBuffer, bufferSize);
@@ -479,7 +410,7 @@ public:
         LocalTensor<float> inLocal = sortDataCopyInQueue.AllocTensor<float>();
         LocalTensor<float> outLocal = sortDataCopyOutQueue.AllocTensor<float>();
         for (int64_t i = 0; i < listNum; i++) {
-            LocalTensor<float> inLocalT = inLocal[GetSortLen<float>(this->sortOutTilingData->oneLoopMaxElements) * i];
+            LocalTensor<float> inLocalT = inLocal[GetSortLen<float>(this->sortOutOneLoopMaxElements) * i];
             sorter->SetInput(srcWsGm, inLocalT);
         }
         GlobalTensor<float> dstWsGm = workspaceGms[1 - srcWsIndex][blockIdx * coreOffset + loopOffset];
@@ -492,7 +423,7 @@ public:
                                                            int64_t lastListElements)
     {
         int64_t coreOffset = GetSortLen<float>(this->vbsTilingData->perCoreElements);
-        mrgsortParam.oneLoopMaxElements = this->sortOutTilingData->oneLoopMaxElements;
+        mrgsortParam.oneLoopMaxElements = this->sortOutOneLoopMaxElements;
 
         for (int64_t i = 0; listNum >= 1; i++) {
             int64_t loops = (listNum + MAX_MRGSORT_LIST - 1) / MAX_MRGSORT_LIST;
@@ -544,7 +475,7 @@ public:
 
     __aicore__ inline void VMSProcess()
     {
-        int64_t currentStageNeedCoreNum = this->vmsTilingData->needCoreNum;
+        int64_t currentStageNeedCoreNum = this->vmsNeedCoreNum;
         perListElements = this->vbsTilingData->perCoreElements;
         lastListElements = this->vbsTilingData->lastCoreElements;
         listNum = this->vbsTilingData->needCoreNum;
@@ -557,14 +488,14 @@ public:
             if (this->blockIdx < currentStageNeedCoreNum - 1) {
                 mrgsortParam.perListElements = perListElements;
                 mrgsortParam.lastListElements = perListElements;
-                mrgsortParam.oneLoopMaxElements = this->sortOutTilingData->oneLoopMaxElements;
+                mrgsortParam.oneLoopMaxElements = this->sortOutOneLoopMaxElements;
                 InitMoeMrgSort(&mrgsorter, MAX_MRGSORT_LIST, coreOffset, 0);
                 mrgsorter.Init(&mrgsortParam);
                 mrgsorter.Process();
             } else if (this->blockIdx == currentStageNeedCoreNum - 1) {
                 mrgsortParam.perListElements = perListElements;
                 mrgsortParam.lastListElements = lastListElements;
-                mrgsortParam.oneLoopMaxElements = this->sortOutTilingData->oneLoopMaxElements;
+                mrgsortParam.oneLoopMaxElements = this->sortOutOneLoopMaxElements;
                 InitMoeMrgSort(&mrgsorter, remainListNum, coreOffset, 0);
                 mrgsorter.Init(&mrgsortParam);
                 mrgsorter.Process();
@@ -587,15 +518,15 @@ public:
         LocalTensor<float> outLocal = sortDataCopyOutQueue.AllocTensor<float>();
 
         for (int64_t i = 0; i < listNum; i++) {
-            LocalTensor<float> inLocalT = inLocal[GetSortLen<float>(this->sortOutTilingData->oneLoopMaxElements) * i];
+            LocalTensor<float> inLocalT = inLocal[GetSortLen<float>(this->sortOutOneLoopMaxElements) * i];
             sorter->SetInput(srcWsGm, inLocalT);
         }
 
-        LocalTensor<float> outLocalV = outLocal[this->sortOutTilingData->oneLoopMaxElements * MAX_MRGSORT_LIST];
+        LocalTensor<float> outLocalV = outLocal[this->sortOutOneLoopMaxElements * MAX_MRGSORT_LIST];
         sorter->SetOutput(this->sortedexpertIdxGm, this->expandedRowIdxGm, outLocal, outLocalV);
 
         LocalTensor<float> tempBuffer =
-            sortedBuffer.Get<float>(GetSortLen<float>(this->sortOutTilingData->oneLoopMaxElements) * MAX_MRGSORT_LIST);
+            sortedBuffer.Get<float>(GetSortLen<float>(this->sortOutOneLoopMaxElements) * MAX_MRGSORT_LIST);
         sorter->SetBuffer(tempBuffer);
         sortDataCopyInQueue.FreeTensor(inLocal);
         sortDataCopyOutQueue.FreeTensor(outLocal);
@@ -606,7 +537,7 @@ public:
         if (this->blockIdx < 1) {
             mrgsortParam.perListElements = perListElements;
             mrgsortParam.lastListElements = lastListElements;
-            mrgsortParam.oneLoopMaxElements = this->sortOutTilingData->oneLoopMaxElements;
+            mrgsortParam.oneLoopMaxElements = this->sortOutOneLoopMaxElements;
 
             MoeMrgsortOut sorter;
             InitMoeMrgSortOut(&sorter, listNum, GetSortLen<float>(perListElements));
@@ -662,9 +593,6 @@ __simt_vf__ __aicore__ LAUNCH_BOUND(SIMT_THREAD_NUM) inline void ComputeExpertCo
 
 class ExpertTokensCount {
 private:
-    constexpr static int64_t PIPELINE_DEPTH = 1;
-    constexpr static int64_t BLOCK_BYTES = 32;
-
     GlobalTensor<int32_t> sortedExpertIdxGm_;
     GlobalTensor<int32_t> expertCountTempGm_;
     GlobalTensor<int64_t> expertTokensCountGm_;
@@ -733,13 +661,11 @@ public:
         expandedRowIdxGm_.SetGlobalBuffer(expandedRowIdx + blockIdx_ * perCoreElements_);
         expertTokensCountGm_.SetGlobalBuffer(expertTokensCount, expertCountElements_);
         sortedExpertIdxGm_.SetGlobalBuffer(workspace + blockIdx_ * perCoreElements_, curCoreElements_);
-        expertCountTempGm_.SetGlobalBuffer(workspace + 
-                                           Align(n_ * k_, sizeof(int32_t)) * 2,
-                                           actualExpertNum_);
-        expertTotalCountGm_.SetGlobalBuffer(workspace + 
-                                            Align(n_ * k_, sizeof(int32_t)) * 2 + 
-                                            Align(actualExpertNum_, sizeof(int32_t)), 
-                                            actualExpertNum_);
+
+        int64_t expertIdxOffset = Align(n_ * k_, sizeof(int32_t)) * 2;
+        int64_t expertCountTempOffset = Align(actualExpertNum_, sizeof(int32_t));
+        expertCountTempGm_.SetGlobalBuffer(workspace + expertIdxOffset, actualExpertNum_);
+        expertTotalCountGm_.SetGlobalBuffer(workspace + expertIdxOffset + expertCountTempOffset, actualExpertNum_);
        
         int64_t sortedExpertIdxInLen = Max(perCorePerLoopElements_, perCoreLastLoopElements_);
         pipe_->InitBuffer(sortedExpertIdxInQueue_, PIPELINE_DEPTH, 
@@ -845,9 +771,6 @@ public:
 
 class GatherOut {
 private:
-    constexpr static int64_t PIPELINE_DEPTH = 1;
-    constexpr static int64_t BLOCK_BYTES = 32;
-
     GlobalTensor<float> xGm_;
     GlobalTensor<float> scaleGm_;
     GlobalTensor<float> expandedXGm_;
@@ -855,9 +778,9 @@ private:
     GlobalTensor<float> expandedScaleGm_;
     GlobalTensor<int32_t> expertTotalCountGm_;
 
-    TQue<QuePosition::VECIN, PIPELINE_DEPTH> expandedRowIdxCopyInQueue_;
-    TQueBind<TPosition::VECIN, TPosition::VECOUT, PIPELINE_DEPTH> xCopyInQueue_;
-    TQueBind<TPosition::VECIN, TPosition::VECOUT, PIPELINE_DEPTH> scaleCopyInQueue_;
+    TQue<QuePosition::VECIN, DOUBLE_BUFFER> expandedRowIdxCopyInQueue_;
+    TQueBind<TPosition::VECIN, TPosition::VECOUT, DOUBLE_BUFFER> xCopyInQueue_;
+    TQueBind<TPosition::VECIN, TPosition::VECOUT, DOUBLE_BUFFER> scaleCopyInQueue_;
 
     TPipe *pipe_;
     int64_t cols_ = 0;
@@ -907,7 +830,7 @@ public:
 
         perCorePerLoopIndicesElements_ = tilingData_->gatherTilingData.perCorePerLoopIndicesElements;
         lastCorePerLoopIndicesElements_ = tilingData_->gatherTilingData.lastCorePerLoopIndicesElements;
-        perCoreIndicesElements_ = Ceil(expertTotalCount_, BLOCK_NUM);
+        perCoreIndicesElements_ = Ceil(expertTotalCount_, tilingData->coreNum);
         needCoreNum_ = Ceil(expertTotalCount_, perCoreIndicesElements_);
         lastCoreIndicesElements_ = expertTotalCount_ - (needCoreNum_ - 1) * perCoreIndicesElements_;
 
@@ -921,9 +844,9 @@ public:
         indicesLoops_ = Ceil(curCoreIndicesElements_, curCorePerLoopIndicesElements_);
         curCoreLastLoopIndicesElements_ = curCoreIndicesElements_ - (indicesLoops_ - 1) * curCorePerLoopIndicesElements_;
 
-        pipe_->InitBuffer(expandedRowIdxCopyInQueue_, PIPELINE_DEPTH, AlignBytes(curCorePerLoopIndicesElements_, sizeof(int32_t)));
-        pipe_->InitBuffer(xCopyInQueue_, PIPELINE_DEPTH, AlignBytes(perLoopCols_, sizeof(float)));
-        pipe_->InitBuffer(scaleCopyInQueue_, PIPELINE_DEPTH, AlignBytes(1, sizeof(float)));
+        pipe_->InitBuffer(expandedRowIdxCopyInQueue_, DOUBLE_BUFFER, AlignBytes(curCorePerLoopIndicesElements_, sizeof(int32_t)));
+        pipe_->InitBuffer(xCopyInQueue_, DOUBLE_BUFFER, AlignBytes(perLoopCols_, sizeof(float)));
+        pipe_->InitBuffer(scaleCopyInQueue_, DOUBLE_BUFFER, AlignBytes(1, sizeof(float)));
 
         xGm_.SetGlobalBuffer(x, n_ * cols_);
         scaleGm_.SetGlobalBuffer(scale, n_);
@@ -963,47 +886,49 @@ public:
 
     __aicore__ inline void Process()
     {
-        if (blockIdx_ < needCoreNum_) {
-            int64_t curLoopElements = curCorePerLoopIndicesElements_;
-            for (int64_t indicesLoop = 0; indicesLoop < indicesLoops_; indicesLoop++) {
-                if (indicesLoop == indicesLoops_ - 1) {
-                    curLoopElements = curCoreLastLoopIndicesElements_;
-                }
-                int64_t curExpertLoopOffset = indicesLoop * curCorePerLoopIndicesElements_;
-                event_t event1 = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::S_MTE2));
-                SetFlag<HardEvent::S_MTE2>(event1);
-                WaitFlag<HardEvent::S_MTE2>(event1);
-
-                CopyExpertIn(curExpertLoopOffset, curLoopElements);
-
-                LocalTensor<int32_t> subRowIdxLocal = expandedRowIdxCopyInQueue_.DeQue<int32_t>();
-                event_t event2 = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE2_S));
-                SetFlag<HardEvent::MTE2_S>(event2);
-                WaitFlag<HardEvent::MTE2_S>(event2);
-
-                for (int64_t indicesIndex = 0; indicesIndex < curLoopElements; indicesIndex++) {
-                    int64_t rowIdx = subRowIdxLocal.GetValue(indicesIndex);
-                    int64_t xSrcOffset = rowIdx / k_ * cols_;
-                    int64_t scaleSrcOffset = rowIdx / k_;
-                    int64_t xDstOffset = (curExpertLoopOffset + indicesIndex) * cols_;
-                    event_t event3 = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::S_MTE2));
-                    SetFlag<HardEvent::S_MTE2>(event3);
-                    WaitFlag<HardEvent::S_MTE2>(event3);
-
-                    // inputscale is not supported yet
-
-                    int64_t curLoopCols = perLoopCols_;
-                    for (int64_t colsLoop = 0; colsLoop < colsLoops_; colsLoop++) {
-                        if (colsLoop == colsLoops_ - 1) {
-                            curLoopCols = lastLoopCols_;
-                        }
-                        int64_t colsLoopOffset = colsLoop * perLoopCols_;
-                        CopyXIn(xSrcOffset + colsLoopOffset, curLoopCols);
-                        CopyXOut(xDstOffset + colsLoopOffset, curLoopCols);
-                    }
-                }
-                expandedRowIdxCopyInQueue_.FreeTensor(subRowIdxLocal);
+        if (blockIdx_ >= needCoreNum_) {
+            return;
+        }
+        
+        int64_t curLoopElements = curCorePerLoopIndicesElements_;
+        for (int64_t indicesLoop = 0; indicesLoop < indicesLoops_; indicesLoop++) {
+            if (indicesLoop == indicesLoops_ - 1) {
+                curLoopElements = curCoreLastLoopIndicesElements_;
             }
+            int64_t curExpertLoopOffset = indicesLoop * curCorePerLoopIndicesElements_;
+            event_t event1 = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::S_MTE2));
+            SetFlag<HardEvent::S_MTE2>(event1);
+            WaitFlag<HardEvent::S_MTE2>(event1);
+
+            CopyExpertIn(curExpertLoopOffset, curLoopElements);
+
+            LocalTensor<int32_t> subRowIdxLocal = expandedRowIdxCopyInQueue_.DeQue<int32_t>();
+            event_t event2 = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE2_S));
+            SetFlag<HardEvent::MTE2_S>(event2);
+            WaitFlag<HardEvent::MTE2_S>(event2);
+
+            for (int64_t indicesIndex = 0; indicesIndex < curLoopElements; indicesIndex++) {
+                int64_t rowIdx = subRowIdxLocal.GetValue(indicesIndex);
+                int64_t xSrcOffset = rowIdx / k_ * cols_;
+                int64_t scaleSrcOffset = rowIdx / k_;
+                int64_t xDstOffset = (curExpertLoopOffset + indicesIndex) * cols_;
+                event_t event3 = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::S_MTE2));
+                SetFlag<HardEvent::S_MTE2>(event3);
+                WaitFlag<HardEvent::S_MTE2>(event3);
+
+                // inputscale is not supported yet
+
+                int64_t curLoopCols = perLoopCols_;
+                for (int64_t colsLoop = 0; colsLoop < colsLoops_; colsLoop++) {
+                    if (colsLoop == colsLoops_ - 1) {
+                        curLoopCols = lastLoopCols_;
+                    }
+                    int64_t colsLoopOffset = colsLoop * perLoopCols_;
+                    CopyXIn(xSrcOffset + colsLoopOffset, curLoopCols);
+                    CopyXOut(xDstOffset + colsLoopOffset, curLoopCols);
+                }
+            }
+            expandedRowIdxCopyInQueue_.FreeTensor(subRowIdxLocal);
         }
     }
 };
@@ -1042,66 +967,11 @@ __global__ __aicore__ __vector__ void moe_init_routing(
     gatherPipe.Destroy();
 }
 
-template <typename T>
-void genInputData(size_t length, std::vector<T>& res) {
-    res.resize(length);
-    std::iota(res.begin(), res.end(), 0);
-}
-
-void genInputExpertIdx(size_t length, std::vector<int32_t>& res) {
-    res.resize(length);
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_real_distribution<> dist(0, 8);
-    for (int32_t& elem : res) {
-        elem = static_cast<int32_t>(dist(gen));
-        std::cout << static_cast<float>(elem) << "\t";
-    }
-    std::cout << std::endl;
-}
-
-template <typename T>
-void printData(std::vector<T>& res) {
-    for (auto& elem : res) {
-        std::cout << static_cast<float>(elem) << "\t";
-    }
-    std::cout << std::endl;
-}
-
-int64_t CeilLog4(int64_t x)
-{
-    return static_cast<int64_t>(std::ceil(std::log(x) / std::log(4)));
-}
-
-int64_t CeilDiv(int64_t x, int64_t y)
-{
-    if (y > 0) {
-        return (x + y - 1) / y;
-    }
-    return 0;
-}
-
-int64_t CeilAlign(int64_t a, int64_t b)
-{
-    if (b = 0) {
-        return 0;
-    }
-    return (a + b - 1) / b * b;
-};
-
-int64_t Align(int64_t elementNum, int64_t bytes)
-{
-    if (bytes == 0) {
-        return 0;
-    }
-    return (elementNum * bytes + UB_BLOCK_SIZE - 1) / UB_BLOCK_SIZE * UB_BLOCK_SIZE / bytes;
-}
-
 void cal_gather_tiling(MoeInitRoutingTilingData *tilingData)
 {
     auto *gatherOutTiling = &(tilingData->gatherTilingData);
     int64_t totalLength = tilingData->n * tilingData->k;
-    int64_t perCoreIndicesElements = CeilDiv(totalLength, BLOCK_NUM);
+    int64_t perCoreIndicesElements = CeilDiv(totalLength, tilingData->coreNum);
     if (perCoreIndicesElements <= 0) {
         gatherOutTiling->needCoreNum = 0;
         return;
@@ -1114,12 +984,12 @@ void cal_gather_tiling(MoeInitRoutingTilingData *tilingData)
     int64_t colMultiple = 2 * inputXDtypeSize;
     int64_t rowMultiple = 2;
     int64_t perLoopMaxIndicesElements =
-        (UB_SIZE - Align(perLoopCols, inputXDtypeSize) * colMultiple - UB_BLOCK_SIZE * 2) / rowMultiple /
+        (tilingData->ubSize - Align(perLoopCols, inputXDtypeSize) * colMultiple - UB_BLOCK_SIZE * 2) / rowMultiple /
         static_cast<int64_t>(sizeof(int32_t));
     while (perLoopMaxIndicesElements <= 0) {
         perLoopCols = CeilDiv(perLoopCols, 2);
         perLoopMaxIndicesElements =
-            (UB_SIZE - Align(perLoopCols, inputXDtypeSize) * colMultiple - UB_BLOCK_SIZE * 2) / rowMultiple /
+            (tilingData->ubSize - Align(perLoopCols, inputXDtypeSize) * colMultiple - UB_BLOCK_SIZE * 2) / rowMultiple /
             static_cast<int64_t>(sizeof(int32_t));
     }
     int64_t colsLoops = CeilDiv(tilingData->cols, perLoopCols);
@@ -1152,7 +1022,7 @@ void cal_count_tiling(MoeInitRoutingTilingData *tilingData)
 {
     auto *tokensCountTiling = &(tilingData->countTilingData);
     int64_t totalElements = tilingData->n * tilingData->k;
-    int64_t perCoreElements = CeilDiv(totalElements, BLOCK_NUM);
+    int64_t perCoreElements = CeilDiv(totalElements, tilingData->coreNum);
     int64_t needCoreNum = CeilDiv(totalElements, perCoreElements);
     int64_t lastCoreElements = totalElements - (needCoreNum - 1) * perCoreElements;
     tokensCountTiling->needCoreNum = needCoreNum;
@@ -1161,7 +1031,7 @@ void cal_count_tiling(MoeInitRoutingTilingData *tilingData)
 
     int64_t expertNumElement = tilingData->expertEnd - tilingData->expertStart;
     int64_t maxElementsPerLoop =
-        (UB_SIZE - CeilAlign(expertNumElement, UB_BLOCK_SIZE) *
+        (tilingData->ubSize - CeilAlign(expertNumElement, UB_BLOCK_SIZE) *
             (static_cast<int64_t>(sizeof(int32_t)) * 2 + static_cast<int64_t>(sizeof(int64_t))) -
             UB_BLOCK_SIZE) / static_cast<int64_t>(sizeof(int32_t));
     int64_t perCoreLoops = CeilDiv(perCoreElements, maxElementsPerLoop);
@@ -1192,11 +1062,12 @@ void vbs_one_core_compute(MoeVBSComputeTilingData *vbsTiling, int64_t totalLengt
     vbsTiling->lastCoreLastLoopElements = vbsTiling->perCoreElements;
 }
 
-void vbs_multi_core_compute(MoeVBSComputeTilingData *vbsTiling, int64_t totalLength, int64_t sortLoopMaxElement)
+void vbs_multi_core_compute(MoeVBSComputeTilingData *vbsTiling, int64_t totalLength, 
+                            int64_t sortLoopMaxElement, int64_t coreNum)
 {
     int64_t needCoreNum = CeilDiv(totalLength, sortLoopMaxElement);
     needCoreNum = static_cast<int64_t>(std::pow(4, CeilLog4(needCoreNum)));
-    needCoreNum = std::min(needCoreNum, BLOCK_NUM);
+    needCoreNum = std::min(needCoreNum, coreNum);
 
     int64_t perCoreElements = (needCoreNum == 0) ? 0 : (totalLength / needCoreNum);
     int64_t alineFloorPerCoreElements = perCoreElements - perCoreElements % ONE_REPEAT_SORT_NUM;
@@ -1232,9 +1103,9 @@ void vbs_multi_core_compute(MoeVBSComputeTilingData *vbsTiling, int64_t totalLen
 void cal_sort_tiling(MoeInitRoutingTilingData *tilingData)
 {
     // Tiling4VBSCompute
-    int64_t sortLoopMaxElement = UB_SIZE / (4 * 2 * 4) / ONE_REPEAT_SORT_NUM * ONE_REPEAT_SORT_NUM;
-    sortLoopMaxElement =
-        std::min(sortLoopMaxElement, SORT_API_MAX_ELEM); // 限制单核排序的元素个数在AscendC::Sort全排序的能力范围内
+    int64_t queueNum = 4; // sortDataCopyInQueue|sortDataCopyOutQueue|sortedBuffer|tempBuffer
+    int64_t sortLoopMaxElement = tilingData->ubSize / (queueNum * KV_FACTOR * MRG_LIST_NUM) / ONE_REPEAT_SORT_NUM * ONE_REPEAT_SORT_NUM;
+    sortLoopMaxElement = std::min(sortLoopMaxElement, SORT_API_MAX_ELEM); // 限制单核排序的元素个数在AscendC::Sort全排序的能力范围内
 
     int64_t totalLength = tilingData->n * tilingData->k;
     auto *vbsTiling = &(tilingData->vbsComputeTilingData);
@@ -1243,94 +1114,37 @@ void cal_sort_tiling(MoeInitRoutingTilingData *tilingData)
     if (totalLength <= sortLoopMaxElement) { // 排序只用到一个核排序
         vbs_one_core_compute(vbsTiling, totalLength);
     } else {
-        vbs_multi_core_compute(vbsTiling, totalLength, sortLoopMaxElement);
+        vbs_multi_core_compute(vbsTiling, totalLength, sortLoopMaxElement, tilingData->coreNum);
     }
 
     // Tiling4VMSMiddleCompute
-    auto *vmsMiddleTiling = &(tilingData->vmsMiddleComputeTilingData);
     if (vbsTiling->needCoreNum <= MRG_LIST_NUM) { // 队列数小于一次vms则没有中间归并
-        vmsMiddleTiling->needCoreNum = 0;
+        tilingData->vmsNeedCoreNum = 0;
     } else {
-        vmsMiddleTiling->needCoreNum = CeilDiv(vbsTiling->needCoreNum, MRG_LIST_NUM);
+        tilingData->vmsNeedCoreNum = CeilDiv(vbsTiling->needCoreNum, MRG_LIST_NUM);
     }
 
     // Tiling4SortOutCompute
-    auto *sortOutTiling = &(tilingData->sortOutComputeParamsOp);
-    sortOutTiling->oneLoopMaxElements = MRG_SORT_API_MAX_ELEM;
+    tilingData->sortOutOneLoopMaxElements = MRG_SORT_API_MAX_ELEM;
 }
 
-template <typename T>
-void getDataFromBin(const std::string &filename, std::vector<T> &data)
+void CHECK_ACL(aclError __ret)
 {
-    // 以二进制模式打开文件
-    std::ifstream file(filename, std::ios::binary);
-
-    // 检查文件是否成功打开
-    if (!file.is_open()) {
-        throw std::runtime_error("无法打开文件: " + filename);
-    }
-
-    // 清空原有的数据
-    data.clear();
-
-    // 获取文件大小
-    file.seekg(0, std::ios::end);
-    std::streampos file_size = file.tellg();
-    file.seekg(0, std::ios::beg);
-
-    // 检查文件是否为空
-    if (file_size == 0) {
-        std::cerr << "Warning: File is empty" << std::endl;
-        file.close();
-        return;
-    }
-
-    // 计算元素数量
-    size_t num_elements = file_size / sizeof(T);
-    size_t remainder = file_size % sizeof(T);
-
-    // 检查文件大小是否为元素大小的整数倍
-    if (remainder != 0) {
-        std::cerr << "Warning: File size (" << file_size << " bytes) is not a multiple of element size (" << sizeof(T)
-                  << " bytes)" << std::endl;
-        std::cerr << "Ignoring last " << remainder << " bytes of incomplete data" << std::endl;
-    }
-
-    if (num_elements > 0) {
-        // 预先分配空间
-        data.resize(num_elements);
-
-        // 读取数据
-        file.read(reinterpret_cast<char *>(data.data()), num_elements * sizeof(T));
-
-        // 检查实际读取的字节数
-        std::streamsize bytes_read = file.gcount();
-        if (bytes_read != static_cast<std::streamsize>(num_elements * sizeof(T))) {
-            std::cerr << "Warning: Actual bytes read (" << bytes_read << ") does not match expected ("
-                      << num_elements * sizeof(T) << ")" << std::endl;
-
-            // 调整vector大小以匹配实际读取的数据
-            size_t actual_elements = bytes_read / sizeof(T);
-            data.resize(actual_elements);
-        }
-    }
-
-    file.close();
+    if (__ret != ACL_ERROR_NONE)
+        std::cerr << __FILE__ << ":" << __LINE__ << " aclError:" << __ret << std::endl;
 }
 
 int main()
 {
-    aclInit(nullptr);
+    CHECK_ACL(aclInit(nullptr));
     int32_t deviceId = 0;
-    aclrtSetDevice(deviceId);
+    CHECK_ACL(aclrtSetDevice(deviceId));
     aclrtStream stream = nullptr;
-    aclrtCreateStream(&stream);
+    CHECK_ACL(aclrtCreateStream(&stream));
 
-    int64_t numBlocks = BLOCK_NUM;
-    int64_t n = 8;
-    int64_t k = 1;
-    int64_t c = 2;
-
+    int64_t n = 2048;
+    int64_t k = 8;
+    int64_t c = 320;
     MoeInitRoutingTilingData tilingData;
     tilingData.n = n;
     tilingData.cols = c;
@@ -1338,55 +1152,69 @@ int main()
     tilingData.expertStart = 0;
     tilingData.expertEnd = 8;
 
+    auto ascendcPlatform = platform_ascendc::PlatformAscendCManager::GetInstance();
+    uint64_t ubSize;
+    ascendcPlatform->GetCoreMemSize(platform_ascendc::CoreMemType::UB, ubSize);
+    int64_t coreNum = ascendcPlatform->GetCoreNumAiv();
+    tilingData.ubSize = ubSize - SIMT_DCACHE_SIZE;
+    tilingData.coreNum = coreNum;
+
     cal_sort_tiling(&tilingData);
     cal_count_tiling(&tilingData);
     cal_gather_tiling(&tilingData);
 
     float *xDevice;
-    int32_t *expertIdxDevice;
     float *scaleDevice;
     float *offsetDevice;
-    int32_t *workspaceDevice;
     float *expandedXDevice;
-    int32_t *expandedRowIdxDevice;
-    int64_t *tokenCountDevice;
     float *expandedScaleDevice;
     float *expandedXHost;
+    float *expandedScaleHost;
+    int32_t *expertIdxDevice;
+    int32_t *workspaceDevice;
+    int32_t *expandedRowIdxDevice;
+    int64_t *tokenCountDevice;
     int32_t *expandedRowIdxHost;
     int64_t *tokenCountHost;
-    float *expandedScaleHost;
 
+    int64_t totalLength = n * k;
     size_t xSize = n * c * sizeof(float);
-    size_t expertIdxSize = n * k * sizeof(int32_t);
+    size_t expertIdxSize = totalLength * sizeof(int32_t);
     size_t scaleSize = n * sizeof(float);
     size_t offsetSize = n * sizeof(float);
+    size_t expandedXSize = totalLength * c * sizeof(float);
+    size_t actualExpertNum = tilingData.expertEnd - tilingData.expertStart;
+    size_t tokenCountSize = actualExpertNum * sizeof(int64_t);
 
-    size_t actualExpertNum_ = tilingData.expertEnd - tilingData.expertStart;
-    size_t workspaceSize = Align(n * k, sizeof(int32_t)) * 2 + Align(actualExpertNum_, sizeof(int32_t)) + 
-                           Align(actualExpertNum_, sizeof(int64_t));
+    size_t workspaceSize = 0;
+    int64_t sortWorkspaceSize = totalLength * sizeof(float) * NUM_TWO * NUM_THREE; // 排序需要的空间
+    int64_t coreSyncWorkspaceSize = coreNum * UB_BLOCK_SIZE * NUM_TWO; // 多核同步需要的空间
+    int64_t scatterWorkspaceSize = totalLength * sizeof(int32_t);
+    int64_t expertTokensCountWorkspaceSize = actualExpertNum * sizeof(int32_t);
+    int64_t expertTokenTotalCountWorkspace = AlignBytes(1, sizeof(int32_t));
 
-    size_t expandedXSize = n * k * c * sizeof(float);
-    size_t expandedRowIdxSize = n * k * sizeof(int32_t);
-    size_t tokenCountSize = actualExpertNum_ * sizeof(int64_t);
-    size_t expandedScaleSize = n * sizeof(float);
+    workspaceSize = sortWorkspaceSize + coreSyncWorkspaceSize + scatterWorkspaceSize +
+                    expertTokensCountWorkspaceSize + expertTokenTotalCountWorkspace;
+    // 这里workspaceSize_除了计算必要的，还会加上16M的AscendC框架用大小
+    workspaceSize += SIZE_16 * LENGTH_1024 * LENGTH_1024;
 
-    aclrtMalloc((void **)&xDevice, xSize, ACL_MEM_MALLOC_HUGE_FIRST);
-    aclrtMalloc((void **)&expertIdxDevice, expertIdxSize, ACL_MEM_MALLOC_HUGE_FIRST);
-    aclrtMalloc((void **)&scaleDevice, scaleSize, ACL_MEM_MALLOC_HUGE_FIRST);
-    aclrtMalloc((void **)&offsetDevice, offsetSize, ACL_MEM_MALLOC_HUGE_FIRST);
+    CHECK_ACL(aclrtMalloc((void **)&xDevice, xSize, ACL_MEM_MALLOC_HUGE_FIRST));
+    CHECK_ACL(aclrtMalloc((void **)&expertIdxDevice, expertIdxSize, ACL_MEM_MALLOC_HUGE_FIRST));
+    CHECK_ACL(aclrtMalloc((void **)&scaleDevice, scaleSize, ACL_MEM_MALLOC_HUGE_FIRST));
+    CHECK_ACL(aclrtMalloc((void **)&offsetDevice, offsetSize, ACL_MEM_MALLOC_HUGE_FIRST));
 
-    aclrtMalloc((void **)&workspaceDevice, workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
+    CHECK_ACL(aclrtMalloc((void **)&workspaceDevice, workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST));
 
-    aclrtMalloc((void **)&expandedXDevice, expandedXSize, ACL_MEM_MALLOC_HUGE_FIRST);
-    aclrtMalloc((void **)&expandedRowIdxDevice, expandedRowIdxSize, ACL_MEM_MALLOC_HUGE_FIRST);
-    aclrtMalloc((void **)&tokenCountDevice, tokenCountSize, ACL_MEM_MALLOC_HUGE_FIRST);
-    aclrtMalloc((void **)&expandedScaleDevice, expandedScaleSize, ACL_MEM_MALLOC_HUGE_FIRST);
-    aclrtMallocHost((void **)&expandedXHost, expandedXSize);
-    aclrtMallocHost((void **)&expandedRowIdxHost, expandedRowIdxSize);
-    aclrtMallocHost((void **)&tokenCountHost, tokenCountSize);
-    aclrtMallocHost((void **)&expandedScaleHost, expandedScaleSize);
+    CHECK_ACL(aclrtMalloc((void **)&expandedXDevice, expandedXSize, ACL_MEM_MALLOC_HUGE_FIRST));
+    CHECK_ACL(aclrtMalloc((void **)&expandedRowIdxDevice, expertIdxSize, ACL_MEM_MALLOC_HUGE_FIRST));
+    CHECK_ACL(aclrtMalloc((void **)&tokenCountDevice, tokenCountSize, ACL_MEM_MALLOC_HUGE_FIRST));
+    CHECK_ACL(aclrtMalloc((void **)&expandedScaleDevice, scaleSize, ACL_MEM_MALLOC_HUGE_FIRST));
+    CHECK_ACL(aclrtMallocHost((void **)&expandedXHost, expandedXSize));
+    CHECK_ACL(aclrtMallocHost((void **)&expandedRowIdxHost, expertIdxSize));
+    CHECK_ACL(aclrtMallocHost((void **)&tokenCountHost, tokenCountSize));
+    CHECK_ACL(aclrtMallocHost((void **)&expandedScaleHost, scaleSize));
 
-    // test
+    // gen input
     std::string exeDir = "./Samples/2_Performance/moe_init_routing_story/utils/";
     std::ostringstream cmd;
     cmd << "python3 " << exeDir << "/gen_data.py "
@@ -1404,21 +1232,20 @@ int main()
     getDataFromBin(exeDir + "expert_idx.bin", expertIdxData);
 
     // scale and offset is none
-    aclrtMemcpy(xDevice, xSize, xData.data(), xSize, ACL_MEMCPY_HOST_TO_DEVICE);
-    aclrtMemcpy(expertIdxDevice, expertIdxSize, expertIdxData.data(), expertIdxSize, ACL_MEMCPY_HOST_TO_DEVICE);
+    CHECK_ACL(aclrtMemcpy(xDevice, xSize, xData.data(), xSize, ACL_MEMCPY_HOST_TO_DEVICE));
+    CHECK_ACL(aclrtMemcpy(expertIdxDevice, expertIdxSize, expertIdxData.data(), expertIdxSize, ACL_MEMCPY_HOST_TO_DEVICE));
 
-    // Kernel Call
-    aclrtSynchronizeStream(stream);
-    moe_init_routing<<<numBlocks, nullptr, stream>>>(xDevice, expertIdxDevice, scaleDevice, offsetDevice,
+    // kernel call
+    CHECK_ACL(aclrtSynchronizeStream(stream));
+    moe_init_routing<<<coreNum, nullptr, stream>>>(xDevice, expertIdxDevice, scaleDevice, offsetDevice,
         workspaceDevice, expandedXDevice, expandedRowIdxDevice, tokenCountDevice, expandedScaleDevice, tilingData);
-    aclrtSynchronizeStream(stream);
+    CHECK_ACL(aclrtSynchronizeStream(stream));
 
-    aclrtMemcpy(expandedXHost, expandedXSize, expandedXDevice, expandedXSize, ACL_MEMCPY_DEVICE_TO_HOST);
-    aclrtMemcpy(expandedRowIdxHost, expandedRowIdxSize, expandedRowIdxDevice, expandedRowIdxSize, ACL_MEMCPY_DEVICE_TO_HOST);
-    aclrtMemcpy(tokenCountHost, tokenCountSize, tokenCountDevice, tokenCountSize, ACL_MEMCPY_DEVICE_TO_HOST);
-    aclrtMemcpy(expandedScaleHost, expandedScaleSize, expandedScaleDevice, expandedScaleSize, ACL_MEMCPY_DEVICE_TO_HOST);
-    aclrtSynchronizeStream(stream);
-
+    CHECK_ACL(aclrtMemcpy(expandedXHost, expandedXSize, expandedXDevice, expandedXSize, ACL_MEMCPY_DEVICE_TO_HOST));
+    CHECK_ACL(aclrtMemcpy(expandedRowIdxHost, expertIdxSize, expandedRowIdxDevice, expertIdxSize, ACL_MEMCPY_DEVICE_TO_HOST));
+    CHECK_ACL(aclrtMemcpy(tokenCountHost, tokenCountSize, tokenCountDevice, tokenCountSize, ACL_MEMCPY_DEVICE_TO_HOST));
+    CHECK_ACL(aclrtMemcpy(expandedScaleHost, scaleSize, expandedScaleDevice, scaleSize, ACL_MEMCPY_DEVICE_TO_HOST));
+    CHECK_ACL(aclrtSynchronizeStream(stream));
 
     // verify result
     std::vector<float> expandedXGolden;
@@ -1459,7 +1286,7 @@ int main()
     printf("ExpandedRowIdx Precision is %.4g%%\n", static_cast<float>((elementNum - errorDataIndex)) / elementNum * 100);
 
     errorDataIndex = 0;
-    elementNum = actualExpertNum_;
+    elementNum = actualExpertNum;
     for (int i = 0; i < elementNum; i++) {
         if (abs(tokenCountHost[i] - tokenCountGolden[i]) > 0) {
             errorDataIndex++;
@@ -1472,22 +1299,22 @@ int main()
     }
     printf("TokenCount Precision is %.4g%%\n", static_cast<float>((elementNum - errorDataIndex)) / elementNum * 100);
 
-    aclrtFree(xDevice);
-    aclrtFree(expertIdxDevice);
-    aclrtFree(scaleDevice);
-    aclrtFree(offsetDevice);
-    aclrtFree(workspaceDevice);
-    aclrtFree(expandedXDevice);
-    aclrtFree(expandedRowIdxDevice);
-    aclrtFree(tokenCountDevice);
-    aclrtFree(expandedScaleDevice);
-    aclrtFree(expandedXHost);
-    aclrtFree(expandedRowIdxHost);
-    aclrtFree(tokenCountHost);
-    aclrtFree(expandedScaleHost);
+    CHECK_ACL(aclrtFree(xDevice));
+    CHECK_ACL(aclrtFree(expertIdxDevice));
+    CHECK_ACL(aclrtFree(scaleDevice));
+    CHECK_ACL(aclrtFree(offsetDevice));
+    CHECK_ACL(aclrtFree(workspaceDevice));
+    CHECK_ACL(aclrtFree(expandedXDevice));
+    CHECK_ACL(aclrtFree(expandedRowIdxDevice));
+    CHECK_ACL(aclrtFree(tokenCountDevice));
+    CHECK_ACL(aclrtFree(expandedScaleDevice));
+    CHECK_ACL(aclrtFree(expandedXHost));
+    CHECK_ACL(aclrtFree(expandedRowIdxHost));
+    CHECK_ACL(aclrtFree(tokenCountHost));
+    CHECK_ACL(aclrtFree(expandedScaleHost));
 
-    aclrtDestroyStream(stream);
-    aclrtResetDevice(deviceId);
-    aclFinalize();
+    CHECK_ACL(aclrtDestroyStream(stream));
+    CHECK_ACL(aclrtResetDevice(deviceId));
+    CHECK_ACL(aclFinalize());
     return 0;
 }
