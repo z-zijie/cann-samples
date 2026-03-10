@@ -17,12 +17,12 @@ set(CMAKE_C_COMPILER ${BISHENG})
 set(CMAKE_CXX_COMPILER ${BISHENG})
 set(CMAKE_LINKER ${BISHENG})
 
-add_executable(quant_matmul_template_aswt ${CMAKE_CURRENT_SOURCE_DIR}/examples/quant_matmul_template_aswt.cpp)
+add_executable(quant_matmul_template_aswt ${CMAKE_CURRENT_SOURCE_DIR}/matmul_stubs/examples/quant_matmul_mxfp4/quant_matmul_template_aswt.cpp)
 
 target_include_directories(quant_matmul_template_aswt PRIVATE
     ${ASCEND_INCLUDE_DIRS}
     ${CMAKE_CURRENT_SOURCE_DIR}/common
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/matmul_stubs/include
 )
 target_link_directories(quant_matmul_template_aswt PRIVATE ${ASCEND_DIR}/lib64)
 
@@ -44,35 +44,44 @@ target_link_libraries(quant_matmul_template_aswt
 # ============================================================================
 # Install 规则说明
 # ============================================================================
-# 执行 cmake --install build --prefix ./build_out 后的目录结构:
+# 源码目录结构 (matmul_story 下):
+#   common/                           <- 公共头文件与 golden 脚本
+#   matmul_stubs/
+#     include/                        <- 内核与调度等头文件
+#     examples/quant_matmul_mxfp4/     <- MXFP4 样例源码
+#   matmul_tutorials/                 <- 预留
 #
-#   build_out/
+# 执行 cmake --install build --prefix ./build_out 后，安装目录与源码结构对应:
+#
+#   <install_prefix>/
 #   └── 2_Performance/
 #       └── matmul_story/
-#           ├── quant_matmul_template_aswt    <- 可执行文件
-#           ├── gen_data.py                   <- 生成测试数据的脚本
-#           └── verify_result.py              <- 验证计算结果的脚本
+#           ├── common/
+#           │   └── golden/
+#           │       └── quant_matmul_mxfp4/
+#           │           ├── gen_data.py
+#           │           └── verify_result.py
+#           └── matmul_stubs/
+#               └── examples/
+#                   └── quant_matmul_mxfp4/
+#                       └── quant_matmul_template_aswt    <- 可执行文件
 #
-# 使用方式:
-#   1. 运行 gen_data.py 生成测试输入数据和期望输出(golden)
-#   2. 运行 quant_matmul_template_aswt 执行算子计算
-#   3. 运行 verify_result.py 对比实际输出与期望输出，验证正确性
+# 使用方式 (在安装根 2_Performance/matmul_story 下):
+#   1. 运行 common/golden/quant_matmul_mxfp4/gen_data.py 生成测试数据与 golden
+#   2. 运行 matmul_stubs/examples/quant_matmul_mxfp4/quant_matmul_template_aswt 执行算子
+#   3. 运行 common/golden/quant_matmul_mxfp4/verify_result.py 验证结果
 # ============================================================================
 
-# Install 规则 1: 安装可执行文件
-# 将编译生成的 quant_matmul_template_aswt 可执行文件安装到:
-#   <install_prefix>/2_Performance/matmul_story/quant_matmul_template_aswt
+# Install 规则 1: 可执行文件 -> matmul_stubs/examples/quant_matmul_mxfp4/
 install(TARGETS quant_matmul_template_aswt
-    RUNTIME DESTINATION 2_Performance/matmul_story
+    RUNTIME DESTINATION 2_Performance/matmul_story/matmul_stubs/examples/quant_matmul_mxfp4
 )
 
-# Install 规则 2: 安装 golden 验证脚本
-# 将 common/golden/quant_matmul_mxfp4/ 目录下的所有 .py 文件安装到:
-#   <install_prefix>/2_Performance/matmul_story/
+# Install 规则 2: golden 脚本 -> common/golden/quant_matmul_mxfp4/
 # FILES_MATCHING PATTERN "*.py": 只复制 .py 文件，忽略其他文件
 install(DIRECTORY
     ${CMAKE_CURRENT_SOURCE_DIR}/common/golden/quant_matmul_mxfp4/
-    DESTINATION 2_Performance/matmul_story
+    DESTINATION 2_Performance/matmul_story/common/golden/quant_matmul_mxfp4
     FILES_MATCHING
     PATTERN "*.py"
 )
