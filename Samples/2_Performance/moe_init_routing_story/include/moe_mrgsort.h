@@ -16,7 +16,7 @@
 #ifndef MOE_MRGSORT_H
 #define MOE_MRGSORT_H
 
-#include "moe_common.h"
+#include "moe_kernel_common.h"
 #include "kernel_operator.h"
 
 using namespace AscendC;
