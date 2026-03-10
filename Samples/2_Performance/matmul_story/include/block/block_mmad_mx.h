@@ -160,7 +160,7 @@ public:
             biasL1OneBuffer_ = baseN_ * sizeof(BiasType);
         }
         if constexpr (DispatchPolicy::fullLoadMode == 0) {
-            // Standard mode:
+            // Non-full-load mode:
             // every K-slice loads both A and B into L1, then pushes them down to L0.
             aL1OneBuffer_ = baseM_ * Align(kL1_, MXFP_DIVISOR_SIZE);
             scaleAL1OneBuffer_ = baseM_ * CeilDiv(scaleKL1_, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE;
@@ -210,9 +210,9 @@ public:
     {
         // Copy A from GM to L1 and convert ND -> NZ.
         //
-        // This is an MXFP4 path. The concrete GM storage type is packed, so D
-        // values are counted in bytes (`(dDim + 1) >> 1`) instead of logical
-        // fp4 elements.
+        // MXFP4 path: packed storage (2 fp4 elements per byte). D values are
+        // counted in bytes (dDim >> 1). The inner axis is always even under
+        // 8-bit packing, so partitioned and tail tiles have even shapes.
         AscendC::Nd2NzParams nd2nzParams;
         nd2nzParams.ndNum = 1;
         uint64_t nDim = tileL1L0Param.curM;
@@ -529,10 +529,12 @@ public:
                       scaleBL1Local_[l1BufferScaleBOffset_[scaleL1BufId] + offsetScaleL1], iter1, tileL1L0Param);
             AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(l0PingPong_ & 0x1);
             AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(l0PingPong_ & 0x1);
-            // MMAD sees the K fragment after hardware-required padding.
+            // MMAD_MX requires K to be 64-aligned; pad curKL0 for MX.
             mmadParams.k = CeilAlign(tileL1L0Param.curKL0, MXFP_DIVISOR_SIZE);
+            // unitFlag: FINAL when last K step (last L1 slice and last L0 fragment); else NON_FINAL.
             mmadParams.unitFlag =
                 (l1Iter + 1 == kL1Iter_ && iter1 + 1 == kL0Iter) ? FINAL_ACCUMULATION : NON_FINAL_ACCUMULATION;
+            // cmatrixInitVal: init accumulator only on first step without bias; else accumulate into CO1.
             mmadParams.cmatrixInitVal = (l1Iter == 0 && iter1 == 0 && !isBias_);
             Mmad(mmadParams, l0cOffset, l0Offset, baseN_ * biasBufId_, NeedBias(l1Iter, iter1));
             AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0PingPong_ & 0x1);
