@@ -11,3 +11,4 @@
 
 add_subdirectory(matmul_story)
 add_subdirectory(rms_norm_quant_story)
+add_subdirectory(mxfp4_story)
