@@ -20,6 +20,8 @@ set(CMAKE_LINKER ${BISHENG})
 add_executable(moe_init_routing_story src/moe_init_routing_final.cpp)
 
 target_include_directories(moe_init_routing_story PRIVATE ${ASCEND_INCLUDE_DIRS})
+target_include_directories(moe_init_routing_story PRIVATE include/)
+target_compile_definitions(moe_init_routing_story PRIVATE SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_directories(moe_init_routing_story PRIVATE ${ASCEND_DIR}/lib64)
 
 target_compile_options(moe_init_routing_story PRIVATE
