@@ -9,7 +9,7 @@
  */
 
 /*!
- * \file moe_common.h
+ * \file moe_kernel_common.h
  * \brief
  */
 

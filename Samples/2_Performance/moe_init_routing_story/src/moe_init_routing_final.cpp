@@ -33,7 +33,8 @@
 #include "kernel_operator.h"
 #include "platform/platform_ascendc.h"
 #include "simt_api/asc_simt.h"
-#include "../include/moe_common.h"
+#include "../include/moe_kernel_common.h"
+#include "../include/moe_util.h"
 #include "../include/moe_mrgsort.h"
 #include "../include/moe_mrgsort_out.h"
 
@@ -1042,61 +1043,6 @@ __global__ __aicore__ __vector__ void moe_init_routing(
     gatherPipe.Destroy();
 }
 
-template <typename T>
-void genInputData(size_t length, std::vector<T>& res) {
-    res.resize(length);
-    std::iota(res.begin(), res.end(), 0);
-}
-
-void genInputExpertIdx(size_t length, std::vector<int32_t>& res) {
-    res.resize(length);
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_real_distribution<> dist(0, 8);
-    for (int32_t& elem : res) {
-        elem = static_cast<int32_t>(dist(gen));
-        std::cout << static_cast<float>(elem) << "\t";
-    }
-    std::cout << std::endl;
-}
-
-template <typename T>
-void printData(std::vector<T>& res) {
-    for (auto& elem : res) {
-        std::cout << static_cast<float>(elem) << "\t";
-    }
-    std::cout << std::endl;
-}
-
-int64_t CeilLog4(int64_t x)
-{
-    return static_cast<int64_t>(std::ceil(std::log(x) / std::log(4)));
-}
-
-int64_t CeilDiv(int64_t x, int64_t y)
-{
-    if (y > 0) {
-        return (x + y - 1) / y;
-    }
-    return 0;
-}
-
-int64_t CeilAlign(int64_t a, int64_t b)
-{
-    if (b = 0) {
-        return 0;
-    }
-    return (a + b - 1) / b * b;
-};
-
-int64_t Align(int64_t elementNum, int64_t bytes)
-{
-    if (bytes == 0) {
-        return 0;
-    }
-    return (elementNum * bytes + UB_BLOCK_SIZE - 1) / UB_BLOCK_SIZE * UB_BLOCK_SIZE / bytes;
-}
-
 void cal_gather_tiling(MoeInitRoutingTilingData *tilingData)
 {
     auto *gatherOutTiling = &(tilingData->gatherTilingData);
@@ -1318,19 +1264,23 @@ void getDataFromBin(const std::string &filename, std::vector<T> &data)
     file.close();
 }
 
+void CHECK_ACL(aclError __ret)
+{
+    if (__ret != ACL_ERROR_NONE)
+        std::cerr << __FILE__ << ":" << __LINE__ << " aclError:" << __ret << std::endl;
+}
+
 int main()
 {
-    aclInit(nullptr);
+    CHECK_ACL(aclInit(nullptr));
     int32_t deviceId = 0;
-    aclrtSetDevice(deviceId);
+    CHECK_ACL(aclrtSetDevice(deviceId));
     aclrtStream stream = nullptr;
-    aclrtCreateStream(&stream);
+    CHECK_ACL(aclrtCreateStream(&stream));
 
-    int64_t numBlocks = BLOCK_NUM;
-    int64_t n = 8;
-    int64_t k = 1;
-    int64_t c = 2;
-
+    int64_t n = 1024;
+    int64_t k = 8;
+    int64_t c = 16;
     MoeInitRoutingTilingData tilingData;
     tilingData.n = n;
     tilingData.cols = c;
@@ -1370,23 +1320,23 @@ int main()
     size_t tokenCountSize = actualExpertNum_ * sizeof(int64_t);
     size_t expandedScaleSize = n * sizeof(float);
 
-    aclrtMalloc((void **)&xDevice, xSize, ACL_MEM_MALLOC_HUGE_FIRST);
-    aclrtMalloc((void **)&expertIdxDevice, expertIdxSize, ACL_MEM_MALLOC_HUGE_FIRST);
-    aclrtMalloc((void **)&scaleDevice, scaleSize, ACL_MEM_MALLOC_HUGE_FIRST);
-    aclrtMalloc((void **)&offsetDevice, offsetSize, ACL_MEM_MALLOC_HUGE_FIRST);
+    CHECK_ACL(aclrtMalloc((void **)&xDevice, xSize, ACL_MEM_MALLOC_HUGE_FIRST));
+    CHECK_ACL(aclrtMalloc((void **)&expertIdxDevice, expertIdxSize, ACL_MEM_MALLOC_HUGE_FIRST));
+    CHECK_ACL(aclrtMalloc((void **)&scaleDevice, scaleSize, ACL_MEM_MALLOC_HUGE_FIRST));
+    CHECK_ACL(aclrtMalloc((void **)&offsetDevice, offsetSize, ACL_MEM_MALLOC_HUGE_FIRST));
 
-    aclrtMalloc((void **)&workspaceDevice, workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST);
+    CHECK_ACL(aclrtMalloc((void **)&workspaceDevice, workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST));
 
-    aclrtMalloc((void **)&expandedXDevice, expandedXSize, ACL_MEM_MALLOC_HUGE_FIRST);
-    aclrtMalloc((void **)&expandedRowIdxDevice, expandedRowIdxSize, ACL_MEM_MALLOC_HUGE_FIRST);
-    aclrtMalloc((void **)&tokenCountDevice, tokenCountSize, ACL_MEM_MALLOC_HUGE_FIRST);
-    aclrtMalloc((void **)&expandedScaleDevice, expandedScaleSize, ACL_MEM_MALLOC_HUGE_FIRST);
-    aclrtMallocHost((void **)&expandedXHost, expandedXSize);
-    aclrtMallocHost((void **)&expandedRowIdxHost, expandedRowIdxSize);
-    aclrtMallocHost((void **)&tokenCountHost, tokenCountSize);
-    aclrtMallocHost((void **)&expandedScaleHost, expandedScaleSize);
+    CHECK_ACL(aclrtMalloc((void **)&expandedXDevice, expandedXSize, ACL_MEM_MALLOC_HUGE_FIRST));
+    CHECK_ACL(aclrtMalloc((void **)&expandedRowIdxDevice, expandedRowIdxSize, ACL_MEM_MALLOC_HUGE_FIRST));
+    CHECK_ACL(aclrtMalloc((void **)&tokenCountDevice, tokenCountSize, ACL_MEM_MALLOC_HUGE_FIRST));
+    CHECK_ACL(aclrtMalloc((void **)&expandedScaleDevice, expandedScaleSize, ACL_MEM_MALLOC_HUGE_FIRST));
+    CHECK_ACL(aclrtMallocHost((void **)&expandedXHost, expandedXSize));
+    CHECK_ACL(aclrtMallocHost((void **)&expandedRowIdxHost, expandedRowIdxSize));
+    CHECK_ACL(aclrtMallocHost((void **)&tokenCountHost, tokenCountSize));
+    CHECK_ACL(aclrtMallocHost((void **)&expandedScaleHost, expandedScaleSize));
 
-    // test
+    // gen input
     std::string exeDir = "./Samples/2_Performance/moe_init_routing_story/utils/";
     std::ostringstream cmd;
     cmd << "python3 " << exeDir << "/gen_data.py "
@@ -1404,21 +1354,20 @@ int main()
     getDataFromBin(exeDir + "expert_idx.bin", expertIdxData);
 
     // scale and offset is none
-    aclrtMemcpy(xDevice, xSize, xData.data(), xSize, ACL_MEMCPY_HOST_TO_DEVICE);
-    aclrtMemcpy(expertIdxDevice, expertIdxSize, expertIdxData.data(), expertIdxSize, ACL_MEMCPY_HOST_TO_DEVICE);
+    CHECK_ACL(aclrtMemcpy(xDevice, xSize, xData.data(), xSize, ACL_MEMCPY_HOST_TO_DEVICE));
+    CHECK_ACL(aclrtMemcpy(expertIdxDevice, expertIdxSize, expertIdxData.data(), expertIdxSize, ACL_MEMCPY_HOST_TO_DEVICE));
 
-    // Kernel Call
-    aclrtSynchronizeStream(stream);
-    moe_init_routing<<<numBlocks, nullptr, stream>>>(xDevice, expertIdxDevice, scaleDevice, offsetDevice,
+    // kernel call
+    CHECK_ACL(aclrtSynchronizeStream(stream));
+    moe_init_routing<<<BLOCK_NUM, nullptr, stream>>>(xDevice, expertIdxDevice, scaleDevice, offsetDevice,
         workspaceDevice, expandedXDevice, expandedRowIdxDevice, tokenCountDevice, expandedScaleDevice, tilingData);
-    aclrtSynchronizeStream(stream);
+    CHECK_ACL(aclrtSynchronizeStream(stream));
 
-    aclrtMemcpy(expandedXHost, expandedXSize, expandedXDevice, expandedXSize, ACL_MEMCPY_DEVICE_TO_HOST);
-    aclrtMemcpy(expandedRowIdxHost, expandedRowIdxSize, expandedRowIdxDevice, expandedRowIdxSize, ACL_MEMCPY_DEVICE_TO_HOST);
-    aclrtMemcpy(tokenCountHost, tokenCountSize, tokenCountDevice, tokenCountSize, ACL_MEMCPY_DEVICE_TO_HOST);
-    aclrtMemcpy(expandedScaleHost, expandedScaleSize, expandedScaleDevice, expandedScaleSize, ACL_MEMCPY_DEVICE_TO_HOST);
-    aclrtSynchronizeStream(stream);
-
+    CHECK_ACL(aclrtMemcpy(expandedXHost, expandedXSize, expandedXDevice, expandedXSize, ACL_MEMCPY_DEVICE_TO_HOST));
+    CHECK_ACL(aclrtMemcpy(expandedRowIdxHost, expandedRowIdxSize, expandedRowIdxDevice, expandedRowIdxSize, ACL_MEMCPY_DEVICE_TO_HOST));
+    CHECK_ACL(aclrtMemcpy(tokenCountHost, tokenCountSize, tokenCountDevice, tokenCountSize, ACL_MEMCPY_DEVICE_TO_HOST));
+    CHECK_ACL(aclrtMemcpy(expandedScaleHost, expandedScaleSize, expandedScaleDevice, expandedScaleSize, ACL_MEMCPY_DEVICE_TO_HOST));
+    CHECK_ACL(aclrtSynchronizeStream(stream));
 
     // verify result
     std::vector<float> expandedXGolden;
@@ -1472,22 +1421,22 @@ int main()
     }
     printf("TokenCount Precision is %.4g%%\n", static_cast<float>((elementNum - errorDataIndex)) / elementNum * 100);
 
-    aclrtFree(xDevice);
-    aclrtFree(expertIdxDevice);
-    aclrtFree(scaleDevice);
-    aclrtFree(offsetDevice);
-    aclrtFree(workspaceDevice);
-    aclrtFree(expandedXDevice);
-    aclrtFree(expandedRowIdxDevice);
-    aclrtFree(tokenCountDevice);
-    aclrtFree(expandedScaleDevice);
-    aclrtFree(expandedXHost);
-    aclrtFree(expandedRowIdxHost);
-    aclrtFree(tokenCountHost);
-    aclrtFree(expandedScaleHost);
+    CHECK_ACL(aclrtFree(xDevice));
+    CHECK_ACL(aclrtFree(expertIdxDevice));
+    CHECK_ACL(aclrtFree(scaleDevice));
+    CHECK_ACL(aclrtFree(offsetDevice));
+    CHECK_ACL(aclrtFree(workspaceDevice));
+    CHECK_ACL(aclrtFree(expandedXDevice));
+    CHECK_ACL(aclrtFree(expandedRowIdxDevice));
+    CHECK_ACL(aclrtFree(tokenCountDevice));
+    CHECK_ACL(aclrtFree(expandedScaleDevice));
+    CHECK_ACL(aclrtFree(expandedXHost));
+    CHECK_ACL(aclrtFree(expandedRowIdxHost));
+    CHECK_ACL(aclrtFree(tokenCountHost));
+    CHECK_ACL(aclrtFree(expandedScaleHost));
 
-    aclrtDestroyStream(stream);
-    aclrtResetDevice(deviceId);
-    aclFinalize();
+    CHECK_ACL(aclrtDestroyStream(stream));
+    CHECK_ACL(aclrtResetDevice(deviceId));
+    CHECK_ACL(aclFinalize());
     return 0;
 }
