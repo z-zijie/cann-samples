@@ -16,8 +16,10 @@
 #ifndef MOE_DISTRIBUTE_DISPATCH_H
 #define MOE_DISTRIBUTE_DISPATCH_H
 
+#undef REDUCED
 
-struct alignas(8) MoeDistributeDispatchTilingData {
+#ifndef REDUCED
+struct alignas(8) MoeDistributeDispatchV2Info {
     uint32_t epWorldSize;                // epWorldSize
     uint32_t tpWorldSize;                // tpWorldSize
     uint32_t epRankId;                   // epRankId
@@ -51,6 +53,25 @@ struct alignas(8) MoeDistributeDispatchTilingData {
     uint32_t scalesTypeSize;
     uint64_t scalesCount;
 };
+#else
+struct alignas(8) MoeDistributeDispatchV2Info {
+    uint32_t epWorldSize;                // epWorldSize
+    uint32_t epRankId;                   // epRankId
+    uint32_t moeExpertNum;               // moe expert number
+    uint32_t bs;                         // bs
+    uint32_t k;                          // k
+    uint32_t h;                          // h
+    uint32_t globalBs;                   // globalBs = BS * worldSize
+    uint32_t aivNum;                     // aivNum
+    bool reserved1;
+    bool reserved2;
+    uint32_t expertTokenNumsType;        // expert token nums type, support 0: cumsum mode, 1: count mode
+};
+#endif
+
+struct alignas(8) MoeDistributeDispatchV2TilingData {
+    MoeDistributeDispatchV2Info moeDistributeDispatchV2Info;
+}
 
 
 // 需要补充dispatch 算子的kernel实现
