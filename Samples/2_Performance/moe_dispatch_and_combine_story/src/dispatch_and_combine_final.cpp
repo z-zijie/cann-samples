@@ -66,10 +66,31 @@ inline int32_t TestSetAttr(int32_t myPe, int32_t nPes, uint64_t localMemSize, co
     GM_ADDR tilingGM
 */
 
-__global__ __aicore__ void MoeDistributeDispatchKernel(
-    GM_ADDR shmemSpace, GM_ADDR x, GM_ADDR expertIds, GM_ADDR expandXOut, GM_ADDR workspaceGM, GM_ADDR tilingGM)
+extern "C" __global__ __aicore__ void MoeDistributeDispatchKernel(
+    GM_ADDR shmemSpace, GM_ADDR x, GM_ADDR expertIds,
+    GM_ADDR expandXOut, GM_ADDR dynamicScalesOut, GM_ADDR expandIdxOut, GM_ADDR expertTokenNumsOut, GM_ADDR sendCountsOut,
+    GM_ADDR workspaceGM, MoeDistributeDispatchV2TilingData tilingData)
 {
     // 待补齐kernel实现
+    #ifndef REDUCED
+        TPipe pipe;
+        MoeDistributeDispatchV2FullMesh<float16_t, fp8_e5m2_t, MX_QUANT, false, false> op;
+        op.Init(x, expertIds, nullptr, nullptr, nullptr, nullptr, 
+            expandXOut, dynamicScalesOut, assistInfoOut, expertTokenNumsOut, epSendCountsOut, nullptr,
+            workspaceGM, nullptr, &tilingData, &pipe);
+            
+        op.Process();
+        return;
+    #else
+        TPipe pipe;
+        MoeDistributeDispatchV2FullMesh op;
+        op.Init(x, expertIds,
+            expandXOut, dynamicScalesOut, assistInfoOut, expertTokenNumsOut, epSendCountsOut,
+            workspaceGM, &tilingData, &pipe);
+            
+        op.Process();
+        return;
+    #endif
 }
 
 /** 
@@ -105,14 +126,69 @@ __global__ __aicore__ void MoeDistributeCombineKernel(
 
 }
 
-void SetDispatchTilingData(MoeDistributeDispatchTilingData& dispatchTilingData)
+void SetDispatchTilingData(MoeDistributeDispatchTilingData& dispatchTilingData, int epRankId, int bs)
 {
-    // 待补齐tilingData数据填写
+    #ifndef REDUCED
+        // 原始tiling
+        dispatchTilingData.bs = bs;
+        dispatchTilingData.h = 7168;
+        dispatchTilingData.epWorldSize = 2;
+        dispatchTilingData.epRankId = epRankId;
+        dispatchTilingData.hasElasticInfo = false;
+        dispatchTilingData.isPerformance = false;
+        dispatchTilingData.globalBs = dispatchTilingData.bs * dispatchTilingData.epWorldSize;
+        dispatchTilingData.sharedExpertRankNum = 0;
+        dispatchTilingData.moeExpertNum = 8;
+        dispatchTilingData.sharedExpertNum = 0;
+        dispatchTilingData.expertTokenNumsType = 1;
+        dispatchTilingData.zeroComputeExpertNum = 0;
+        dispatchTilingData.isTokenMask = false;
+        dispatchTilingData.isExpertMask = false;
+        dispatchTilingData.k = 8;
+        dispatchTilingData.aivNum = 72;
+        dispatchTilingData.scalesCol = 0
+        dispatchTilingData.scalesTypeSize = 0;
+        dispatchTilingData.scalesCount =0;
+    #else
+        // 简化tiling
+        dispatchTilingData.epWorldSize = 2U;                // epWorldSize
+        dispatchTilingData.epRankId = epRankId;                   // epRankId
+        dispatchTilingData.moeExpertNum = 8;               // moe expert number
+        dispatchTilingData.bs = bs;                         // bs
+        dispatchTilingData.k = 8;                          // k
+        dispatchTilingData.h = 7168;                          // h
+        dispatchTilingData.globalBs = bs * dispatchTilingData.epWorldSize;                   // globalBs = BS * worldSize
+        dispatchTilingData.aivNum = 72;                     // aivNum
+        uint32_t expertTokenNumsType = 1;        // expert token nums type, support 0: cumsum mode, 1: count mode
+    #endif
 }
 
 void SetCombineTilingData(MoeDistributeCombineTilingData& combineTilingData)
 {
     // 待补齐tilingData数据填写
+}
+
+void InitData(uint8_t **hostPtr, uint8_t **devicePtr, size_t aSize, std::string path = "")
+{
+    std::cout << path << std::endl;
+    ACL_CHECK(aclrtMalloc(reinterpret_cast<void**> (devicePtr), aSize, ACL_MEM_MALLOC_HUGE_FIRST));
+    ACL_CHECK(aclrtMallocHost(reinterpret_cast<void **>(hostPtr), aSize));
+    if (path.length() == 0) {
+        return;
+    }
+    ReadFile(path, *hostPtr, aSize);
+    ACL_CHECK(aclrtMemcpy(*devicePtr, aSize, *hostPtr, aSize, ACL_MEMCPY_HOST_TO_DEVICE));
+}
+
+void FinalizeData(uint8_t **hostPtr, uint8_t **devicePtr, size_t aSize = 0, std::string path = "")
+{
+    std::cout << path << std::endl;
+    if (path.length() > 0 && aSize > 0) {
+        ACL_CHECK(aclrtMemcpy(*hostPtr, aSize, *devicePtr, aSize, ACL_MEMCPY_DEVICE_TO_HOST));
+        WriteFile(path, hostPtr, aSize);
+    }
+    ACL_CHECK(aclrtFreeHost(hostPtr));
+    ACL_CHECK(aclrtFreeHost(devicePtr));
 }
 
 int main(int argc, char* argv[])
@@ -140,15 +216,104 @@ int main(int argc, char* argv[])
     uint8_t *symmetricPtr = (uint8_t *) symmPtr;
 
     ACL_CHECK(aclrtSynchronizeStream(stream));
-    MoeDistributeDispatchTilingData dispatchTilingData;
+    MoeDistributeDispatchV2TilingData dispatchTilingData;
     MoeDistributeCombineTilingData combineTilingData;
+
+    SetDispatchTilingData(dispatchTilingData, 8, 0);
+    size_t localExpertNum = dispatchTilingData.moeExpertNum / dispatchTilingData.epWorldSize;
+    size_t maxReceivedTokenNum = dispatchTilingData.golbalBs * std::min(dispatchTilingData.k, localExpertNum);
+
+    uint8_t *xHost;
+    uint8_t *xDevice;
+    size_t xSize = dispatchTilingData.bs * dispatchTilingData.h * sizeof(float16_t);
+    InitData(xHost, xDevice, xSize, "x_" + std::to_string(0) + ".bin");
+
+    uint8_t *expertIdsHost;
+    uint8_t *expertIdsDevice;
+    size_t expertIdsSize = dispatchTilingData.bs * dispatchTilingData.k * sizeof(int32_t);
+    InitData(expertIdsHost, expertIdsDevice, expertIdsSize, "expert_ids_" + std::to_string(0) + ".bin");
+
+    uint8_t *expandXHost;
+    uint8_t *expandXDevice;
+    size_t expandXSize = maxReceivedTokenNum * dispatchTilingData.h * sizeof(fp8_e5m2_t);
+    InitData(expandXHost, expandXDevice, expandXSize);
+
+    uint8_t *dynamicScalesHost;
+    uint8_t *dynamicScalesDevice;
+    size_t dynamicScalesSize = maxReceivedTokenNum * (dispatchTilingData.h / 32) * sizeof(fp8_e8m0_t);
+    InitData(dynamicScalesHost, dynamicScalesDevice, dynamicScalesSize);
+
+    uint8_t *dynamicScalesHost;
+    uint8_t *dynamicScalesDevice;
+    size_t dynamicScalesSize = maxReceivedTokenNum * (dispatchTilingData.h / 32) * sizeof(fp8_e8m0_t);
+    InitData(dynamicScalesHost, dynamicScalesDevice, dynamicScalesSize);
+
+    uint8_t *tokenSrcInfoHost;
+    uint8_t *tokenSrcInfoDevice;
+    size_t tokenSrcInfoSize = maxReceivedTokenNum * 128 * sizeof(int32_t);
+    InitData(tokenSrcInfoHost, tokenSrcInfoDevice, tokenSrcInfoSize);
+
+    uint8_t *expertTokenNumsHost;
+    uint8_t *expertTokenNumsDevice;
+    size_t expertTokenNumsSize = localExpertNum * sizeof(int64_t);
+    InitData(expertTokenNumsHost, expertTokenNumsDevice, expertTokenNumsSize);
+
+    uint8_t *sendCountsHost;
+    uint8_t *sendCountsDevice;
+    size_t sendCountSize = localExpertNum * dispatchTilingData.epWorldSize * sizeof(int32_t);
+    InitData(sendCountsHost, sendCountsDevice, sendCountSize);
+
+    uint8_t *workspaceGM;
+    size_t workspaceSize = 16 * 1024 * 1024;
+    ACL_CHECK(aclrtMalloc(reinterpret_cast<void**>(&workspaceGM), workspaceSize, ACL_MEM_MALLOC_HUGE_FIRST));
 
     // 待补齐相应参数生成和传递
     for (int i = 0; i < 1; ++i) {
-        MoeDistributeDispatchKernel<<<BLOCK_NUM, nullptr, stream>>>(symmetricPtr, dispatchTilingData);
+        MoeDistributeDispatchKernel<<<BLOCK_NUM, nullptr, stream>>>(
+            symmetricPtr, xDevice, expertIdsDevice,
+            expandXDevice, dynamicScalesDevice, tokenSrcInfoDevice, expertTokenNumsDevice, sendCountsDevice,  
+            workspaceGM, dispatchTilingData);
         MoeDistributeCombineKernel<<<BLOCK_NUM, nullptr, stream>>>(symmetricPtr, combineTilingData);
     }
     ACL_CHECK(aclrtSynchronizeStream(stream));
+
+    aclshmem_free(symmPtr);
+
+    uint8_t *xHost;
+    uint8_t *xDevice;
+    FinalizeData(xHost, xDevice);
+
+    uint8_t *expertIdsHost;
+    uint8_t *expertIdsDevice;
+    FinalizeData(expertIdsHost, expertIdsDevice);
+
+    uint8_t *expandXHost;
+    uint8_t *expandXDevice;
+    FinalizeData(expandXHost, expandXDevice, expandXSize, "expand_x_" + std::to_string(0) + ".bin");
+
+    uint8_t *dynamicScalesHost;
+    uint8_t *dynamicScalesDevice;
+    size_t dynamicScalesSize = maxReceivedTokenNum * (dispatchTilingData.h / 32) * sizeof(fp8_e8m0_t);
+    FinalizeData(
+        dynamicScalesHost, dynamicScalesDevice, dynamicScalesSize, "dynamic_scales_" + std::to_string(0) + ".bin");
+
+    uint8_t *tokenSrcInfoHost;
+    uint8_t *tokenSrcInfoDevice;
+    size_t tokenSrcInfoSize = maxReceivedTokenNum * 128 * sizeof(int32_t);
+    FinalizeData(
+        tokenSrcInfoHost, tokenSrcInfoDevice, tokenSrcInfoSize, "token_src_info_" + std::to_string(0) + ".bin");
+
+    uint8_t *expertTokenNumsHost;
+    uint8_t *expertTokenNumsDevice;
+    size_t expertTokenNumsSize = localExpertNum * sizeof(int64_t);
+    InitData(expertTokenNumsHost, expertTokenNumsDevice, expertTokenNumsSize);
+    FinalizeData(
+        expertTokenNumsHost, expertTokenNumsDevice, expertTokenNumsSize, "expert_token_nums_" + std::to_string(0) + ".bin");
+
+    uint8_t *sendCountsHost;
+    uint8_t *sendCountsDevice;
+    size_t sendCountSize = localExpertNum * dispatchTilingData.epWorldSize * sizeof(int32_t);
+    FinalizeData(sendCountsHost, sendCountsDevice, sendCountSize, "recv_count_" + std::to_string(0) + ".bin");
 
     aclshmem_free(symmPtr);
     status = aclrtDestroyStream(stream);
