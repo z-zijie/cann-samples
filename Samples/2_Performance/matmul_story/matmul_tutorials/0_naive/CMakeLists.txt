@@ -9,6 +9,35 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # ----------------------------------------------------------------------------
 
-add_subdirectory(matmul_story)
-add_subdirectory(rms_norm_quant_story)
-add_subdirectory(mxfp4_story)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+set(CMAKE_C_COMPILER ${BISHENG})
+set(CMAKE_CXX_COMPILER ${BISHENG})
+set(CMAKE_LINKER ${BISHENG})
+
+add_executable(mxfp4 mxfp4.cpp ${CMAKE_CURRENT_SOURCE_DIR}/examples/mxfp4.cpp)
+
+target_include_directories(mxfp4 PRIVATE ${ASCEND_INCLUDE_DIRS})
+target_link_directories(mxfp4 PRIVATE ${ASCEND_DIR}/lib64)
+
+target_compile_options(mxfp4 PRIVATE
+    "-xasc"
+    "--npu-arch=dav-3510"
+    "-w"
+    "-O3"
+)
+
+target_link_libraries(mxfp4
+    PRIVATE
+    m
+    dl
+    platform
+    tiling_api
+)
+
+install(TARGETS mxfp4
+    RUNTIME DESTINATION 0_Introduction/mxfp4
+)
+
