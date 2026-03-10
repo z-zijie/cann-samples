@@ -48,6 +48,9 @@ set(CMAKE_C_COMPILER ${BISHENG})
 set(CMAKE_CXX_COMPILER ${BISHENG})
 set(CMAKE_LINKER ${BISHENG})
 
+set(SHMEM_DIR /home/l30073768/shmem-master)
+set(OP_DIR /home/l30073768/ops-samples/Samples/2_Performance/moe_dispatch_and_combine_story)
+
 # set ASCEND_INCLUDE_DIRS
 set(ASCEND_INCLUDE_DIRS
     ${ASCEND_DIR}/include
@@ -61,4 +64,7 @@ set(ASCEND_INCLUDE_DIRS
     ${ASCEND_DIR}/compiler/ascendc/include/highlevel_api/impl
     ${ASCEND_DIR}/compiler/ascendc/include/highlevel_api/tiling
     ${ASCEND_DIR}/compiler/ascendc/impl/aicore/basic_api
+    ${SHMEM_DIR}/include
+    ${SHMEM_DIR}/src/device
+    ${OP_DIR}/include
 )
