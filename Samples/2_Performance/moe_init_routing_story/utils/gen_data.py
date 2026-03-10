@@ -1,7 +1,21 @@
-import argparse
-import numpy
+#!/usr/bin/python3
+# coding=utf-8
+
+# ----------------------------------------------------------------------------------------------------------
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+# ----------------------------------------------------------------------------------------------------------
+
 import os
 import random
+import argparse
+import numpy
+
 
 def moe_init_routing_numpy(x, expert_idx, k):
     expert_start = 0
@@ -23,7 +37,8 @@ def moe_init_routing_numpy(x, expert_idx, k):
 
     # count
     expert_token_count = numpy.bincount(sorted_expert_idx[:actual_expert_total_num] - expert_start)
-    expert_token_count = numpy.concatenate([expert_token_count, numpy.zeros((expert_end -expert_start)- len(expert_token_count)).astype(numpy.int64)])
+    expert_token_count = numpy.concatenate([expert_token_count, 
+        numpy.zeros((expert_end - expert_start) - len(expert_token_count)).astype(numpy.int64)])
 
     return expaned_x, expanded_row_idx, expert_token_count
 
