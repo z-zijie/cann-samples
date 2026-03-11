@@ -38,9 +38,9 @@ __global__ __aicore__ void FiaKernelFullQuant(
 
 int main(int argc, char* argv[])
 {
-    std::cerr << "Start main" << std::endl;
+    std::cerr << "Start fused_infer_attention_score demo." << std::endl;
     // -------------------------------------------------------------------------
-    // 1. Parse the problem shape.
+    // 1. Set the problem shape.
     // -------------------------------------------------------------------------
     uint32_t batchSize = 1;
     uint32_t numHeadsQ = 1;
@@ -114,8 +114,8 @@ int main(int argc, char* argv[])
     size_t keySize = (batchSize * numHeadsKV * seqLengthsKV * headDim) * sizeof(uint8_t);
     size_t valueSize = (batchSize * numHeadsKV * seqLengthsKV * headDim) * sizeof(uint8_t);
     size_t queryQuantScaleSize = (batchSize * numHeadsQ * (seqLengthsQ / 128) * 1) * sizeof(float);
-    size_t keyAntiquantScaleSize = (batchSize * numHeadsKV * (seqLengthsKV / 128) * 1) * sizeof(float);
-    size_t valueAntiquantScaleSize = (batchSize * numHeadsKV * (seqLengthsKV / 128) * 1) * sizeof(float);
+    size_t keyAntiquantScaleSize = (batchSize * numHeadsKV * (seqLengthsKV / 256) * 1) * sizeof(float);
+    size_t valueAntiquantScaleSize = (batchSize * numHeadsKV * (seqLengthsKV / 256) * 1) * sizeof(float);
     size_t outputSize = (batchSize * numHeadsQ * seqLengthsQ * headDim) * sizeof(uint16_t);
     size_t workspaceSize = 200 * 2048 * 1024 * sizeof(uint8_t);
     size_t tilingDataSize = sizeof(optiling::FlashAttentionScoreSimplifiedTilingData);
@@ -123,8 +123,6 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     // 4. Materialize the default tiling configuration for this problem shape.
     // -------------------------------------------------------------------------
-    //
-    // tilingData的作用：
     optiling::FlashAttentionScoreSimplifiedTilingData tilingData;
     SetTilingData(tilingData);
 

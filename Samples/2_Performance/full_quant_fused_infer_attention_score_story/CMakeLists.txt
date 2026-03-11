@@ -98,6 +98,5 @@ install(
         ${CMAKE_CURRENT_SOURCE_DIR}/common/golden/verify_result.py 
         ${CMAKE_CURRENT_SOURCE_DIR}/common/golden/gen_data.py
     DESTINATION 
-        #${CMAKE_CURRENT_SOURCE_DIR}/../../build/Samples/2_Performance/full_quant_fused_infer_attention_score_story
         DESTINATION 2_Performance/full_quant_fused_infer_attention_score_story
 )
