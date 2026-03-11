@@ -196,8 +196,6 @@ __simd_vf__ void PostQuantPerChnlNoOffsetImplVF(__ubuf__ OUTPUT_T *dstUb, __ubuf
                 }
                 LoadAlign<T, LoadDist::DIST_NORM>(vregInput, srcUb + dLoops * floatRepSize + j * srcD + m * srcD);
                 Mul<T, MaskMergeMode::ZEROING>(vregMul, vregInput, vScale, preg_tail);
-                // if constexpr (IsSameType<OUTPUT_T, fp8_e4m3fn_t>::value || IsSameType<OUTPUT_T,
-                // fp8_e5m2_t>::value) {
                 if constexpr (!IsSameType<OUTPUT_T, int8_t>::value) {
                     if constexpr (IsSameType<OUTPUT_T, hifloat8_t>::value) {
                         Cast<OUTPUT_T, T, castTraitP1>(vregCast, vregMul, preg_tail);
