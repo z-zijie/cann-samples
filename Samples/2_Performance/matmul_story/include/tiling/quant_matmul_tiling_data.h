@@ -23,23 +23,25 @@
 
 #pragma pack(push, 8)
 struct alignas(8) QuantMatmulTilingData {
-    uint32_t m = 0;
-    uint32_t n = 0;
-    uint32_t k = 0;
-    uint32_t baseM = 0;
-    uint32_t baseN = 0;
-    uint32_t baseK = 0;
-    uint32_t scaleKL1 = 0;
-    uint32_t mTailTile = 1;
-    uint32_t nTailTile = 1;
-    uint32_t mBaseTailSplitCnt = 1;
-    uint32_t nBaseTailSplitCnt = 1;
-    uint32_t mTailMain = 0;
-    uint32_t nTailMain = 0;
-    uint8_t stepK = 0;
-    uint8_t nBufferNum = 0;
-    uint8_t isBias = 0;
-    uint8_t dbL0C = 0;
+    uint32_t m{0};
+    uint32_t n{0};
+    uint32_t k{0};
+    uint32_t baseM{0};
+    uint32_t baseN{0};
+    uint32_t baseK{0};
+    uint32_t scaleKL1{0};
+    uint32_t mTailTile{1};
+    uint32_t nTailTile{1};
+    uint32_t mBaseTailSplitCnt{1};
+    uint32_t nBaseTailSplitCnt{1};
+    uint32_t mTailMain{0};
+    uint32_t nTailMain{0};
+    uint32_t usedCoreNum{0};
+    uint8_t stepK{0};
+    uint8_t nBufferNum{0};
+    uint8_t hasBias{0};
+    uint8_t dbL0c{0};
+    uint8_t enableAFullLoad{0};
 };
 #pragma pack(pop)
 
