@@ -1,4 +1,4 @@
-/**
+_/**
  * Copyright (c) 2026 Huawei Technologies Co., Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
  * CANN Open Software License Agreement Version 2.0 (the "License").
@@ -34,7 +34,7 @@ static T CeilDiv(T num1, T num2)
 }
 
 template <typename T>
-static T CeilAlign(T num1, T num2)
+static T Align(T num1, T num2)
 {
     return CeilDiv(num1, num2) * num2;
 }
@@ -43,6 +43,18 @@ template <typename T>
 static T FloorAlign(T num1, T num2)
 {
     return num1 / num2 * num2;
+}
+
+template <typename T>
+T GetShapeWithDataTypeFP4(T size) const
+{
+    return size << 1;
+}
+
+template <typename T>
+T GetSizeWithDataTypeFP4(T shape) const
+{
+    return (shape + 1) >> 1;
 }
 
 #endif // COMMON_UTILS_H
