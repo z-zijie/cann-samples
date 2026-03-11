@@ -233,7 +233,6 @@ void SetTilingData(optiling::FlashAttentionScoreSimplifiedTilingData& tilingData
 
 int main(int argc, char* argv[])
 {
-    std::cerr << "Start main" << std::endl;
     // -------------------------------------------------------------------------
     // 1. Parse the problem shape.
     // -------------------------------------------------------------------------
