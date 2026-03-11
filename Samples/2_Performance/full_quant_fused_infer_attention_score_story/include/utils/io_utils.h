@@ -49,7 +49,7 @@ inline bool ReadFile(const std::string& filePath, size_t& fileSize, void* buffer
         return false;
     }
     if (size > bufferSize) {
-        ERROR_LOG("file size is larger than buffer size, file size = %u, buffer size =u%", size, bufferSize);
+        ERROR_LOG("file size is larger than buffer size");
         file.close();
         return false;
     }
