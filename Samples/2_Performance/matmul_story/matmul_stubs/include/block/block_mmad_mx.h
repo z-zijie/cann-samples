@@ -187,7 +187,7 @@ public:
         }
         scaleBL1OneBuffer_ = baseN_ * CeilDiv(scaleKL1_, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE;
         if constexpr (AscendC::IsSameType<AType, fp4x2_e2m1_t>::value) {
-            scaleBL1OneBuffer_ = (baseN_ * Cmct::Gemm::CeilDiv(scaleKL1_, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE) >> 1;
+            scaleBL1OneBuffer_ = (baseN_ * CeilDiv(scaleKL1_, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE) >> 1;
         }
         if (isBias_) {
             biasL1OneBuffer_ = baseN_ * sizeof(BiasType);
@@ -197,7 +197,7 @@ public:
             // every K-slice loads both A and B into L1, then pushes them down to L0.
             aL1OneBuffer_ = baseM_ * Align(kL1_, MXFP_DIVISOR_SIZE);
             if constexpr (AscendC::IsSameType<AType, fp4x2_e2m1_t>::value) {
-                aL1OneBuffer_ = (baseM_ * Cmct::Gemm::Align(kL1_, MXFP_DIVISOR_SIZE)) >> 1;
+                aL1OneBuffer_ = (baseM_ * Align(kL1_, MXFP_DIVISOR_SIZE)) >> 1;
             }
             scaleAL1OneBuffer_ = baseM_ * CeilDiv(scaleKL1_, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE;
             for (int32_t bufferId = 0; bufferId < l1BufNum_; bufferId++) {
@@ -229,7 +229,7 @@ public:
             uint64_t kAlign = Align(k_, MXFP_DIVISOR_SIZE);
             aL1OneBuffer_ = mAlign * kAlign;
             if constexpr (AscendC::IsSameType<AType, fp4x2_e2m1_t>::value) {
-                aL1OneBuffer_ = (baseM_ * Cmct::Gemm::Align(kL1_, MXFP_DIVISOR_SIZE)) >> 1;
+                aL1OneBuffer_ = (baseM_ * Align(kL1_, MXFP_DIVISOR_SIZE)) >> 1;
             }
             scaleAL1OneBuffer_ = baseM_ * CeilDiv(k_, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE;
             // 2 buffer: L1 space is : B0|BScale0|bias0|A|AScale|...|B1|BScale1|bias1|
@@ -626,7 +626,7 @@ public:
             uint64_t scaleL1BufId = scaleLoopCnt_ & 1;
             AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(l1BufId);
             auto curGmBKL1 = (iter0 + 1 == kL1Iter_) ? (k_ - iter0 * kL1_) : kL1_;
-            auto curPadBKL1 = Cmct::Gemm::CeilAlign(curGmBKL1, MXFP_DIVISOR_SIZE); // pad to 64 align
+            auto curPadBKL1 = CeilAlign(curGmBKL1, MXFP_DIVISOR_SIZE); // pad to 64 align
             auto curGmAKL1 = curGmBKL1;
             auto curPadAKL1 = curPadBKL1;
 
@@ -663,28 +663,28 @@ public:
 
                 // L1上的K需要填完整的K（scaleKL1_），不能是尾块，GM上的填实际大小（可能是尾块）
                 auto layoutScaleAL1 =
-                    AscendC::Te::MakeZzLayout<fp8_e8m0_t>(curM, Cmct::Gemm::CeilDiv(scaleKL1_, MXFP_GROUP_SIZE));
+                    AscendC::Te::MakeZzLayout<fp8_e8m0_t>(curM, CeilDiv(scaleKL1_, MXFP_GROUP_SIZE));
                 auto tensorScaleAL1 = AscendC::Te::MakeTensor(
                     AscendC::Te::MakeL1memPtr((__cbuf__ fp8_e8m0_t*)l1BufferScaleAOffset_[scaleL1BufId]),
                     layoutScaleAL1);
                 auto gmBlockScaleA = gmScaleA(
                     AscendC::Te::MakeCoord(0, iter0 * kL1_ / MXFP_GROUP_SIZE),
                     AscendC::Te::MakeShape(
-                        curM, Cmct::Gemm::CeilDiv(curScaleKL1, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE));
+                        curM, CeilDiv(curScaleKL1, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE));
 
                 AscendC::Te::Copy(
                     AscendC::Te::CopyAtom<AscendC::Te::CopyTraits<Cmct::Gemm::Tile::CopyScaleGM2L1>>{}, tensorScaleAL1,
                     gmBlockScaleA);
 
                 auto layoutScaleBL1 =
-                    AscendC::Te::MakeNnLayout<fp8_e8m0_t>(Cmct::Gemm::CeilDiv(scaleKL1_, MXFP_GROUP_SIZE), curN);
+                    AscendC::Te::MakeNnLayout<fp8_e8m0_t>(CeilDiv(scaleKL1_, MXFP_GROUP_SIZE), curN);
                 auto tensorScaleBL1 = AscendC::Te::MakeTensor(
                     AscendC::Te::MakeL1memPtr((__cbuf__ fp8_e8m0_t*)l1BufferScaleBOffset_[scaleL1BufId]),
                     layoutScaleBL1);
                 auto gmBlockScaleB = gmScaleB(
                     AscendC::Te::MakeCoord(iter0 * kL1_ / MXFP_GROUP_SIZE, 0),
                     AscendC::Te::MakeShape(
-                        Cmct::Gemm::CeilDiv(curScaleKL1, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE, curN));
+                        CeilDiv(curScaleKL1, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE, curN));
                 AscendC::Te::Copy(
                     AscendC::Te::CopyAtom<AscendC::Te::CopyTraits<Cmct::Gemm::Tile::CopyScaleGM2L1>>{}, tensorScaleBL1,
                     gmBlockScaleB);
@@ -693,7 +693,7 @@ public:
             AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(l1BufId);
             AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(l1BufId);
 
-            uint64_t kL0Iter = Cmct::Gemm::CeilDiv(curGmBKL1, baseK_);
+            uint64_t kL0Iter = CeilDiv(curGmBKL1, baseK_);
             for (uint16_t iter1 = 0; iter1 < kL0Iter; ++iter1) {
                 auto curKL0 = (iter1 * baseK_ + baseK_ > curPadBKL1) ? (curPadBKL1 - iter1 * baseK_) : baseK_;
                 // Load data to L0 and open DB(unit: B8)
@@ -728,35 +728,35 @@ public:
                 }
 
                 // scaleA, scaleB L1->L0
-                auto coordScaleKL1 = (iter0 % (scaleKL1_ / kL1_)) * Cmct::Gemm::CeilDiv(kL1_, MXFP_DIVISOR_SIZE) * 2;
+                auto coordScaleKL1 = (iter0 % (scaleKL1_ / kL1_)) * CeilDiv(kL1_, MXFP_DIVISOR_SIZE) * 2;
                 auto layoutScaleAL0 =
-                    AscendC::Te::MakeZzLayout<fp8_e8m0_t>(curM, Cmct::Gemm::CeilDiv(curKL0, MXFP_DIVISOR_SIZE) * 2);
+                    AscendC::Te::MakeZzLayout<fp8_e8m0_t>(curM, CeilDiv(curKL0, MXFP_DIVISOR_SIZE) * 2);
                 auto tensorScaleAL0 =
                     AscendC::Te::MakeTensor(AscendC::Te::MakeL0AmemPtr((__ca__ fp8_e8m0_t*)(l0Offset)), layoutScaleAL0);
                 auto layoutScaleAL1 =
-                    AscendC::Te::MakeZzLayout<fp8_e8m0_t>(curM, Cmct::Gemm::CeilDiv(scaleKL1_, MXFP_DIVISOR_SIZE) * 2);
+                    AscendC::Te::MakeZzLayout<fp8_e8m0_t>(curM, CeilDiv(scaleKL1_, MXFP_DIVISOR_SIZE) * 2);
                 auto tensorScaleAL1 = AscendC::Te::MakeTensor(
                     AscendC::Te::MakeL1memPtr((__cbuf__ fp8_e8m0_t*)l1BufferScaleAOffset_[scaleL1BufId]),
                     layoutScaleAL1);
                 auto tensorBlockScaleAL1 = tensorScaleAL1(
                     AscendC::Te::MakeCoord(0, coordScaleKL1),
-                    AscendC::Te::MakeShape(curM, Cmct::Gemm::CeilDiv(kL1_, MXFP_DIVISOR_SIZE) * 2));
+                    AscendC::Te::MakeShape(curM, CeilDiv(kL1_, MXFP_DIVISOR_SIZE) * 2));
                 AscendC::Te::Copy(
                     AscendC::Te::CopyAtom<AscendC::Te::CopyTraits<Cmct::Gemm::Tile::CopyL12L0MxScaleA3510>>{},
                     tensorScaleAL0, tensorBlockScaleAL1, AscendC::Te::MakeCoord(0, iter1 * baseK_));
 
                 auto layoutScaleBL0 =
-                    AscendC::Te::MakeNnLayout<fp8_e8m0_t>(Cmct::Gemm::CeilDiv(curKL0, MXFP_DIVISOR_SIZE) * 2, curN);
+                    AscendC::Te::MakeNnLayout<fp8_e8m0_t>(CeilDiv(curKL0, MXFP_DIVISOR_SIZE) * 2, curN);
                 auto tensorScaleBL0 =
                     AscendC::Te::MakeTensor(AscendC::Te::MakeL0BmemPtr((__cb__ fp8_e8m0_t*)(l0Offset)), layoutScaleBL0);
                 auto layoutScaleBL1 =
-                    AscendC::Te::MakeNnLayout<fp8_e8m0_t>(Cmct::Gemm::CeilDiv(scaleKL1_, MXFP_DIVISOR_SIZE) * 2, curN);
+                    AscendC::Te::MakeNnLayout<fp8_e8m0_t>(CeilDiv(scaleKL1_, MXFP_DIVISOR_SIZE) * 2, curN);
                 auto tensorScaleBL1 = AscendC::Te::MakeTensor(
                     AscendC::Te::MakeL1memPtr((__cbuf__ fp8_e8m0_t*)l1BufferScaleBOffset_[scaleL1BufId]),
                     layoutScaleBL1);
                 auto tensorBlockScaleBL1 = tensorScaleBL1(
                     AscendC::Te::MakeCoord(coordScaleKL1, 0),
-                    AscendC::Te::MakeShape(Cmct::Gemm::CeilDiv(kL1_, MXFP_DIVISOR_SIZE) * 2, curN));
+                    AscendC::Te::MakeShape(CeilDiv(kL1_, MXFP_DIVISOR_SIZE) * 2, curN));
                 AscendC::Te::Copy(
                     AscendC::Te::CopyAtom<AscendC::Te::CopyTraits<Cmct::Gemm::Tile::CopyL12L0MxScaleB3510>>{},
                     tensorScaleBL0, tensorBlockScaleBL1, AscendC::Te::MakeCoord(iter1 * baseK_, 0));
@@ -770,7 +770,7 @@ public:
                 AscendC::Te::Mad(
                     AscendC::Te::MmadAtom<AscendC::Te::MmadTraits<Tile::MmadMx>>{}.with(
                         static_cast<uint16_t>(curM),
-                        static_cast<uint16_t>(Cmct::Gemm::CeilAlign(curKL0, MXFP_DIVISOR_SIZE)),
+                        static_cast<uint16_t>(CeilAlign(curKL0, MXFP_DIVISOR_SIZE)),
                         static_cast<uint16_t>(curN), mmadUnitFlag, false, mmadCmatrixInitVal),
                     tensorL0C, tensorAL0, tensorBL0);
                 AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0PingPong_ & 0x1);
@@ -797,27 +797,23 @@ public:
     }
 
 private:
-    __aicore__ inline bool NeedBias(uint64_t kIter0, uint64_t kIter1)
-    {
-        // Bias is added once at the beginning of accumulation.
-        return isBias_ && kIter0 == 0 && kIter1 == 0;
-    }
+    // __aicore__ inline bool NeedBias(uint64_t kIter0, uint64_t kIter1)
+    // {
+    //     return isBias_ && kIter0 == 0 && kIter1 == 0;
+    // }
 
-    __aicore__ inline void Mmad(
-        AscendC::MmadParams &mmadParams, uint64_t l0cOffset, uint64_t l0abOffset, uint64_t biasOffset, bool needBias)
-    {
-        // MMAD supports two sources for the initial accumulator state:
-        // - bias from BT/C2 on the first step
-        // - the existing partial sum in CO1 on all following steps
-        mmadParams.cmatrixSource = needBias;
-        if (needBias) {
-            AscendC::Mmad(
-                c1Local_[l0cOffset], l0aLocal_[l0abOffset], l0bLocal_[l0abOffset], biasBt_[biasOffset], mmadParams);
-        } else {
-            mmadParams.cmatrixSource = false;
-            AscendC::Mmad(c1Local_[l0cOffset], l0aLocal_[l0abOffset], l0bLocal_[l0abOffset], mmadParams);
-        }
-    }
+    // __aicore__ inline void Mmad(
+    //     AscendC::MmadParams &mmadParams, uint64_t l0cOffset, uint64_t l0abOffset, uint64_t biasOffset, bool needBias)
+    // {
+    //     mmadParams.cmatrixSource = needBias;
+    //     if (needBias) {
+    //         AscendC::Mmad(
+    //             c1Local_[l0cOffset], l0aLocal_[l0abOffset], l0bLocal_[l0abOffset], biasBt_[biasOffset], mmadParams);
+    //     } else {
+    //         mmadParams.cmatrixSource = false;
+    //         AscendC::Mmad(c1Local_[l0cOffset], l0aLocal_[l0abOffset], l0bLocal_[l0abOffset], mmadParams);
+    //     }
+    // }
 
 private:
     uint16_t biasBufId_ = 0;
@@ -831,15 +827,15 @@ private:
     uint64_t l1BufferScaleAOffset_[2] = {0UL}; // default 2 buffer
     uint64_t l1BufferScaleBOffset_[2] = {0UL}; // default 2 buffer
     uint64_t l1BufferBiasOffset_[2] = {0UL}; // default 2 buffer
-    AscendC::LocalTensor<MxL0AType> l0aLocal_{AscendC::TPosition::A2, 0, L0A_SIZE};
-    AscendC::LocalTensor<MxL0BType> l0bLocal_{AscendC::TPosition::B2, 0, L0B_SIZE};
-    AscendC::LocalTensor<float> c1Local_{AscendC::TPosition::CO1, 0, L0C_SIZE};
-    AscendC::LocalTensor<float> biasBt_{AscendC::TPosition::C2, 0, BT_SIZE};
-    AscendC::LocalTensor<AType> aL1Local_{AscendC::TPosition::A1, 0, L1_SIZE};
-    AscendC::LocalTensor<BType> bL1Local_{AscendC::TPosition::A1, 0, L1_SIZE};
-    AscendC::LocalTensor<BiasType> biasL1Local_{AscendC::TPosition::A1, 0, L1_SIZE / sizeof(BiasType)};
-    AscendC::LocalTensor<fp8_e8m0_t> scaleAL1Local_{AscendC::TPosition::A1, 0, L1_SIZE};
-    AscendC::LocalTensor<fp8_e8m0_t> scaleBL1Local_{AscendC::TPosition::A1, 0, L1_SIZE};
+    // AscendC::LocalTensor<MxL0AType> l0aLocal_{AscendC::TPosition::A2, 0, L0A_SIZE};
+    // AscendC::LocalTensor<MxL0BType> l0bLocal_{AscendC::TPosition::B2, 0, L0B_SIZE};
+    // AscendC::LocalTensor<float> c1Local_{AscendC::TPosition::CO1, 0, L0C_SIZE};
+    // AscendC::LocalTensor<float> biasBt_{AscendC::TPosition::C2, 0, BT_SIZE};
+    // AscendC::LocalTensor<AType> aL1Local_{AscendC::TPosition::A1, 0, L1_SIZE};
+    // AscendC::LocalTensor<BType> bL1Local_{AscendC::TPosition::A1, 0, L1_SIZE};
+    // AscendC::LocalTensor<BiasType> biasL1Local_{AscendC::TPosition::A1, 0, L1_SIZE / sizeof(BiasType)};
+    // AscendC::LocalTensor<fp8_e8m0_t> scaleAL1Local_{AscendC::TPosition::A1, 0, L1_SIZE};
+    // AscendC::LocalTensor<fp8_e8m0_t> scaleBL1Local_{AscendC::TPosition::A1, 0, L1_SIZE};
 };
 }  // namespace Block
 #endif

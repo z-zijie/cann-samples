@@ -208,17 +208,17 @@ __aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS
     // aGlobal_.SetGlobalBuffer((__gm__ AType*)params.mmadParams.aGmAddr);
     // bGlobal_.SetGlobalBuffer((__gm__ BType*)params.mmadParams.bGmAddr);
     // cGlobal_.SetGlobalBuffer((__gm__ CType*)params.mmadParams.cGmAddr);
-    if (params.qbmmParams.isBias == 1) {
-        isBias_ = true;
-        biasGlobal_.SetGlobalBuffer((__gm__ BiasType*)params.mmadParams.biasGmAddr);
-    }
+    // if (params.qbmmParams.isBias == 1) {
+    //     isBias_ = true;
+    //     biasGlobal_.SetGlobalBuffer((__gm__ BiasType*)params.mmadParams.biasGmAddr);
+    // }
     ResetGmAddr(params);
     // scaleAGlobal_.SetGlobalBuffer((__gm__ fp8_e8m0_t*)params.mmadParams.scaleAGmAddr);
     // scaleBGlobal_.SetGlobalBuffer((__gm__ fp8_e8m0_t*)params.mmadParams.scaleBGmAddr);
 }
 
 QBMM_MX_KERNEL_CLASS_TEM_PARAMS
-__aicore__ inline void QuantMmBatchMX<QBMM_MX_KERNEL_FUN_TEM_PARAMS>::ResetGmAddr(const Params& params)
+__aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS>::ResetGmAddr(const Params& params)
 {
     if ASCEND_IS_AIV {
         return;
@@ -227,8 +227,8 @@ __aicore__ inline void QuantMmBatchMX<QBMM_MX_KERNEL_FUN_TEM_PARAMS>::ResetGmAdd
     aGmAddr_ = reinterpret_cast<__gm__ AType*>(params.mmadParams.aGmAddr);
     bGmAddr_ = reinterpret_cast<__gm__ BType*>(params.mmadParams.bGmAddr);
     cGmAddr_ = reinterpret_cast<__gm__ CType*>(params.mmadParams.cGmAddr);
-    pertokenScaleGmAddr_ = reinterpret_cast<__gm__ fp8_e8m0_t*>(params.mmadParams.pertokenScaleGmAddr);
-    scaleGmAddr_ = reinterpret_cast<__gm__ fp8_e8m0_t*>(params.mmadParams.scaleGmAddr);
+    pertokenScaleGmAddr_ = reinterpret_cast<__gm__ fp8_e8m0_t*>(params.mmadParams.scaleAGmAddr);
+    scaleGmAddr_ = reinterpret_cast<__gm__ fp8_e8m0_t*>(params.mmadParams.scaleBGmAddr);
     if (isBias_) {
         biasGmAddr_ = reinterpret_cast<__gm__ BiasType*>(params.mmadParams.biasGmAddr);
     }
@@ -250,10 +250,10 @@ __aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS
     // }
     auto layoutA = MakeLayoutA::Execute(params.problemShape.m, params.problemShape.k);
     auto layoutScaleA =
-        MakeLayoutScaleA::Execute(params.problemShape.m, Cmct::Gemm::CeilDiv(params.problemShape.k, 64) * 2);
+        MakeLayoutScaleA::Execute(params.problemShape.m, CeilDiv(params.problemShape.k, 64) * 2);
     auto layoutB = MakeLayoutB::Execute(params.problemShape.k, params.problemShape.n);
     auto layoutScaleB =
-        MakeLayoutScaleB::Execute(Cmct::Gemm::CeilDiv(params.problemShape.k, 64) * 2, params.problemShape.n);
+        MakeLayoutScaleB::Execute(CeilDiv(params.problemShape.k, 64) * 2, params.problemShape.n);
     auto gmA = AscendC::Te::MakeTensor(AscendC::Te::MakeGMmemPtr(aGmAddr_), layoutA);
     auto gmScaleA = AscendC::Te::MakeTensor(AscendC::Te::MakeGMmemPtr(pertokenScaleGmAddr_), layoutScaleA);
     auto gmB = AscendC::Te::MakeTensor(AscendC::Te::MakeGMmemPtr(bGmAddr_), layoutB);
@@ -269,9 +269,7 @@ __aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS
     constexpr int64_t kPos = 0L;  // 不切K，所以坐标是0
     // // 每个核依次处理 block
     while (bs.GetTileIdx(blockIdx)) {
-        BlockShape singleShape = bs.template GetBlockShape<
-            QuantBatchMatmul::QuantMode::MX_PERGROUP_MODE, QuantBatchMatmul::QuantMode::MX_PERGROUP_MODE, FormatB>(
-            blockIdx);
+        BlockShape singleShape = bs.GetBlockShape(blockIdx);
         if (Get<MNK_M>(singleShape) <= 0 || Get<MNK_N>(singleShape) <= 0) {
             // If an invalid shape is returned, stop processing for this core.
             // (Keep behavior unchanged; only comment is added/translated.)
@@ -283,12 +281,12 @@ __aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS
             AscendC::Te::MakeCoord(mPos, kPos), AscendC::Te::MakeShape(Get<MNK_M>(singleShape), params.problemShape.k));
         auto gmBlockScaleA = gmScaleA(
             AscendC::Te::MakeCoord(mPos, kPos),
-            AscendC::Te::MakeShape(Get<MNK_M>(singleShape), Cmct::Gemm::CeilDiv(params.problemShape.k, 64) * 2));
+            AscendC::Te::MakeShape(Get<MNK_M>(singleShape), CeilDiv(params.problemShape.k, 64) * 2));
         auto gmBlockB = gmB(
             AscendC::Te::MakeCoord(kPos, nPos), AscendC::Te::MakeShape(params.problemShape.k, Get<MNK_N>(singleShape)));
         auto gmBlockScaleB = gmScaleB(
             AscendC::Te::MakeCoord(kPos, nPos),
-            AscendC::Te::MakeShape(Cmct::Gemm::CeilDiv(params.problemShape.k, 64) * 2, Get<MNK_N>(singleShape)));
+            AscendC::Te::MakeShape(CeilDiv(params.problemShape.k, 64) * 2, Get<MNK_N>(singleShape)));
         auto gmBlockBias =
             gmBias(AscendC::Te::MakeCoord(0L, nPos), AscendC::Te::MakeShape(1L, Get<MNK_N>(singleShape)));
         auto gmBlockC =
