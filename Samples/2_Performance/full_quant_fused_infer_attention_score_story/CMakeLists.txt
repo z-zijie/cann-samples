@@ -94,6 +94,10 @@ install(TARGETS full_quant_fused_infer_attention_score
 #   <install_prefix>/2_Performance/full_quant_fused_infer_attention_score_story/
 # FILES_MATCHING PATTERN "*.py": 只复制 .py 文件，忽略其他文件
 install(
-    FILES ${CMAKE_CURRENT_SOURCE_DIR}/full_quant_fused_infer_attention_score/common/golden/verify_result.py
-    DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/../../build/Samples/2_Performance/full_quant_fused_infer_attention_score_story
+    FILES 
+        ${CMAKE_CURRENT_SOURCE_DIR}/common/golden/verify_result.py 
+        ${CMAKE_CURRENT_SOURCE_DIR}/common/golden/gen_data.py
+    DESTINATION 
+        #${CMAKE_CURRENT_SOURCE_DIR}/../../build/Samples/2_Performance/full_quant_fused_infer_attention_score_story
+        DESTINATION 2_Performance/full_quant_fused_infer_attention_score_story
 )
