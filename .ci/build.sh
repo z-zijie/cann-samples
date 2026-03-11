@@ -33,3 +33,11 @@ cmake --build build --parallel
 
 # 安装到 build_out 目录
 cmake --install build --prefix ./build_out
+
+# 获取 git short hash
+GIT_HASH=$(git rev-parse --short HEAD)
+
+# 打包 build_out 为 zip
+zip -r "build_out_${GIT_HASH}.zip" build_out
+
+echo "Package created: build_out_${GIT_HASH}.zip"
