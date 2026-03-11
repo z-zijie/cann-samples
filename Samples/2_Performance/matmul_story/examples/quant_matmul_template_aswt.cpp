@@ -29,7 +29,11 @@
 #include "block/block_scheduler_mx.h"
 #include "kernel/quant_matmul_mx_kernel_aswt_impl.h"
 #include "policy/dispatch_policy.h"
-#include "utils/quant_matmul_tiling_data.h"
+#include "tiling/quant_matmul_tiling_engine.h"
+#include "utils/quant_matmul_constant.h"
+
+constexpr static uint64_t DISABLE_A_FULL_LOAD_TAG = 0UL;
+constexpr static uint64_t ENABLE_A_FULL_LOAD_TAG = 1UL;
 
 // -----------------------------------------------------------------------------
 // Device entry
@@ -44,8 +48,9 @@
 // - `BlockSchedulerQuantMatmulMx`  : maps logical tiles to hardware blocks.
 // - `BlockMmadMx`                  : manages L1/L0 movement and MMAD execution.
 // - `QuantMatmulMxKernelAswtImpl`  : connects scheduling, address mapping, and compute.
+// template <uint64_t A_FULL_LOAD_MODE = 0>
 __global__ __aicore__ void QuantMatmulMxfp4Kernel(
-    GM_ADDR dA, GM_ADDR dB, GM_ADDR dScaleA, GM_ADDR dScaleB, GM_ADDR dBias, GM_ADDR dC,
+    GM_ADDR dA, GM_ADDR dB, GM_ADDR dScaleA, GM_ADDR dScaleB, GM_ADDR dC,
     const QuantMatmulTilingData quantMatmulTilingData)
 {
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_AIC_ONLY);
@@ -58,7 +63,6 @@ __global__ __aicore__ void QuantMatmulMxfp4Kernel(
     // Accumulation and output both use fp32 here to keep the demo easy to inspect.
     using AType = fp4x2_e2m1_t;
     using BType = fp4x2_e2m1_t;
-    using BiasType = float;
     using CType = float;
 
     // Logical tensor layouts as seen by the matmul template.
@@ -73,19 +77,11 @@ __global__ __aicore__ void QuantMatmulMxfp4Kernel(
     using L1TileShape = AscendC::Shape<_0, _0, _0>;
     using L0TileShape = AscendC::Shape<_0, _0, _0>;
 
-    using BlockScheduler = QuantMatmulMxAswtScheduler;
-    // Dispatch policy controls how data is staged across blocks.
-    //
-    // - `QuantMatmulMxMultiBlockWithAswt<>`
-    //      Default path. Both A and B are staged tile-by-tile.
-    // - `QuantMatmulMxMultiBlockWithAswt<..., A_FULL_LOAD_MODE>`
-    //      A stays resident in L1 when the shape is friendly enough.
-    //
-    // This sample uses the simpler default path because it is easier to learn.
-    using DispatchPolicy = QuantMatmulMxMultiBlockWithAswt<>;
+    using BlockScheduler = QuantMatmulMxAswtScheduler<0>;
+    using DispatchPolicy = QuantMatmulMxMultiBlockWithAswt<AscendC::Shape<_0, _0, _0, _0>, 0>;
     using BlockMmad = Block::BlockMmadMx<
-        DispatchPolicy, L1TileShape, L0TileShape, AType, layoutA, BType, layoutB, CType, layoutC, BiasType, layoutC, void>;
-    using ProblemShape = MatmulShape;
+        DispatchPolicy, L1TileShape, L0TileShape, AType, layoutA, BType, layoutB, CType, layoutC>;
+    using ProblemShape = QuantMatmulShape;
     using QuantMatmulKernelImpl = Kernel::QuantMatmulMxKernelAswtImpl<ProblemShape, BlockMmad, BlockScheduler>;
 
     using Params = typename QuantMatmulKernelImpl::Params;
@@ -96,9 +92,7 @@ __global__ __aicore__ void QuantMatmulMxfp4Kernel(
     // - dbL0C            : whether L0C ping-pong is enabled
     using QBMMTiling = typename QuantMatmulKernelImpl::QBMMTiling;
     QBMMTiling qbmmParams{quantMatmulTilingData.baseM, quantMatmulTilingData.baseN, quantMatmulTilingData.baseK,
-                          static_cast<uint32_t>(quantMatmulTilingData.isBias),
-                          static_cast<uint32_t>(quantMatmulTilingData.dbL0C)};
-
+                          quantMatmulTilingData.dbL0C};
     // Runtime parameters consumed by the templated kernel implementation.
     //
     // The nesting here mirrors the kernel structure:
@@ -108,8 +102,8 @@ __global__ __aicore__ void QuantMatmulMxfp4Kernel(
     // - schParams    : how tiles are scheduled and how tail tiles are split
     // - qbmmParams   : tile geometry and optional features
     Params params = {
-        {quantMatmulTilingData.m, quantMatmulTilingData.n, quantMatmulTilingData.k, 1},
-        {dA, dB, dC, dBias, dScaleA, dScaleB},
+        {quantMatmulTilingData.m, quantMatmulTilingData.n, quantMatmulTilingData.k},
+        {dA, dB, dC, dScaleA, dScaleB},
         {quantMatmulTilingData.stepK * quantMatmulTilingData.baseK, quantMatmulTilingData.scaleKL1, quantMatmulTilingData.nBufferNum},
         {quantMatmulTilingData.baseM, quantMatmulTilingData.baseN, quantMatmulTilingData.mTailTile, quantMatmulTilingData.nTailTile,
          quantMatmulTilingData.mBaseTailSplitCnt, quantMatmulTilingData.nBaseTailSplitCnt, quantMatmulTilingData.mTailMain,
@@ -171,33 +165,6 @@ void parseArguments(int argc, char* argv[], int& m, int& k, int& n)
     }
 }
 
-// Populate a "good default" tiling setup for the sample.
-//
-// The goal is not to be universally optimal. The goal is to provide a stable,
-// readable configuration that exposes the main pieces of the pipeline:
-// block tiling, staged K iteration, scale movement, and optional tail handling.
-void SetTilingData(QuantMatmulTilingData& quantMatmulTilingData, int m, int n, int k)
-{
-    quantMatmulTilingData.m = m;
-    quantMatmulTilingData.n = n;
-    quantMatmulTilingData.k = k;
-    quantMatmulTilingData.baseM = 256;
-    quantMatmulTilingData.baseN = 256;
-    quantMatmulTilingData.baseK = 256;
-    quantMatmulTilingData.scaleKL1 = 8192;
-    quantMatmulTilingData.stepK = 2;
-    quantMatmulTilingData.nBufferNum = 2;
-    quantMatmulTilingData.isBias = 0;
-    quantMatmulTilingData.dbL0C = 1;
-
-    quantMatmulTilingData.mTailTile = 1;
-    quantMatmulTilingData.nTailTile = 1;
-    quantMatmulTilingData.mBaseTailSplitCnt = 1;
-    quantMatmulTilingData.nBaseTailSplitCnt = 1;
-    quantMatmulTilingData.mTailMain = 0;
-    quantMatmulTilingData.nTailMain = 0;
-}
-
 int main(int argc, char* argv[])
 {
     // -------------------------------------------------------------------------
@@ -237,7 +204,6 @@ int main(int argc, char* argv[])
     uint8_t* hB = nullptr;
     uint8_t* hScaleA = nullptr;
     uint8_t* hScaleB = nullptr;
-    float* hBias = nullptr;
     float* hC = nullptr;
 
     // Device buffers mirror the host buffers.
@@ -248,7 +214,6 @@ int main(int argc, char* argv[])
     GM_ADDR dB = nullptr;
     GM_ADDR dScaleA = nullptr;
     GM_ADDR dScaleB = nullptr;
-    GM_ADDR dBias = nullptr;
     GM_ADDR dC = nullptr;
 
     // -------------------------------------------------------------------------
@@ -264,21 +229,18 @@ int main(int argc, char* argv[])
     //   each scale value covers `MXFP_DIVISOR_SIZE` logical K elements and uses
     //   `MXFP_MULTI_BASE_SIZE` bytes in storage.
     //
-    // bias:
-    //   one fp32 bias per output column N.
-    //
     // C:
     //   full fp32 output matrix of shape [M, N].
-    size_t sizeA = ((m * k + 1) >> 1) * sizeof(uint8_t);
-    size_t sizeB = ((k * n + 1) >> 1) * sizeof(uint8_t);
+    size_t sizeA = ((m * k) >> 1) * sizeof(uint8_t);
+    size_t sizeB = ((k * n) >> 1) * sizeof(uint8_t);
     size_t sizeScaleA = (m * CeilDiv(k, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE) * sizeof(uint8_t);
     size_t sizeScaleB = (n * CeilDiv(k, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE) * sizeof(uint8_t);
-    size_t sizeBias = n * sizeof(float);
     size_t sizeC = m * n * sizeof(float);
 
     // Materialize the default tiling configuration for this problem shape.
     QuantMatmulTilingData quantMatmulTilingData;
-    SetTilingData(quantMatmulTilingData, m, n, k);
+    QuantMatmulTilingEngine quantMatmulTilingEngine;
+    quantMatmulTilingEngine.GetTilingData(m, n, k, quantMatmulTilingData);
 
     // -------------------------------------------------------------------------
     // 5. Allocate pinned host memory.
@@ -294,8 +256,6 @@ int main(int argc, char* argv[])
     std::unique_ptr<void, aclError (*)(void*)> HostScaleA(hScaleA, aclrtFreeHost);
     CHECK_COND(aclrtMallocHost((void**)&hScaleB, sizeScaleB) == ACL_SUCCESS, "aclrtMallocHost failed.");
     std::unique_ptr<void, aclError (*)(void*)> HostScaleB(hScaleB, aclrtFreeHost);
-    CHECK_COND(aclrtMallocHost((void**)&hBias, sizeBias) == ACL_SUCCESS, "aclrtMallocHost failed.");
-    std::unique_ptr<void, aclError (*)(void*)> HostBias(hBias, aclrtFreeHost);
     CHECK_COND(aclrtMallocHost((void**)&hC, sizeC) == ACL_SUCCESS, "aclrtMallocHost failed.");
     std::unique_ptr<void, aclError (*)(void*)> HostC(hC, aclrtFreeHost);
 
@@ -319,8 +279,6 @@ int main(int argc, char* argv[])
     std::unique_ptr<void, aclError (*)(void*)> DeviceScaleA(dScaleA, aclrtFree);
     CHECK_COND(aclrtMalloc((void**)&dScaleB, sizeScaleB, ACL_MEM_MALLOC_HUGE_FIRST) == ACL_SUCCESS, "aclrtMalloc failed.");
     std::unique_ptr<void, aclError (*)(void*)> DeviceScaleB(dScaleB, aclrtFree);
-    CHECK_COND(aclrtMalloc((void**)&dBias, sizeBias, ACL_MEM_MALLOC_HUGE_FIRST) == ACL_SUCCESS, "aclrtMalloc failed.");
-    std::unique_ptr<void, aclError (*)(void*)> DeviceBias(dBias, aclrtFree);
     CHECK_COND(aclrtMalloc((void**)&dC, sizeC, ACL_MEM_MALLOC_HUGE_FIRST) == ACL_SUCCESS, "aclrtMalloc failed.");
     std::unique_ptr<void, aclError (*)(void*)> DeviceC(dC, aclrtFree);
 
@@ -342,17 +300,6 @@ int main(int argc, char* argv[])
     CHECK_COND(
         aclrtMemcpyAsync(dScaleB, sizeScaleB, hScaleB, sizeScaleB, ACL_MEMCPY_HOST_TO_DEVICE, stream) == ACL_SUCCESS,
         "aclrtMemcpyAsync failed.");
-    CHECK_COND(
-        aclrtMemcpyAsync(dBias, sizeBias, hBias, sizeBias, ACL_MEMCPY_HOST_TO_DEVICE, stream) == ACL_SUCCESS,
-        "aclrtMemcpyAsync failed.");
-
-    // Query the platform object to learn how many AIC cores are available.
-    //
-    // This sample launches one block per AIC core and lets the scheduler assign
-    // multiple tiles to each block when the problem is larger than the machine.
-    auto ascendcPlatform = platform_ascendc::PlatformAscendCManager::GetInstance();
-    CHECK_COND(ascendcPlatform != nullptr, "Get ascendcPlatform failed.");
-    uint32_t numBlocks = ascendcPlatform->GetCoreNumAic();
 
     // -------------------------------------------------------------------------
     // 8. Launch the kernel.
@@ -360,7 +307,13 @@ int main(int argc, char* argv[])
     // The kernel itself is small because most of the interesting logic is
     // encoded in the template stack and the runtime tiling parameters.
     // -------------------------------------------------------------------------
-    QuantMatmulMxfp4Kernel<<<numBlocks, nullptr, stream>>>(dA, dB, dScaleA, dScaleB, dBias, dC, quantMatmulTilingData);
+    //if (quantMatmulTilingData.enableAFullLoad) {
+        QuantMatmulMxfp4Kernel<<<quantMatmulTilingData.usedCoreNum, nullptr, stream>>>(
+            dA, dB, dScaleA, dScaleB, dC, quantMatmulTilingData);
+    //} else {
+        // QuantMatmulMxfp4Kernel<DISABLE_A_FULL_LOAD_TAG><<<quantMatmulTilingData.usedCoreNum, nullptr, stream>>>(
+        //     dA, dB, dScaleA, dScaleB, dC, quantMatmulTilingData);
+    //}
 
     // Queue the output copy after the kernel launch on the same stream.
     CHECK_COND(
