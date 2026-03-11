@@ -18,6 +18,7 @@ import torch
 ERROR_TOL = 5e-3
 DATA_TYPE = np.float32
 
+
 def load_bf16_bin(file_path):
     # 读取原始字节
     with open(file_path, 'rb') as f:
@@ -37,8 +38,6 @@ def verify_result():
     output = load_bf16_bin("./output/npu_out.bin")
     golden = load_bf16_bin("./output/golden_out.bin")
 
-    # if output.size != golden.size:
-    #     raise ValueError("output size != golden size")
     print("output:")
     print(output)
     print("golden:")
@@ -101,7 +100,6 @@ def verify_result():
 
     print("error count:", diff_indices.size)
     print("total count:", golden.numpy().size)
-    # print("error ratio: %.6f, tolerance: %.6f" % (error_ratio, ERROR_TOL))
 
     return error_ratio <= ERROR_TOL
 
