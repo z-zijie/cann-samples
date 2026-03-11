@@ -56,14 +56,12 @@ public:
     using AType = typename BlockMmad::AType;
     using BType = typename BlockMmad::BType;
     using CType = typename BlockMmad::CType;
-    using BiasType = typename BlockMmad::BiasType;
-    using LayoutB = typename BlockMmad::LayoutB;
 
     using TupleShape = AscendC::Shape<int64_t, int64_t, int64_t>;
     using BlockShape = AscendC::Shape<int64_t, int64_t, int64_t, int64_t>;
     using BlockCoord = AscendC::Coord<int64_t, int64_t, int64_t, int64_t>;
-    // x1, x2, x1Scale, x2Scale, bias, y
-    using BlockOffset = AscendC::Shape<int64_t, int64_t, int64_t, int64_t, int64_t, int64_t>;
+    // A, B, scaleA, scaleB, y
+    using BlockOffset = AscendC::Shape<int64_t, int64_t, int64_t, int64_t, int64_t>;
     using CoordClass = Coordinate<transA, transB, CubeFormat::ND, CubeFormat::ND, CubeFormat::ND>;
     using BlockSchedulerParams = typename BlockSchedulerOp::Params;
 
@@ -77,8 +75,7 @@ public:
         uint32_t baseM;
         uint32_t baseN;
         uint32_t baseK;
-        uint32_t isBias;
-        uint32_t dbL0C;
+        uint8_t dbL0C;
     };
 
     // Aggregate kernel parameters passed from host code.
@@ -94,27 +91,21 @@ public:
     };
 
 public:
-    __aicore__ inline void Init(const Params& params);
     __aicore__ inline void operator()(const Params& params);
 
 private:
+    __aicore__ inline void Init(const Params& params);
     __aicore__ inline void Process(const Params& params, BlockSchedulerOp& bs);
-    __aicore__ inline TupleShape ToShapeTuple(const ProblemShape& problemShape)
-    {
-        return {problemShape.m, problemShape.n, problemShape.k};
-    }
 
 private:
     BlockMmad mmadOp_;
     TupleShape problemShape_{};
-    BlockOffset blockOffset_{0, 0, 0, 0, 0, 0};
+    BlockOffset blockOffset_{0, 0, 0, 0, 0};
     AscendC::GlobalTensor<AType> aGlobal_;
     AscendC::GlobalTensor<BType> bGlobal_;
     AscendC::GlobalTensor<CType> cGlobal_;
-    AscendC::GlobalTensor<BiasType> biasGlobal_;
     AscendC::GlobalTensor<fp8_e8m0_t> scaleAGlobal_;
     AscendC::GlobalTensor<fp8_e8m0_t> scaleBGlobal_;
-    bool isBias_{false};
 };
 
 QBMM_MX_KERNEL_CLASS_TEM_PARAMS
@@ -129,12 +120,9 @@ __aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS
     // then let `Process()` iterate over tiles assigned to the current hardware block.
     Init(params);
     BlockSchedulerOp bs(params.problemShape, params.schParams);
-    problemShape_ = ToShapeTuple(params.problemShape);
-
-    // `BlockMmad` expects the block tile shape in [M, N, K] form.
+    problemShape_ = TupleShape{params.problemShape.m, params.problemShape.n, params.problemShape.k};
     BlockShape l0TileShape{params.qbmmParams.baseM, params.qbmmParams.baseN, params.qbmmParams.baseK, 0};
-    bool enableL0CPingPong = (params.qbmmParams.dbL0C > 1);
-    mmadOp_.Init(problemShape_, l0TileShape, params.l1Params, isBias_, enableL0CPingPong);
+    mmadOp_.Init(problemShape_, l0TileShape, params.l1Params, params.qbmmParams.dbL0C > 1);
     Process(params, bs);
 }
 
@@ -146,10 +134,6 @@ __aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS
     aGlobal_.SetGlobalBuffer((__gm__ AType*)params.mmadParams.aGmAddr);
     bGlobal_.SetGlobalBuffer((__gm__ BType*)params.mmadParams.bGmAddr);
     cGlobal_.SetGlobalBuffer((__gm__ CType*)params.mmadParams.cGmAddr);
-    if (params.qbmmParams.isBias == 1) {
-        isBias_ = true;
-        biasGlobal_.SetGlobalBuffer((__gm__ BiasType*)params.mmadParams.biasGmAddr);
-    }
     scaleAGlobal_.SetGlobalBuffer((__gm__ fp8_e8m0_t*)params.mmadParams.scaleAGmAddr);
     scaleBGlobal_.SetGlobalBuffer((__gm__ fp8_e8m0_t*)params.mmadParams.scaleBGmAddr);
 }
@@ -163,12 +147,8 @@ __aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS
         params.problemShape.m, params.problemShape.n, params.problemShape.k, params.qbmmParams.baseM,
         params.qbmmParams.baseN, params.qbmmParams.baseK);
     BlockCoord blockIdx;
-    const int64_t mTailTile = params.schParams.mTailTile;
-    const int64_t nTailTile = params.schParams.nTailTile;
     // Tail-round load balance: split the last scheduled tiles into smaller pieces if needed.
-    if ((bs.GetEndBlockIdx() + 1) * mTailTile * nTailTile <= AscendC::GetBlockNum()) {
-        bs.UpdateTailTile(mTailTile, nTailTile);
-    }
+    bs.UpdateTailTile(params.schParams.mTailTile, params.schParams.nTailTile);
     // Each block (hardware core) processes a sequence of tiles.
     while (bs.GetTileIdx(blockIdx)) {
         // Get the current tile shape (with optional tail-split offsets).
@@ -178,12 +158,11 @@ __aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS
             // (Keep behavior unchanged; only comment is added/translated.)
             return;
         }
-        AscendC::Std::tuple<uint32_t, uint32_t, uint32_t, uint32_t> loadBalanceInfo = bs.GetLoadBalanceInfo();
         // Compute GM offsets for A/B/scales/bias/C based on tile indices and tail strategy.
-        blockOffset_ = coord.template GetQuantOffset<true>(
+        blockOffset_ = coord.GetQuantOffset(
             Get<IDX_M_TILEIDX>(blockIdx), Get<IDX_N_TILEIDX>(blockIdx),
             Get<IDX_M_TAIL_SPLIT_TILEIDX>(singleShape),
-            Get<IDX_N_TAIL_SPLIT_TILEIDX>(singleShape), loadBalanceInfo);
+            Get<IDX_N_TAIL_SPLIT_TILEIDX>(singleShape), bs.GetEdgeLoadBalanceInfo());
 
         // Execute one logical block:
         // 1. load the tile of A/B/scale/bias from the computed GM offsets
@@ -192,9 +171,8 @@ __aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS
         mmadOp_(
             aGlobal_[Get<IDX_A_OFFSET>(blockOffset_)],
             bGlobal_[Get<IDX_B_OFFSET>(blockOffset_)],
-            scaleAGlobal_[Get<IDX_X1SCALE_OFFSET>(blockOffset_)],
-            scaleBGlobal_[Get<IDX_X2SCALE_OFFSET>(blockOffset_)],
-            biasGlobal_[Get<IDX_BIAS_OFFSET>(blockOffset_)],
+            scaleAGlobal_[Get<IDX_SCALEA_OFFSET>(blockOffset_)],
+            scaleBGlobal_[Get<IDX_SCALEB_OFFSET>(blockOffset_)],
             cGlobal_[Get<IDX_C_OFFSET>(blockOffset_)], singleShape);
     }
 }
