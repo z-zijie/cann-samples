@@ -27,12 +27,6 @@ def verify_result():
     if output.size != golden.size:
         raise ValueError("output size != golden size")
 
-    # 打印 tensor
-    output_tensor = torch.from_numpy(output).reshape(8192, 8192)
-    golden_tensor = torch.from_numpy(golden).reshape(8192, 8192)
-    print("golden_data:\n", golden_tensor)
-    print("output:\n", output_tensor)
-
     return torch.allclose(golden_tensor, output_tensor, rtol=ERROR_TOL, atol=ERROR_TOL, equal_nan=True)
 
 if __name__ == "__main__":
