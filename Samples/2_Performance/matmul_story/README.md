@@ -6,7 +6,7 @@
 matmul_story/
 ├── common/              # 公共代码与 golden 脚本
 ├── matmul_stubs/        # 核函数实现与样例
-│   ├── include/         # 头文件 (scheduler, MMAD, kernel, policy, utils)
+│   ├── include/         # 头文件 (block, kernel, policy, utils)
 │   └── examples/
 │       └── quant_matmul_mxfp4/   # MXFP4 量化 MatMul 样例
 └── matmul_tutorials/    # step-by-step教程与分步示例
