@@ -57,7 +57,6 @@ typedef int8_t offsetType;
 typedef int8_t outputType;
 
 static constexpr size_t BUF_NUM = 1;
-static constexpr size_t BLOCK_NUM = 1;
 static constexpr int64_t BLOCK_BYTES = 32;
 static constexpr int MAX_ERROR_ELEM_NUM = 100;
 
