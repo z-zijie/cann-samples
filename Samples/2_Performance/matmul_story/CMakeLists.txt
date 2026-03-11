@@ -17,7 +17,7 @@ set(CMAKE_C_COMPILER ${BISHENG})
 set(CMAKE_CXX_COMPILER ${BISHENG})
 set(CMAKE_LINKER ${BISHENG})
 
-add_executable(quant_matmul_template_aswt ${CMAKE_CURRENT_SOURCE_DIR}/examples/quant_matmul_template_aswt.cpp)
+add_executable(quant_matmul_template_aswt ${CMAKE_CURRENT_SOURCE_DIR}/examples/quant_matmul_template_aswt.cpp ${CMAKE_CURRENT_SOURCE_DIR}/include/tiling/quant_matmul_tiling_engine.cpp)
 
 target_include_directories(quant_matmul_template_aswt PRIVATE
     ${ASCEND_INCLUDE_DIRS}
