@@ -25,14 +25,14 @@
 
 template<uint8_t inOutLayoutType, bool hasAttenMask>
     __global__ __aicore__ void FiaKernelFullQuant(
-        GM_ADDR query, GM_ADDR key, GM_ADDR value, GM_ADDR attenMask, GM_ADDR keyAntiquantScale,
+        GM_ADDR query, GM_ADDR key, GM_ADDR value, GM_ADDR keyAntiquantScale,
         GM_ADDR valueAntiquantScale, GM_ADDR dequantScaleQuery, GM_ADDR attentionOut,
         GM_ADDR workspace, GM_ADDR tiling)
 {
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
     FlashAttentionEntry<inOutLayoutType, hasAttenMask>(
         query, key, value,
-        attenMask, keyAntiquantScale, valueAntiquantScale, dequantScaleQuery,  attentionOut,
+        keyAntiquantScale, valueAntiquantScale, dequantScaleQuery,  attentionOut,
         workspace, tiling);
     return;
 }
@@ -239,7 +239,7 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     uint32_t batchSize = 1;
     uint32_t numHeadsQ = 1;
-    uint32_t numHEadsKV = 1;
+    uint32_t numHeadsKV = 1;
     uint64_t seqLengthsQ = 8192;
     uint64_t seqLengthsKV = 8192;
     uint32_t headDim = 128;
@@ -252,7 +252,7 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     int32_t deviceId = 0;
     aclrtStream stream = nullptr;
-    uintew_t deviceCount;
+    uint32_t deviceCount;
     CHECK_COND(aclrtGetDeviceCount(&deviceCount) == ACL_SUCCESS, "Failed to get ACLRT devices.");
     CHECK_COND(deviceCount > 0U, "No ACLRT devices found.");
     CHECK_COND(aclInit(nullptr) == ACL_SUCCESS, "aclInit failed.");
@@ -312,6 +312,7 @@ int main(int argc, char* argv[])
     size_t keyAntiquantScaleSize = (batchSize * numHeadsKV * (seqLengthsKV / 128) * 1) * sizeof(float);
     size_t valueAntiquantScaleSize = (batchSize * numHeadsKV * (seqLengthsKV / 128) * 1) * sizeof(float);
     size_t outputSize = (batchSize * numHeadsQ * seqLengthsQ * headDim) * sizeof(uint16_t);
+    size_t workspaceSize = 200 * 2048 * 1024 * sizeof(uint_t);
     size_t tilingDataSize = sizeof(optiling::FlashAttentionScoreSimplifiedTilingData);
 
     // -------------------------------------------------------------------------
@@ -420,13 +421,15 @@ int main(int argc, char* argv[])
     // The kernel itself is small because most of the interesting logic is
     // encoded in the template stack and the runtime tiling parameters.
     // -------------------------------------------------------------------------
-    FiaKernelFullQuant<<<blockDimToBeSet, nullptr, stream>>>(
+    constexpr uint8_t inOutLayoutType = 0;
+    constexpr bool hasAttenMask = false;
+    FiaKernelFullQuant<inOutLayoutType, hasAttenMask><<<blockDimToBeSet, nullptr, stream>>>(
         queryDevice, keyDevice, valueDevice,
-        keyAntiquantScaleDevice,valueAntiquantScaleDevice, dequantScaleQueryDevice,
+        keyAntiquantScaleDevice, valueAntiquantScaleDevice, dequantScaleQueryDevice,
         outputDevice,
         workspace,
         tilingDataDevice
-    )
+    );
     
     // Queue the output copy after the kernel launch on the same stream.
     CHECK_COND(
