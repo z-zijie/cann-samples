@@ -17,7 +17,6 @@ BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULA
 #ifndef PROMPT_FLASH_ATTENTION_ENTRY_310_H_
 #define PROMPT_FLASH_ATTENTION_ENTRY_310_H_
 #include "flash_attention_score_tiling_regbase.h"
-namespace optiling {};
 #include "flash_attention_score_kernel_infer.h"
 #include "fia_enum.h"
 
@@ -42,22 +41,6 @@ inline __aicore__ void FlashAttentionEntry(__gm__ uint8_t *query, __gm__ uint8_t
     FlashAttentionScoreSimplifiedTilingData  tilingDataTemp;
     CopyTiling(&tilingDataTemp, tiling);
 
-    tilingDataTemp.inputParamsRegbase.scaleValue = 0.088388;
-    tilingDataTemp.inputParamsRegbase.deqScaleFlag = 1;
-    tilingDataTemp.inputParamsRegbase.deqScale2Flag = 1;
-    tilingDataTemp.inputParamsRegbase.kvSplitPart = 32574;
-    tilingDataTemp.inputParamsRegbase.accumOutSize = 2921063272;
-    tilingDataTemp.inputParamsRegbase.logSumExpSize = 32574;
-    tilingDataTemp.multiCoreParamsRegbase.firstFullLoadS1OuterIdx = 0;
-    tilingDataTemp.multiCoreParamsRegbase.splitCoreMode = 0;
-    tilingDataTemp.multiCoreParamsRegbase.reserve[0] = 0;
-    tilingDataTemp.multiCoreParamsRegbase.reserve[1] = 0;
-    tilingDataTemp.multiCoreParamsRegbase.reserve[2] = 0;
-    tilingDataTemp.dropmaskParamsRegbase.multiCoreFactorSize = 0;
-    tilingDataTemp.dropmaskParamsRegbase.multiCoreTotalSize = 139907189245643;
-    tilingDataTemp.dropmaskParamsRegbase.shapeTotalSize = 0;
-    tilingDataTemp.dropmaskParamsRegbase.dropMaskAddrOffset = -1;
-
     FlashAttentionScoreSimplifiedTilingData* __restrict tilingData = &tilingDataTemp;
     
     PARSE_PARAMS_NoQuant(inOutLayoutType, config, hasAttenMask);
@@ -69,7 +52,7 @@ inline __aicore__ void FlashAttentionEntry(__gm__ uint8_t *query, __gm__ uint8_t
     constexpr uint64_t vec1ResultSize =
         static_cast<uint64_t>(s1TemplateType) * static_cast<uint64_t>(s2TemplateType) * 2;
     TPipe tPipe;
-    // using TemplateType = 
+
     if ASCEND_IS_AIC {  // CUBE 实现
         using CubeBlockType = typename std::conditional<g_coreType == AscendC::AIC,
             BaseApi::FABlockCube<fp8_e4m3fn_t,
@@ -143,9 +126,6 @@ inline __aicore__ void FlashAttentionEntry(__gm__ uint8_t *query, __gm__ uint8_t
                 false>>::type;
 
         BaseApi::FlashAttentionScoreKernelInfer<CubeBlockType, VecBlockType> op;
-        
-        // op.InitBaseAPI(query, key, value, attenMask, attentionOut, user, nullptr, &tPipe);
-        // op.Process();
 
         op.InitBaseAPI(query, key, value, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
             nullptr, nullptr, nullptr, nullptr, dequantScaleQuery, key_antiquant_scale, value_antiquant_scale, nullptr, nullptr,
@@ -224,8 +204,6 @@ inline __aicore__ void FlashAttentionEntry(__gm__ uint8_t *query, __gm__ uint8_t
                 false,
                 false>>::type;
         BaseApi::FlashAttentionScoreKernelInfer<CubeBlockType, VecBlockType> op;
-        // op.InitBaseAPI(query, key, value, attenMask, attentionOut, user, tilingData, &tPipe);
-        // op.Process();
         op.InitBaseAPI(query, key, value, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
             nullptr, nullptr, nullptr, nullptr, dequantScaleQuery, key_antiquant_scale, value_antiquant_scale, nullptr, nullptr,
             nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, attentionOut, user, tilingData, &tPipe);
