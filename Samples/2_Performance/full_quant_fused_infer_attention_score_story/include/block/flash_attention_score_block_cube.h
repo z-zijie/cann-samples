@@ -293,22 +293,6 @@ __aicore__ inline void FABlockCube<TEMPLATE_ARGS>::InitCubeInput(
 {
     if ASCEND_IS_AIC {
         if constexpr (isInfer) {
-            // if (sharedParams->fromFused) {
-            //     ListTensorDesc keyListTensorDescInit((__gm__ void *)key);
-            //     ListTensorDesc valueListTensorDescInit((__gm__ void *)value);
-            //     currentKey = (__gm__ uint8_t *)keyListTensorDescInit.GetDataPtr<__gm__ uint8_t>(0);
-            //     currentValue = (__gm__ uint8_t *)valueListTensorDescInit.GetDataPtr<__gm__ uint8_t>(0);
-            //     if (sharedParams->isKvContinuous == 1) {
-            //         this->keyGm.gmTensor.SetGlobalBuffer((__gm__ INPUT_T *)currentKey);
-            //         this->valueGm.gmTensor.SetGlobalBuffer((__gm__ INPUT_T *)currentValue);
-            //     } else {
-            //         this->keyGm.gmTensor.SetGlobalBuffer((__gm__ INPUT_T *)key);
-            //         this->valueGm.gmTensor.SetGlobalBuffer((__gm__ INPUT_T *)value);
-            //     }
-            // } else {
-            //     this->keyGm.gmTensor.SetGlobalBuffer((__gm__ INPUT_T *)key);
-            //     this->valueGm.gmTensor.SetGlobalBuffer((__gm__ INPUT_T *)value);
-            // }
             this->keyGm.gmTensor.SetGlobalBuffer((__gm__ INPUT_T *)key);
             this->valueGm.gmTensor.SetGlobalBuffer((__gm__ INPUT_T *)value);
             if constexpr (enableKVPrefix) {
