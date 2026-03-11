@@ -39,13 +39,6 @@ constexpr int MNK_B = 3;
 constexpr int MNK_M0 = 4;
 constexpr int MNK_N0 = 5;
 
-struct MatmulShape {
-    int64_t m;
-    int64_t n;
-    int64_t k;
-    int64_t b;
-};
-
 template <typename T>
 __aicore__ inline T Max(T a, T b)
 {
@@ -82,6 +75,7 @@ __host_aicore__ inline int64_t CeilAlign(int64_t a, int64_t b)
     } 
     return (a + b - 1) / b * b; 
 }
+
 __aicore__ inline uint64_t Align(uint64_t a, uint64_t b)
 {
     if (b == 0) {
