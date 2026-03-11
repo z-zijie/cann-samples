@@ -44,5 +44,4 @@ static T FloorAlign(T num1, T num2)
 {
     return num1 / num2 * num2;
 }
-
 #endif // COMMON_UTILS_H
