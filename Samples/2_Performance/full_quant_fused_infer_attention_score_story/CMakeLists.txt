@@ -51,7 +51,7 @@ target_link_directories(full_quant_fused_infer_attention_score PRIVATE ${ASCEND_
 
 target_compile_options(full_quant_fused_infer_attention_score PRIVATE
     "-xasc"
-    "--npu-arch=dav-3101"
+    "--npu-arch=dav-3510"
     "-w"
     "-O3"
 )
