@@ -129,41 +129,22 @@ __aicore__ inline void GmCopyInToL1HasRopePA(LocalTensor<L1Type>& nopeTensor, Lo
         }
         uint64_t offset = idInBlockTable * shape.blockSize * shape.headNum * shape.headDim; // PA的偏移
         uint64_t keyRopeOffset = idInBlockTable * ropeShape.blockSize * ropeShape.headNum * ropeShape.headDim;
-        if (kvLayout == KVLAYOUT::NZ) {
-            offset += (uint64_t)(startPos.n2Idx * shape.blockSize * shape.headDim) + remainRowCnt * blockElementCnt + startPos.dIdx * shape.blockSize;
-            keyRopeOffset += (uint64_t)(startPos.n2Idx * ropeShape.blockSize * ropeShape.headDim) + remainRowCnt * blockElementCnt + startPos.dIdx * ropeShape.blockSize;
-            LocalTensor<L1Type> tmpNopeDstTensor = nopeTensor[copyFinishRowCnt * blockElementCnt];
-            GlobalTensor<L1Type> tmpNopeSrcTensor = nopeGmTensor[offset];
-            DataCopyGmNZToL1(tmpNopeDstTensor, tmpNopeSrcTensor, copyRowCnt, (shape.copyRowNumAlign - copyRowCnt), (shape.blockSize - copyRowCnt), shape.actHeadDim);
+        uint64_t dStride = shape.headDim;
+        uint64_t dRopeStride = ropeShape.headDim;
+        offset += (uint64_t)(startPos.n2Idx * shape.headDim * shape.blockSize) + remainRowCnt * shape.headDim + startPos.dIdx;
+        keyRopeOffset += (uint64_t)(startPos.n2Idx * ropeShape.headDim * ropeShape.blockSize) + remainRowCnt * ropeShape.headDim;
 
-            LocalTensor<L1Type> tmpRopeDstTensor = ropeTensor[copyFinishRowCnt * blockElementCnt];
-            GlobalTensor<L1Type> tmpRopeSrcTensor = ropeGmTensor[keyRopeOffset];
-            DataCopyGmNZToL1(tmpRopeDstTensor, tmpRopeSrcTensor, copyRowCnt, (ropeShape.copyRowNumAlign - copyRowCnt), (ropeShape.blockSize - copyRowCnt), ropeShape.actHeadDim);
-        } else {
-            uint64_t dStride = shape.headDim;
-            uint64_t dRopeStride = ropeShape.headDim;
-            if (kvLayout == KVLAYOUT::BBH) {
-                offset += (uint64_t)(startPos.n2Idx * shape.headDim) + remainRowCnt * shape.headDim * shape.headNum + startPos.dIdx;
-                keyRopeOffset += (uint64_t)(startPos.n2Idx * ropeShape.headDim) + remainRowCnt * ropeShape.headDim * ropeShape.headNum;
-                dStride = shape.headDim * shape.headNum;
-                dRopeStride = ropeShape.headDim * ropeShape.headNum;
-            } else{
-                offset += (uint64_t)(startPos.n2Idx * shape.headDim * shape.blockSize) + remainRowCnt * shape.headDim + startPos.dIdx;
-                keyRopeOffset += (uint64_t)(startPos.n2Idx * ropeShape.headDim * ropeShape.blockSize) + remainRowCnt * ropeShape.headDim;
-            }
+        uint32_t dValue = shape.actHeadDim;
+        uint32_t srcDValue = dStride;
+        uint32_t dRopeValue = ropeShape.actHeadDim;
+        uint32_t srcRopeDValue = dRopeStride;
+        LocalTensor<L1Type> tmpNopeDstTensor = nopeTensor[copyFinishRowCnt * blockElementCnt];
+        GlobalTensor<L1Type> tmpNopeSrcTensor = nopeGmTensor[offset];
+        DataCopyGmNDToL1(tmpNopeDstTensor, tmpNopeSrcTensor, copyRowCnt, shape.copyRowNumAlign, dValue, srcDValue);
 
-            uint32_t dValue = shape.actHeadDim;
-            uint32_t srcDValue = dStride;
-            uint32_t dRopeValue = ropeShape.actHeadDim;
-            uint32_t srcRopeDValue = dRopeStride;
-            LocalTensor<L1Type> tmpNopeDstTensor = nopeTensor[copyFinishRowCnt * blockElementCnt];
-            GlobalTensor<L1Type> tmpNopeSrcTensor = nopeGmTensor[offset];
-            DataCopyGmNDToL1(tmpNopeDstTensor, tmpNopeSrcTensor, copyRowCnt, shape.copyRowNumAlign, dValue, srcDValue);
-
-            LocalTensor<L1Type> tmpRopeDstTensor = ropeTensor[copyFinishRowCnt * blockElementCnt];
-            GlobalTensor<L1Type> tmpRopeSrcTensor = ropeGmTensor[keyRopeOffset];
-            DataCopyGmNDToL1(tmpRopeDstTensor, tmpRopeSrcTensor, copyRowCnt, shape.copyRowNumAlign, dRopeValue, srcRopeDValue);
-        }
+        LocalTensor<L1Type> tmpRopeDstTensor = ropeTensor[copyFinishRowCnt * blockElementCnt];
+        GlobalTensor<L1Type> tmpRopeSrcTensor = ropeGmTensor[keyRopeOffset];
+        DataCopyGmNDToL1(tmpRopeDstTensor, tmpRopeSrcTensor, copyRowCnt, shape.copyRowNumAlign, dRopeValue, srcRopeDValue);
         copyFinishRowCnt += copyRowCnt;
         curS2Idx += copyRowCnt;
     }

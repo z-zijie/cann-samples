@@ -23,14 +23,13 @@
 #include "flash_attention_score_tiling_regbase.h"
 #include "fia_entry.h"
 
-template<uint8_t inOutLayoutType, bool hasAttenMask>
-    __global__ __aicore__ void FiaKernelFullQuant(
+__global__ __aicore__ void FiaKernelFullQuant(
         GM_ADDR query, GM_ADDR key, GM_ADDR value, GM_ADDR keyAntiquantScale,
         GM_ADDR valueAntiquantScale, GM_ADDR dequantScaleQuery, GM_ADDR attentionOut,
         GM_ADDR workspace, GM_ADDR tiling)
 {
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2);
-    FlashAttentionEntry<inOutLayoutType, hasAttenMask>(
+    FlashAttentionEntry(
         query, key, value,
         keyAntiquantScale, valueAntiquantScale, dequantScaleQuery,  attentionOut,
         workspace, tiling);
@@ -229,7 +228,7 @@ int main(int argc, char* argv[])
     // -------------------------------------------------------------------------
     constexpr uint8_t inOutLayoutType = 0;
     constexpr bool hasAttenMask = false;
-    FiaKernelFullQuant<inOutLayoutType, hasAttenMask><<<blockDimToBeSet, nullptr, stream>>>(
+    FiaKernelFullQuant<<<blockDimToBeSet, nullptr, stream>>>(
         queryDevice, keyDevice, valueDevice,
         keyAntiquantScaleDevice, valueAntiquantScaleDevice, dequantScaleQueryDevice,
         outputDevice,

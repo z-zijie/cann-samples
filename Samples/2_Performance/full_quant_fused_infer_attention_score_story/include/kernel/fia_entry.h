@@ -21,6 +21,9 @@ BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULA
 #include "fia_enum.h"
 
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
+static constexpr uint8_t inOutLayoutType = 0;
+static constexpr bool hasAttenMask = 0;
+static constexpr uint16_t config = 17;
 
 __aicore__ inline void CopyTiling(FlashAttentionScoreSimplifiedTilingData *tilingData, __gm__ uint8_t *tilingGM)
 {
@@ -32,7 +35,6 @@ __aicore__ inline void CopyTiling(FlashAttentionScoreSimplifiedTilingData *tilin
     return;
 }
 
-template <uint8_t inOutLayoutType=0, bool hasAttenMask=0, uint16_t config=17>
 inline __aicore__ void FlashAttentionEntry(__gm__ uint8_t *query, __gm__ uint8_t *key,
     __gm__ uint8_t *value, __gm__ uint8_t *key_antiquant_scale, __gm__ uint8_t *value_antiquant_scale, __gm__ uint8_t *dequantScaleQuery, __gm__ uint8_t *attentionOut, __gm__ uint8_t *workspace,
     __gm__ uint8_t *tiling)
