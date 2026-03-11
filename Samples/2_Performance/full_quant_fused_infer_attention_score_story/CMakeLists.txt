@@ -71,8 +71,8 @@ target_link_libraries(full_quant_fused_infer_attention_score
 #
 #   build_out/
 #   └── 2_Performance/
-#       └── matmul_story/
-#           ├── quant_matmul_template_aswt    <- 可执行文件
+#       └── full_quant_fused_infer_attention_score_story/
+#           ├── full_quant_fused_infer_attention_score    <- 可执行文件
 #           ├── gen_data.py                   <- 生成测试数据的脚本
 #           └── verify_result.py              <- 验证计算结果的脚本
 #
@@ -84,14 +84,14 @@ target_link_libraries(full_quant_fused_infer_attention_score
 
 # Install 规则 1: 安装可执行文件
 # 将编译生成的 quant_matmul_template_aswt 可执行文件安装到:
-#   <install_prefix>/2_Performance/matmul_story/quant_matmul_template_aswt
+#   <install_prefix>/2_Performance/full_quant_fused_infer_attention_score_story/full_quant_fused_infer_attention_score
 install(TARGETS full_quant_fused_infer_attention_score
     RUNTIME DESTINATION 2_Performance/full_quant_fused_infer_attention_score_story
 )
 
 # Install 规则 2: 安装 golden 验证脚本
-# 将 common/golden/quant_matmul_mxfp4/ 目录下的所有 .py 文件安装到:
-#   <install_prefix>/2_Performance/matmul_story/
+# 将 common/golden/ 目录下的所有 .py 文件安装到:
+#   <install_prefix>/2_Performance/full_quant_fused_infer_attention_score_story/
 # FILES_MATCHING PATTERN "*.py": 只复制 .py 文件，忽略其他文件
 install(
     FILES ${CMAKE_CURRENT_SOURCE_DIR}/full_quant_fused_infer_attention_score/common/golden/verify_result.py
