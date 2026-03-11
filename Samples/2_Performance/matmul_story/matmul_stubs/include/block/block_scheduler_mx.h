@@ -21,6 +21,7 @@
 #include "kernel_utils/common_utils.h"
 
 namespace Block {
+constexpr uint64_t ENABLE_A_FULL_LOAD = 1UL;
 
 // Block scheduler for quant matmul MX.
 //
@@ -28,7 +29,9 @@ namespace Block {
 // - Use a fixed window on the M axis (`WINDOW_LEN`) to balance workloads when M tiles are small.
 // - Traverse N in a serpentine ("Z") pattern to improve cache locality.
 // - Optionally split the last round into smaller pieces (`mTailTile_` x `nTailTile_`) to reduce tail imbalance.
-template <class ProblemShape_, class L1TileShape_, class L0TileShape_, bool TransA_, bool TransB_>
+template <
+    class ProblemShape_, class L1TileShape_, class L0TileShape_, bool TransA_, bool TransB_,
+    uint64_t ENABLE_A_FULL_LOAD_ = 0>
 class BlockSchedulerQuantMatmulMx {
 public:
     int64_t m_{0};
@@ -78,7 +81,7 @@ public:
     const int64_t WINDOW_LEN = 4;
 
 public:
-    __aicore__ inline BlockSchedulerQuantMatmulMx(const ProblemShape &shape, const Params &params)
+    __aicore__ inline BlockSchedulerQuantMatmulMx(const ProblemShape& shape, const Params& params)
     {
         m_ = shape.m;
         n_ = shape.n;
@@ -123,6 +126,9 @@ public:
 
     __aicore__ inline void UpdateTailTile(uint32_t mTailTile, uint32_t nTailTile)
     {
+        if ((endBlockIdx_ + 1) * mTailTile * nTailTile > AscendC::GetBlockNum()) {
+            return;
+        }
         mTailTile_ = mTailTile;
         nTailTile_ = nTailTile;
         totalTailTile_ = mTailTile * nTailTile;
@@ -141,16 +147,6 @@ public:
             totalTailTile_ = 1;
         }
         endBlockIdx_ = newEndBlockIdx;
-    }
-
-    __aicore__ inline int64_t GetTotalCnt()
-    {
-        return totalCnt_;
-    }
-
-    __aicore__ inline int64_t GetEndBlockIdx()
-    {
-        return endBlockIdx_;
     }
 
     __aicore__ inline BlockShape GetBlockShape(BlockCoord blockCoord)
@@ -179,7 +175,12 @@ public:
         int64_t singleCoreMSplit = CeilDiv(singleCoreM, mTailTile_);
         int64_t singleCoreNSplit = CeilDiv(singleCoreN, nTailTile_);
         int64_t mSplitIdx = (blockIdx_ % totalTailTile_) % mTailTile_;
-        int64_t nSplitIdx = (blockIdx_ % totalTailTile_) / mTailTile_;
+        int64_t nSplitIdx = 0;
+        if constexpr (ENABLE_A_FULL_LOAD_) {
+            nSplitIdx = blockIdx_ / mCnt_ % nTailTile_;
+        } else {
+            nSplitIdx = (blockIdx_ % totalTailTile_) / mTailTile_;
+        }
         mSplitAddrOffset_ = mSplitIdx * singleCoreMSplit;
         nSplitAddrOffset_ = nSplitIdx * singleCoreNSplit;
         if (mSplitAddrOffset_ >= singleCoreM || nSplitAddrOffset_ >= singleCoreN) {
@@ -190,10 +191,9 @@ public:
         return {singleCoreM, singleCoreN, mSplitAddrOffset_, nSplitAddrOffset_};
     }
 
-    __aicore__ inline AscendC::Std::tuple<uint32_t, uint32_t, uint32_t, uint32_t> GetLoadBalanceInfo()
+    __aicore__ inline AscendC::Std::tuple<int64_t, int64_t, int64_t, int64_t> GetEdgeLoadBalanceInfo()
     {
-        return {static_cast<uint32_t>(mBaseNormCnt_), static_cast<uint32_t>(mBaseTailMain_),
-                static_cast<uint32_t>(nBaseNormCnt_), static_cast<uint32_t>(nBaseTailMain_)};
+        return {mBaseNormCnt_, mBaseTailMain_, nBaseNormCnt_, nBaseTailMain_};
     }
 
     __aicore__ inline bool GetTileIdx(BlockCoord &blockCoord)
@@ -206,6 +206,13 @@ public:
         // Fold it back to the original tile index before reconstructing logical coordinates.
         int64_t newBlockIdx = (roundIdx_ == round_ - 1) ? blockIdx_ / totalTailTile_ : blockIdx_;
         int64_t tileIdx = newBlockIdx + roundIdx_ * blockNum_;
+        if constexpr (ENABLE_A_FULL_LOAD_) {
+            Get<MNK_M>(blockCoord) = blockIdx_ % mCnt_;
+            int64_t curNTailTile = (roundIdx_ == round_ - 1) ? nTailTile_ : 1;
+            Get<MNK_N>(blockCoord) = roundIdx_ * blockNum_ / mCnt_ % nCnt_ + blockIdx_ / mCnt_ / curNTailTile;
+            roundIdx_++;
+            return true;
+        }
         if (blockIdx_ < startBlockIdx_) {
             tileIdx += blockNum_ - startBlockIdx_;
         } else if (endBlockIdx_ + 1 >= totalTailTile_ * totalCnt_) {
@@ -237,9 +244,15 @@ public:
 };
 
 template <class ProblemShape_, class L1TileShape_, class L0TileShape_, bool TransA_, bool TransB_>
-struct BlockSchedulerSelector<ProblemShape_, L1TileShape_, L0TileShape_, QuantMatmulMxAswtScheduler,
-                              TransA_, TransB_> {
+struct BlockSchedulerSelector<ProblemShape_, L1TileShape_, L0TileShape_, 
+                              QuantMatmulMxAswtScheduler<>, TransA_, TransB_> {
     using SchedulerOp = BlockSchedulerQuantMatmulMx<ProblemShape_, L1TileShape_, L0TileShape_, TransA_, TransB_>;
+};
+
+template <class ProblemShape_, class L1TileShape_, class L0TileShape_, bool TransA_, bool TransB_>
+struct BlockSchedulerSelector<ProblemShape_, L1TileShape_, L0TileShape_, 
+                              QuantMatmulMxAswtScheduler<ENABLE_A_FULL_LOAD>, TransA_, TransB_> {
+    using SchedulerOp = BlockSchedulerQuantMatmulMx<ProblemShape_, L1TileShape_, L0TileShape_, TransA_, TransB_, ENABLE_A_FULL_LOAD>;
 };
 }  // namespace Block
 #endif
