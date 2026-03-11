@@ -17,23 +17,46 @@ set(CMAKE_C_COMPILER ${BISHENG})
 set(CMAKE_CXX_COMPILER ${BISHENG})
 set(CMAKE_LINKER ${BISHENG})
 
-add_executable(quant_matmul_template_aswt ${CMAKE_CURRENT_SOURCE_DIR}/examples/quant_matmul_template_aswt.cpp)
+add_executable(full_quant_fused_infer_attention_score
+${CMAKE_CURRENT_SOURCE_DIR}/examples/full_quant_fused_infer_attention_score_template.cpp)
 
-target_include_directories(quant_matmul_template_aswt PRIVATE
+set(COMMON_INCLUDE_DIRS
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/examples
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/block
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/kernel
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/memcopy
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/utils
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/vf
+    ${ASCEND_HOME}/include
+    ${ASCEND_HOME}/${CMAKE_SYSTEM_PROCESSOR}-linux/ascendc/include/basic_api/impl
+    ${ASCEND_HOME}/${CMAKE_SYSTEM_PROCESSOR}-linux/ascendc/include/basic_api
+    ${ASCEND_HOME}/include/ascendc
+    ${ASCEND_HOME}/include/ascendc/basic_api/interface
+    ${ASCEND_HOME}/include/ascendc/basic_api
+    ${ASCEND_HOME}/pkg_inc/op_common
+    ${ASCEND_HOME}/pkg_inc/base
+    ${ASCEND_HOME}/pkg_inc
+)
+
+target_include_directories(full_quant_fused_infer_attention_score PRIVATE
     ${ASCEND_INCLUDE_DIRS}
     ${CMAKE_CURRENT_SOURCE_DIR}/common
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${COMMON_INCLUDE_DIRS}
 )
-target_link_directories(quant_matmul_template_aswt PRIVATE ${ASCEND_DIR}/lib64)
 
-target_compile_options(quant_matmul_template_aswt PRIVATE
+target_link_directories(full_quant_fused_infer_attention_score PRIVATE ${ASCEND_DIR}/lib64)
+
+target_compile_options(full_quant_fused_infer_attention_score PRIVATE
     "-xasc"
-    "--npu-arch=dav-3510"
+    "--npu-arch=dav-3101"
     "-w"
     "-O3"
 )
 
-target_link_libraries(quant_matmul_template_aswt
+target_link_libraries(full_quant_fused_infer_attention_score
     PRIVATE
     m
     dl
@@ -62,17 +85,15 @@ target_link_libraries(quant_matmul_template_aswt
 # Install 规则 1: 安装可执行文件
 # 将编译生成的 quant_matmul_template_aswt 可执行文件安装到:
 #   <install_prefix>/2_Performance/matmul_story/quant_matmul_template_aswt
-install(TARGETS quant_matmul_template_aswt
-    RUNTIME DESTINATION 2_Performance/matmul_story
+install(TARGETS full_quant_fused_infer_attention_score
+    RUNTIME DESTINATION 2_Performance/full_quant_fused_infer_attention_score_story
 )
 
 # Install 规则 2: 安装 golden 验证脚本
 # 将 common/golden/quant_matmul_mxfp4/ 目录下的所有 .py 文件安装到:
 #   <install_prefix>/2_Performance/matmul_story/
 # FILES_MATCHING PATTERN "*.py": 只复制 .py 文件，忽略其他文件
-install(DIRECTORY
-    ${CMAKE_CURRENT_SOURCE_DIR}/common/golden/quant_matmul_mxfp4/
-    DESTINATION 2_Performance/matmul_story
-    FILES_MATCHING
-    PATTERN "*.py"
+install(
+    FILES ${CMAKE_CURRENT_SOURCE_DIR}/full_quant_fused_infer_attention_score/common/golden/verify_result.py
+    DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/../../build/Samples/2_Performance/full_quant_fused_infer_attention_score_story
 )

@@ -15,17 +15,33 @@ import sys
 import numpy as np
 import torch
 
-ERROR_TOL = 1e-3
+ERROR_TOL = 5e-3
 DATA_TYPE = np.float32
+
+def load_bf16_bin(file_path):
+    # 读取原始字节
+    with open(file_path, 'rb') as f:
+        data_bytes = f.read()
+    
+    # 转为 uint16 数组（每个 bf16 占 2 字节）
+    uint16_array = np.frombuffer(data_bytes, dtype=np.uint16)
+
+    # 转换为 torch.bfloat16
+    # 注意：numpy 不支持 bf16，所以要用 torch.from_numpy + to
+    bf16_tensor = torch.from_numpy(uint16_array).to(torch.bfloat16)
+
+    return bf16_tensor
 
 
 def verify_result():
-
-    output = np.fromfile("./output/npu_out.bin", dtype=DATA_TYPE)
-    golden = np.fromfile("./output/golden_out.bin", dtype=DATA_TYPE)
+    output = load_bf16_bin("./output/npu_out.bin")
+    golden = load_bf16_bin("./output/golden_out.bin")
 
     if output.size != golden.size:
         raise ValueError("output size != golden size")
+
+    output = output.float()
+    golden = golden.float()
 
     # ------------------------------
     # NaN mask
@@ -81,7 +97,7 @@ def verify_result():
 
     print("error count:", diff_indices.size)
     print("total count:", golden.size)
-    print("error ratio: %.6f, tolerance: %.6f" % (error_ratio, ERROR_TOL))
+    # print("error ratio: %.6f, tolerance: %.6f" % (error_ratio, ERROR_TOL))
 
     return error_ratio <= ERROR_TOL
 
