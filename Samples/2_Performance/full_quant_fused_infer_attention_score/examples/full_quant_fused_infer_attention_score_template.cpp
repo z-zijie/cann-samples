@@ -20,8 +20,8 @@
 #define FIA_ENABLE_MLA
 #include "common_utils.h"
 #include "io_utils.h"
-#include "op_kernel/arch35/flash_attention_score_tiling_regbase.h"
-#include "op_kernel/fia_entry.h"
+#include "flash_attention_score_tiling_regbase.h"
+#include "fia_entry.h"
 
 template<uint8_t inOutLayoutType, bool hasAttenMask>
     __global__ __aicore__ void FiaKernelFullQuant(
