@@ -16,5 +16,8 @@
 #ifndef BLOCK_SCHEDULER_POLICY_H
 #define BLOCK_SCHEDULER_POLICY_H
 
-struct QuantMatmulMxAswtScheduler {};
+template <uint64_t ENABLE_A_FULL_LOAD_ = 0>
+struct QuantMatmulMxAswtScheduler {
+    constexpr static uint64_t enableAFullLoad = ENABLE_A_FULL_LOAD_;
+};
 #endif
