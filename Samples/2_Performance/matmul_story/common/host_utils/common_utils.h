@@ -34,7 +34,7 @@ static T CeilDiv(T num1, T num2)
 }
 
 template <typename T>
-static T CeilAlign(T num1, T num2)
+static T Align(T num1, T num2)
 {
     return CeilDiv(num1, num2) * num2;
 }
@@ -43,6 +43,18 @@ template <typename T>
 static T FloorAlign(T num1, T num2)
 {
     return num1 / num2 * num2;
+}
+
+template <typename T>
+T GetShapeWithDataTypeFP4(T size)
+{
+    return size << 1;
+}
+
+template <typename T>
+T GetSizeWithDataTypeFP4(T shape)
+{
+    return (shape + 1) >> 1;
 }
 
 #endif // COMMON_UTILS_H

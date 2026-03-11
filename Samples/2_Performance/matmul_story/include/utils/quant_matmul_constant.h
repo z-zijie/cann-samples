@@ -17,10 +17,9 @@
 
 constexpr uint64_t IDX_A_OFFSET = 0UL;
 constexpr uint64_t IDX_B_OFFSET = 1UL;
-constexpr uint64_t IDX_X1SCALE_OFFSET = 2UL;
-constexpr uint64_t IDX_X2SCALE_OFFSET = 3UL;
-constexpr uint64_t IDX_BIAS_OFFSET = 4UL;
-constexpr uint64_t IDX_C_OFFSET = 5UL;
+constexpr uint64_t IDX_SCALEA_OFFSET = 2UL;
+constexpr uint64_t IDX_SCALEB_OFFSET = 3UL;
+constexpr uint64_t IDX_C_OFFSET = 4UL;
 constexpr uint64_t IDX_M_TILEIDX = 0UL;
 constexpr uint64_t IDX_N_TILEIDX = 1UL;
 constexpr uint64_t IDX_M_TAIL_SPLIT_TILEIDX = 2UL;
@@ -42,8 +41,13 @@ constexpr uint8_t MTE1_MTE2_EVENT_ID_NUM = 6;
 
 constexpr int32_t MXFP_DIVISOR_SIZE = 64;
 constexpr int32_t MXFP_MULTI_BASE_SIZE = 2;
-constexpr static uint64_t NONE_FULL_LOAD_MODE = 0UL;
-constexpr static uint64_t A_FULL_LOAD_MODE = 1UL;
 constexpr int64_t DOUBLE_BUFFER_COUNT = 2LL;
+constexpr uint64_t DISABLE_A_FULL_LOAD = 0UL;
+constexpr uint64_t ENABLE_A_FULL_LOAD = 1UL;
 
+struct QuantMatmulShape {
+    int64_t m;
+    int64_t n;
+    int64_t k;
+};
 #endif
