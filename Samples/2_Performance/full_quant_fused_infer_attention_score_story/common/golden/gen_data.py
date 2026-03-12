@@ -40,6 +40,9 @@ def gen_golden_data_simple():
     k_tensor_tmp = k_tensor.numpy()
     v_tensor_tmp = v_tensor.numpy()
 
+    os.makedirs("input", exist_ok=True)
+    os.makedirs("output", exist_ok=True)
+
     q_tensor_tmp.tofile("./input/input_0.bin")
     k_tensor_tmp.tofile("./input/input_1.bin")
     v_tensor_tmp.tofile("./input/input_2.bin")
