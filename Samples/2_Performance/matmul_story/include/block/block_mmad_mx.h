@@ -758,7 +758,7 @@ public:
                     (iter0 + 1 == kL1Iter_ && iter1 + 1 == kL0Iter) ? FINAL_ACCUMULATION : NON_FINAL_ACCUMULATION;
                 bool mmadCmatrixInitVal = (iter0 == 0 && iter1 == 0 && !isBias_);
                 AscendC::Te::Mad(
-                    AscendC::Te::MmadAtom<AscendC::Te::MmadTraits<Tile::MmadMx>>{}.with(
+                    AscendC::Te::MmadAtom<AscendC::Te::MmadTraits<Cmct::Gemm::Tile::MmadMx>>{}.with(
                         static_cast<uint16_t>(curM),
                         static_cast<uint16_t>(CeilAlign(curKL0, MXFP_DIVISOR_SIZE)),
                         static_cast<uint16_t>(curN), mmadUnitFlag, false, mmadCmatrixInitVal),
