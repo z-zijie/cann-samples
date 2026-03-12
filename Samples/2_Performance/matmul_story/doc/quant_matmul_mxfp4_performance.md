@@ -33,7 +33,9 @@ $$
 
 MXFP4执行时完整的数据搬运流程如下图所示：
 
-![](figures/image23.png)
+<div align="center">
+  <img src="figures/image23.png" width="800" />
+</div>
 
 关于每个输入在各个缓冲区上的Shape关系和排布要求，可以参考下面的详细介绍。
 
@@ -165,7 +167,9 @@ MXFP4矩阵乘算子的性能瓶颈主要分为以下几类：
 
 - **效果对比**
 
-  ![](figures/image29.png)
+  <div align="center">
+    <img src="figures/image29.png" width="700" />
+  </div>
 
 - **适用场景**
   - 开启了L1 Double Buffer的场景
@@ -184,7 +188,9 @@ MXFP4矩阵乘算子的性能瓶颈主要分为以下几类：
 
 - **效果对比**
 
-  ![](figures/image30.png)
+  <div align="center">
+    <img src="figures/image30.png" width="650" />
+  </div>
 
 - **适用场景**
   - 输入矩阵较小，Scale数据量不足的场景
