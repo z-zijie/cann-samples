@@ -62,4 +62,7 @@ set(ASCEND_INCLUDE_DIRS
     ${ASCEND_DIR}/compiler/ascendc/include/highlevel_api/impl
     ${ASCEND_DIR}/compiler/ascendc/include/highlevel_api/tiling
     ${ASCEND_DIR}/compiler/ascendc/impl/aicore/basic_api
+    /home/h00947056/shmem/include
+    /home/h00947056/shmem/src/device
+    /home/h00947056/cann-samples/Samples/2_Performance/moe_dispatch_and_combine_story/include
 )

@@ -30,13 +30,23 @@ target_compile_options(moe_dispatch_and_combine_story PRIVATE
 )
 target_link_libraries(moe_dispatch_and_combine_story
     PRIVATE
+    # 基础系统库
     m
     dl
+    stdc++
+    # Ascend 核心库，这些库被shmem依赖
+    ascendcl
     platform
     tiling_api
-    ascendcl
-    runtime
-    stdc++
+    # 强制加载shmem库的所有符号
+    -Wl,--whole-archive
+    /home/h00947056/shmem/build/lib/libshmem.so
+    -Wl,--no-whole-archive
+    # 其他shmem依赖库
+    /home/h00947056/shmem/build/lib/aclshmem_bootstrap_config_store.so
+    /home/h00947056/shmem/build/lib/aclshmem_bootstrap_uid.so
+    /home/h00947056/shmem/build/lib/libshmem_utils.so
+    
 )
 install(TARGETS moe_dispatch_and_combine_story
     RUNTIME DESTINATION 2_Performance/moe_dispatch_and_combine_story
