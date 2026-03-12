@@ -168,7 +168,7 @@ MXFP4矩阵乘算子的性能瓶颈主要分为以下几类：
 - **效果对比**
 
   <div align="center">
-    <img src="figures/image29.png" width="800" />
+    <img src="figures/image29.png" width="1200" />
   </div>
 
 - **适用场景**
@@ -189,7 +189,7 @@ MXFP4矩阵乘算子的性能瓶颈主要分为以下几类：
 - **效果对比**
 
   <div align="center">
-    <img src="figures/image30.png" width="750" />
+    <img src="figures/image30.png" width="1200" />
   </div>
 
 - **适用场景**
@@ -229,7 +229,7 @@ MXFP4矩阵乘算子的性能瓶颈主要分为以下几类：
 - **效果对比**
 
   <div align="center">
-    <img src="figures/image32.png" width="850" />
+    <img src="figures/image32.png" width="1500" />
   </div>
 
 - **适用场景**
@@ -251,7 +251,9 @@ MXFP4矩阵乘算子的性能瓶颈主要分为以下几类：
 
   下图展示了使能Double Buffer后流水图的预期变化，从而有效提升不同流水间的并行度。如果缓冲区空间足够，可以进一步延伸出`4-Buffer`等其他分配方案，从而适配不同场景。
 
-  ![](figures/image33.png)
+  <div align="center">
+    <img src="figures/image33.png" width="1500" />
+  </div>
 
 - **适用场景**
   - 存在流水停顿的场景
