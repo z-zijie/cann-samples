@@ -25,15 +25,28 @@
 
 namespace AscendC::Te {
     constexpr LoadDataTrait LOAD_DATA_B_TRAIT{true};
+    constexpr FixpipeTrait UNIT_FLAG_TRAIT{
+        RoundMode::DEFAULT,     // roundMode
+        false,                  // enableRelu
+        false,                  // enableChannelSplit
+        3,                      // unitFlag
+        false                   // dualDstCtl
+    };
 
     struct LoadData2BTrait {
         using TraitType = LoadDataTrait;
         static constexpr const TraitType value = LOAD_DATA_B_TRAIT;
     };
+
+    struct FixpipeUnitFlagTrait {
+        using TraitType = FixpipeTrait;
+        static constexpr const TraitType value = UNIT_FLAG_TRAIT;
+    };
 }
 namespace tool {
     constexpr static uint16_t CUBE_BLOCK_SIZE = 16;
     constexpr static uint16_t ZERO_FLAG = 0;
+    constexpr static bool EN_UNIT_FLAG = true;
 
     __aicore__ inline uint64_t CeilDiv(uint64_t a, uint64_t b)
     {
@@ -216,6 +229,13 @@ __global__ __aicore__ void MatmulKernel(GM_ADDR aGm, GM_ADDR bGm, GM_ADDR cGm, u
                 // Execute M-MAD operation
                 MmadParams para;
                 para.cmatrixInitVal = (iter1 == 0 && iter0 == 0);
+                if constexpr (EN_UNIT_FLAG == true) {
+                    if (iter1 != kL0IterNum - 1) {
+                        para.unitFlag = 2;
+                    } else {
+                        para.unitFlag = 3;
+                    }
+                }
                 AscendC::Te::Mad(
                     MmadAtom<MmadTraits<MmadOperation, MmadTraitDefault>>{}, tensorL0C, tensorAL0, tensorBL0, para);
 
@@ -228,7 +248,7 @@ __global__ __aicore__ void MatmulKernel(GM_ADDR aGm, GM_ADDR bGm, GM_ADDR cGm, u
 
         // Copy L0c to GM
         AscendC::Te::Copy(
-            AscendC::Te::CopyAtom<AscendC::Te::CopyTraits<AscendC::Te::CopyL0C2GM, AscendC::Te::FixpipeTraitDefault>>{},
+            AscendC::Te::CopyAtom<AscendC::Te::CopyTraits<AscendC::Te::CopyL0C2GM, AscendC::Te::FixpipeUnitFlagTrait>>{},
             gmBlockC_, tensorL0C);
     }
     AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(ZERO_FLAG);
