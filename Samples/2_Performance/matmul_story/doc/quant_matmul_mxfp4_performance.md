@@ -52,7 +52,9 @@ MXFP4执行时完整的数据搬运流程如下图所示：
 | GM -> L1 | (m, k) -> (ceil(kL1/k0), ceil(mL1/m0), m0, k0) | ND -> Nz | MTE2 | DataCopy with ND2NZ |
 | L1 -> L0A | (ceil(kL1/k0), ceil(mL1/m0), m0, k0) -> (ceil(baseK/k0), ceil(baseM/m0), m0, k0) | Nz -> Nz | MTE1 | LoadData with Load2D |
 
-![](figures/image24.png)
+  <div align="center">
+    <img src="figures/image24.png" width="1500" />
+  </div>
 
 #### Tensor b 的搬运说明
 
@@ -63,7 +65,9 @@ MXFP4执行时完整的数据搬运流程如下图所示：
 
 > 这里L1和L0B上的Shape排布其实一样，但L0B默认按照(k, n)方向查看数据，因此Layout会变更成`Zn`
 
-![](figures/image25.png)
+  <div align="center">
+    <img src="figures/image25.png" width="1500" />
+  </div>
 
 #### Tensor scaleA 的搬运说明
 
@@ -74,7 +78,9 @@ MXFP4执行时完整的数据搬运流程如下图所示：
 | GM -> L1 | (m, ceil(ceil(k/32)/2), 2) -> (ceil(mL1/m0), ceil(ceil(kL1/32)/k0), m0, k0) | ND -> Zz | MTE2 | DataCopy with ND2NZ |
 | L1 -> L0A_MX | (ceil(mL1/m0), ceil(ceil(kL1/32)/k0), m0, k0) -> (ceil(baseM/m0), ceil(ceil(baseK/32)/k0), m0, k0) | Zz -> Zz | MTE1 | LoadData with Load2D_MX |
 
-![](figures/image26.png)
+  <div align="center">
+    <img src="figures/image26.png" width="1500" />
+  </div>
 
 #### Tensor scaleB 的搬运说明
 
@@ -85,7 +91,9 @@ MXFP4执行时完整的数据搬运流程如下图所示：
 | GM -> L1 | (n, ceil(ceil(k/32)/2), 2) -> (ceil(nL1/n0), ceil(ceil(kL1/32)/k0), n0, k0) | ND -> Zz | MTE2 | DataCopy with ND2NZ |
 | L1 -> L0B_MX | (ceil(nL1/n0), ceil(ceil(kL1/32)/k0), n0, k0) -> (ceil(baseN/n0), ceil(ceil(baseK/32)/k0), n0, k0) | Zz -> Zz | MTE1 | LoadData with Load2D_MX |
 
-![](figures/image27.png)
+  <div align="center">
+    <img src="figures/image27.png" width="1500" />
+  </div>
 
 ### 算子实现约束
 
@@ -148,7 +156,9 @@ MXFP4矩阵乘算子的性能瓶颈主要分为以下几类：
 
   下图对比了传统的列优先分配和ASWT的理论效果。
 
-  ![](figures/image28.png)
+  <div align="center">
+    <img src="figures/image28.png" width="1800" />
+  </div>
 
 - **适用场景**
   - 大规模矩阵乘法场景
@@ -168,7 +178,7 @@ MXFP4矩阵乘算子的性能瓶颈主要分为以下几类：
 - **效果对比**
 
   <div align="center">
-    <img src="figures/image29.png" width="1200" />
+    <img src="figures/image29.png" width="1100" />
   </div>
 
 - **适用场景**
@@ -189,7 +199,7 @@ MXFP4矩阵乘算子的性能瓶颈主要分为以下几类：
 - **效果对比**
 
   <div align="center">
-    <img src="figures/image30.png" width="1200" />
+    <img src="figures/image30.png" width="1100" />
   </div>
 
 - **适用场景**
@@ -207,7 +217,9 @@ MXFP4矩阵乘算子的性能瓶颈主要分为以下几类：
 
 - **效果对比**
 
-  ![](figures/image31.png)
+  <div align="center">
+    <img src="figures/image31.png" width="1500" />
+  </div>
 
 - **适用场景**
   - MTE2 Bound为主要瓶颈的场景
@@ -272,7 +284,9 @@ MXFP4矩阵乘算子的性能瓶颈主要分为以下几类：
 
   由性能建模可知，为了充分发挥计算访存比，需要尽可能的用满`L0C`缓冲区，导致存在无法在`L0C`缓冲区上开启Double Buffer的场景，此时就可以使能UnitFlag能力来提高指令并行度。
 
-  ![](figures/image34.png)
+  <div align="center">
+    <img src="figures/image34.png" width="1500" />
+  </div>
 
 - **适用场景**
   - 无法开启L0C Double Buffer的场景
