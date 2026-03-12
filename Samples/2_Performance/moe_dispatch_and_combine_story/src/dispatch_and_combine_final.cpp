@@ -23,13 +23,25 @@
 #include "shmem.h"
 #include "moe_distribute_dispatch.h"
 #include "moe_distribute_combine.h"
+#include <cstring>
+#include <algorithm>
+#include "acl/acl.h"
+#include <errno.h>
+
+#define ACL_CHECK(status)                                                                  \
+    do {                                                                                   \
+        aclError error = status;                                                           \
+        if (error != ACL_ERROR_NONE) {                                                     \
+            std::cerr << __FILE__ << ":" << __LINE__ << "aclError:" << error << std::endl; \
+        }                                                                                  \
+    } while (0)                                   
 
 inline int32_t TestSetAttr(int32_t myPe, int32_t nPes, uint64_t localMemSize, const char *ipPort, aclshmemx_uniqueid_t flagUid,
                        aclshmemx_init_attr_t *attributes)
 {
     size_t ip_len = 0;
     if (ipPort != nullptr) {
-        ip_len = std::min(strlen(ipPort), static_cast<size_t>(64-1);
+        ip_len = std::min(strlen(ipPort), static_cast<size_t>(64-1));
         std::copy_n(ipPort, ip_len, attributes->ip_port);
         if (attributes->ip_port[0] == '\0') {
             return 1;
@@ -66,11 +78,11 @@ inline int32_t TestSetAttr(int32_t myPe, int32_t nPes, uint64_t localMemSize, co
     GM_ADDR tilingGM
 */
 
-__global__ __aicore__ void MoeDistributeDispatchKernel(
-    GM_ADDR shmemSpace, GM_ADDR x, GM_ADDR expertIds, GM_ADDR expandXOut, GM_ADDR workspaceGM, GM_ADDR tilingGM)
-{
-    // 待补齐kernel实现
-}
+// __global__ __aicore__ void MoeDistributeDispatchKernel(
+//     GM_ADDR shmemSpace, GM_ADDR x, GM_ADDR expertIds, GM_ADDR expandXOut, GM_ADDR workspaceGM, GM_ADDR tilingGM)
+// {
+//     // 待补齐kernel实现
+// }
 
 /** 
     描述当前sample 实现与transformer仓下实现，参数做如下调整：
@@ -98,12 +110,12 @@ __global__ __aicore__ void MoeDistributeDispatchKernel(
 */
 
 
-__global__ __aicore__ void MoeDistributeCombineKernel(
-    GM_ADDR shmemSpace, GM_ADDR expandX, GM_ADDR expertIds, GM_ADDR XOut, GM_ADDR workspaceGM, GM_ADDR tilingGM)
-{
-    // 待补齐kernel实现
+// __global__ __aicore__ void MoeDistributeCombineKernel(
+//     GM_ADDR shmemSpace, GM_ADDR expandX, GM_ADDR expertIds, GM_ADDR XOut, GM_ADDR workspaceGM, GM_ADDR tilingGM)
+// {
+//     // 待补齐kernel实现
 
-}
+// }
 
 void SetDispatchTilingData(MoeDistributeDispatchTilingData& dispatchTilingData)
 {
@@ -143,11 +155,11 @@ int main(int argc, char* argv[])
     MoeDistributeDispatchTilingData dispatchTilingData;
     MoeDistributeCombineTilingData combineTilingData;
 
-    // 待补齐相应参数生成和传递
-    for (int i = 0; i < 1; ++i) {
-        MoeDistributeDispatchKernel<<<BLOCK_NUM, nullptr, stream>>>(symmetricPtr, dispatchTilingData);
-        MoeDistributeCombineKernel<<<BLOCK_NUM, nullptr, stream>>>(symmetricPtr, combineTilingData);
-    }
+    // // 待补齐相应参数生成和传递
+    // for (int i = 0; i < 1; ++i) {
+    //     MoeDistributeDispatchKernel<<<BLOCK_NUM, nullptr, stream>>>(symmetricPtr, dispatchTilingData);
+    //     MoeDistributeCombineKernel<<<BLOCK_NUM, nullptr, stream>>>(symmetricPtr, combineTilingData);
+    // }
     ACL_CHECK(aclrtSynchronizeStream(stream));
 
     aclshmem_free(symmPtr);
