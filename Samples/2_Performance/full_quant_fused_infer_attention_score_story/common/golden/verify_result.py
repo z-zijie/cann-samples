@@ -83,7 +83,7 @@ def verify_result():
         golden_val = golden[idx]
         output_val = output[idx]
 
-        denom = max(abs(golden_val), 1e-3)
+        denom = max(abs(golden_val), 1e-12)
 
         rdiff = abs(output_val - golden_val) / denom
 
