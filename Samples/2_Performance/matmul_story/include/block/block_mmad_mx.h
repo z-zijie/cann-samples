@@ -164,51 +164,40 @@ public:
         isBias_ = isBias;
         l1BufNum_ = l1Params.l1BufNum;
         enableL0cPingPong_ = dbL0C;
+        // L1 buffer layout depends on `fullLoadMode`:
+        // - Non-full-load: A/B and their scales are double-buffered across `l1BufNum_`.
+        // - A-full-load: A and scaleA are kept resident, only B/scaleB are double-buffered.
         bL1OneBuffer_ = baseN_ * kL1_;
-        if constexpr (AscendC::IsSameType<AType, fp4x2_e2m1_t>::value) {
-            bL1OneBuffer_ = (baseN_ * kL1_) >> 1;
-        }
         scaleBL1OneBuffer_ = baseN_ * CeilDiv(scaleKL1_, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE;
-        if constexpr (AscendC::IsSameType<AType, fp4x2_e2m1_t>::value) {
-            scaleBL1OneBuffer_ = (baseN_ * CeilDiv(scaleKL1_, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE) >> 1;
-        }
         if (isBias_) {
             biasL1OneBuffer_ = baseN_ * sizeof(BiasType);
         }
         if constexpr (DispatchPolicy::fullLoadMode == 0) {
+            // Non-full-load mode:
+            // every K-slice loads both A and B into L1, then pushes them down to L0.
             aL1OneBuffer_ = baseM_ * Align(kL1_, MXFP_DIVISOR_SIZE);
-            if constexpr (AscendC::IsSameType<AType, fp4x2_e2m1_t>::value) {
-                aL1OneBuffer_ = (baseM_ * Align(kL1_, MXFP_DIVISOR_SIZE)) >> 1;
-            }
             scaleAL1OneBuffer_ = baseM_ * CeilDiv(scaleKL1_, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE;
             for (int32_t bufferId = 0; bufferId < l1BufNum_; bufferId++) {
-                // 2 buffer: L1 space is : A0|B0|AScale0|BScale0|bias0|...|A1|B1|AScale1|BScale1|bias1|...
-                // 4 buffer: L1 space is : A0A2|B0B2|AScale0|BScale0|bias0|...|A1A3|B1B3|AScale1|BScale1|bias1|...
+                // L1 space example:
+                // - 2 buffers: A0|B0|AScale0|BScale0|bias0|...|A1|B1|AScale1|BScale1|bias1|...
+                // - 4 buffers: A0A2|B0B2|AScale0|BScale0|bias0|...|A1A3|B1B3|AScale1|BScale1|bias1|...
                 uint64_t l1Offset = L1_SIZE * (bufferId & 1);
                 l1BufferAOffset_[bufferId] = l1Offset + aL1OneBuffer_ * (bufferId >> 1);
                 l1BufferBOffset_[bufferId] =
                     l1Offset + aL1OneBuffer_ * (l1BufNum_ >> 1) + bL1OneBuffer_ * (bufferId >> 1);
             }
             for (int32_t bufferId = 0; bufferId < SCALE_BUFFER_NUM; bufferId++) {
-                // l1BufferScaleAOffset_[bufferId] = l1BufferBOffset_[bufferId] + bL1OneBuffer_ * (l1BufNum_ >> 1);
-                // l1BufferScaleAOffset_[bufferId] = (l1BufferScaleAOffset_[bufferId] + 1) >> 1;
-                // l1BufferScaleBOffset_[bufferId] = l1BufferScaleAOffset_[bufferId] + scaleAL1OneBuffer_;
-                // l1BufferBiasOffset_[bufferId] = l1BufferScaleBOffset_[bufferId] + scaleBL1OneBuffer_;
-                if constexpr (AscendC::IsSameType<AType, fp4x2_e2m1_t>::value) {
-                    l1BufferScaleAOffset_[bufferId] = l1BufferBOffset_[bufferId] + (bL1OneBuffer_ << 1) * (l1BufNum_ >> 1);
-                } else {
-                    l1BufferScaleAOffset_[bufferId] = l1BufferBOffset_[bufferId] + bL1OneBuffer_ * (l1BufNum_ >> 1);
-                }
+                l1BufferScaleAOffset_[bufferId] = l1BufferBOffset_[bufferId] + bL1OneBuffer_ * (l1BufNum_ >> 1);
+                l1BufferScaleAOffset_[bufferId] = (l1BufferScaleAOffset_[bufferId] + 1) >> 1;
                 l1BufferScaleBOffset_[bufferId] = l1BufferScaleAOffset_[bufferId] + scaleAL1OneBuffer_;
                 l1BufferBiasOffset_[bufferId] = l1BufferScaleBOffset_[bufferId] + scaleBL1OneBuffer_;
             }
         } else {
+            // A-full-load mode:
+            // keep the entire A tile (and its scales) resident in L1 and only rotate B.
             uint64_t mAlign = Align(baseM_, BLOCK_CUBE);
             uint64_t kAlign = Align(k_, MXFP_DIVISOR_SIZE);
             aL1OneBuffer_ = mAlign * kAlign;
-            if constexpr (AscendC::IsSameType<AType, fp4x2_e2m1_t>::value) {
-                aL1OneBuffer_ = (baseM_ * Align(kL1_, MXFP_DIVISOR_SIZE)) >> 1;
-            }
             scaleAL1OneBuffer_ = baseM_ * CeilDiv(k_, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE;
             // 2 buffer: L1 space is : B0|BScale0|bias0|A|AScale|...|B1|BScale1|bias1|
             // 4 buffer: L1 space is : B0B2|BScale0|bias0|A|AScale|...|B1B3|BScale1|bias1|...
@@ -221,15 +210,8 @@ public:
                 l1BufferBOffset_[bufferId] = b1Offset * (bufferId & 1) + bL1OneBuffer_ * (bufferId >> 1);
             }
             for (int32_t bufferId = 0; bufferId < SCALE_BUFFER_NUM; bufferId++) {
-                // l1BufferScaleBOffset_[bufferId] = l1BufferBOffset_[bufferId] + bL1OneBuffer_ * (l1BufNum_ >> 1);
-                // l1BufferScaleBOffset_[bufferId] = (l1BufferScaleBOffset_[bufferId] + 1) >> 1;
-                // l1BufferBiasOffset_[bufferId] = l1BufferScaleBOffset_[bufferId] + scaleBL1OneBuffer_;
-                if constexpr (AscendC::IsSameType<AType, fp4x2_e2m1_t>::value) {
-                    l1BufferScaleAOffset_[bufferId] = l1BufferBOffset_[bufferId] + (bL1OneBuffer_ << 1) * (l1BufNum_ >> 1);
-                } else {
-                    l1BufferScaleAOffset_[bufferId] = l1BufferBOffset_[bufferId] + bL1OneBuffer_ * (l1BufNum_ >> 1);
-                }
-                l1BufferScaleBOffset_[bufferId] = l1BufferScaleAOffset_[bufferId] + scaleAL1OneBuffer_;
+                l1BufferScaleBOffset_[bufferId] = l1BufferBOffset_[bufferId] + bL1OneBuffer_ * (l1BufNum_ >> 1);
+                l1BufferScaleBOffset_[bufferId] = (l1BufferScaleBOffset_[bufferId] + 1) >> 1;
                 l1BufferBiasOffset_[bufferId] = l1BufferScaleBOffset_[bufferId] + scaleBL1OneBuffer_;
             }
         }
