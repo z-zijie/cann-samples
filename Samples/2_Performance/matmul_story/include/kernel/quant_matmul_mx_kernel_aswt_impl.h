@@ -153,12 +153,6 @@ private:
     BlockMmad mmadOp_;
     TupleShape problemShape_{};
     BlockOffset blockOffset_{0, 0, 0, 0, 0, 0};
-    // AscendC::GlobalTensor<AType> aGlobal_;
-    // AscendC::GlobalTensor<BType> bGlobal_;
-    // AscendC::GlobalTensor<CType> cGlobal_;
-    // AscendC::GlobalTensor<BiasType> biasGlobal_;
-    // AscendC::GlobalTensor<fp8_e8m0_t> scaleAGlobal_;
-    // AscendC::GlobalTensor<fp8_e8m0_t> scaleBGlobal_;
     bool isBias_{false};
 };
 
@@ -182,31 +176,13 @@ __aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS
 QBMM_MX_KERNEL_CLASS_TEM_PARAMS
 __aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS>::Init(const Params& params)
 {
-    // aGlobal_.SetGlobalBuffer((__gm__ AType*)params.mmadParams.aGmAddr);
-    // bGlobal_.SetGlobalBuffer((__gm__ BType*)params.mmadParams.bGmAddr);
-    // cGlobal_.SetGlobalBuffer((__gm__ CType*)params.mmadParams.cGmAddr);
-    // if (params.qbmmParams.isBias == 1) {
-    //     isBias_ = true;
-    //     biasGlobal_.SetGlobalBuffer((__gm__ BiasType*)params.mmadParams.biasGmAddr);
-    // }
-    // scaleAGlobal_.SetGlobalBuffer((__gm__ fp8_e8m0_t*)params.mmadParams.scaleAGmAddr);
-    // scaleBGlobal_.SetGlobalBuffer((__gm__ fp8_e8m0_t*)params.mmadParams.scaleBGmAddr);
+
 }
 
 QBMM_MX_KERNEL_CLASS_TEM_PARAMS
 __aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS>::Process(
     const Params& params, BlockSchedulerOp& bs)
 {
-    // CoordClass coord(
-    //     params.problemShape.m, params.problemShape.n, params.problemShape.k, params.qbmmParams.baseM,
-    //     params.qbmmParams.baseN, params.qbmmParams.baseK);
-    // BlockCoord blockIdx;
-    // const int64_t mTailTile = params.schParams.mTailTile;
-    // const int64_t nTailTile = params.schParams.nTailTile;
-    // // 尾轮负载均衡
-    // if ((bs.GetEndBlockIdx() + 1) * mTailTile * nTailTile <= AscendC::GetBlockNum()) {
-    //     bs.UpdateTailTile(mTailTile, nTailTile);
-    // }
     auto layoutA = MakeLayoutA::Execute(params.problemShape.m, params.problemShape.k);
     auto layoutScaleA =
         MakeLayoutScaleA::Execute(params.problemShape.m, CeilDiv(params.problemShape.k, 64) * 2);
@@ -257,27 +233,6 @@ __aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS
                 AscendC::Te::MakeShape(Get<MNK_M>(singleShape), Get<MNK_N>(singleShape)));
         mmadOp_(gmBlockA, gmBlockB, gmBlockScaleA, gmBlockScaleB, gmBlockBias, gmBlockC, singleShape);
     }
-    // while (bs.GetTileIdx(blockIdx)) {
-    //     // 获取当前处理的 blokc 的 shape
-    //     BlockShape singleShape = bs.GetBlockShape(blockIdx);
-    //     if (Get<MNK_M>(singleShape) <= 0 || Get<MNK_N>(singleShape) <= 0) {
-    //         return;
-    //     }
-    //     AscendC::Std::tuple<uint32_t, uint32_t, uint32_t, uint32_t> loadBalanceInfo = bs.GetLoadBalanceInfo();
-    //     // 找到当前 block 在 gm 上的 index
-    //     blockOffset_ = coord.template GetQuantOffset<true>(
-    //         Get<IDX_M_TILEIDX>(blockIdx), Get<IDX_N_TILEIDX>(blockIdx),
-    //         Get<IDX_M_TAIL_SPLIT_TILEIDX>(singleShape),
-    //         Get<IDX_N_TAIL_SPLIT_TILEIDX>(singleShape), loadBalanceInfo);
-
-    //     mmadOp_(
-    //         aGlobal_[Get<IDX_A_OFFSET>(blockOffset_)],
-    //         bGlobal_[Get<IDX_B_OFFSET>(blockOffset_)],
-    //         scaleAGlobal_[Get<IDX_X1SCALE_OFFSET>(blockOffset_)],
-    //         scaleBGlobal_[Get<IDX_X2SCALE_OFFSET>(blockOffset_)],
-    //         biasGlobal_[Get<IDX_BIAS_OFFSET>(blockOffset_)],
-    //         cGlobal_[Get<IDX_C_OFFSET>(blockOffset_)], singleShape);
-    // }
 }
 
 } // namespace Kernel
