@@ -240,20 +240,23 @@ public:
             auto curPadKL1 = CeilAlign(curGmBKL1, MXFP_DIVISOR_SIZE); // pad to 64 align
             auto curGmAKL1 = curGmBKL1;
 
-            // A, B GM->L1
+            // A, B GM->L1; 先slice再copy
             auto layoutAL1 = MakeLayoutAL1::Execute(curM, curGmAKL1);
-            auto layoutBL1 = MakeLayoutBL1::Execute(curGmBKL1, curN);
+            // auto layoutBL1 = MakeLayoutBL1::Execute(curGmBKL1, curN);
             auto tensorAL1 = AscendC::Te::MakeTensor(
                 AscendC::Te::MakeL1memPtr((__cbuf__ AType*)l1BufferAOffset_[l1BufId]), layoutAL1);
-            auto tensorBL1 = AscendC::Te::MakeTensor(
-                AscendC::Te::MakeL1memPtr((__cbuf__ BType*)l1BufferBOffset_[l1BufId]), layoutBL1);
-            // 先slice再copy
+            // auto tensorBL1 = AscendC::Te::MakeTensor(
+            //     AscendC::Te::MakeL1memPtr((__cbuf__ BType*)l1BufferBOffset_[l1BufId]), layoutBL1);
             auto gmBlockA = gmA(AscendC::Te::MakeCoord(0, iter0 * kL1_), AscendC::Te::MakeShape(curM, curGmAKL1));
             // Cmct::Gemm::Tile::PadMxKAL1::PadZero(tensorAL1, gmBlockA);
             AscendC::Te::Copy(
                 AscendC::Te::CopyAtom<
                     AscendC::Te::CopyTraits<AscendC::Te::CopyGM2L1, AscendC::Te::DataCopyTraitDefault>>{},
                 tensorAL1, gmBlockA);
+
+            auto layoutBL1 = MakeLayoutBL1::Execute(curGmBKL1, curN);
+ 	        auto tensorBL1 = AscendC::Te::MakeTensor(
+ 	            AscendC::Te::MakeL1memPtr((__cbuf__ BType*)l1BufferBOffset_[l1BufId]), layoutBL1);
             auto gmBlockB = gmB(AscendC::Te::MakeCoord(iter0 * kL1_, 0), AscendC::Te::MakeShape(curGmBKL1, curN));
             // Cmct::Gemm::Tile::PadMxKBL1::PadZero(tensorBL1, gmBlockB);
             AscendC::Te::Copy(
@@ -312,30 +315,27 @@ public:
 
                 // A, B L1->L0
                 auto layoutAL0 = AscendC::Te::MakeNzLayout<AType>(curM, curKL0);
-                auto layoutBL0 = AscendC::Te::MakeZnLayout<BType>(curKL0, curN);
+                // auto layoutBL0 = AscendC::Te::MakeZnLayout<BType>(curKL0, curN);
                 auto tensorAL0 =
                     AscendC::Te::MakeTensor(AscendC::Te::MakeL0AmemPtr((__ca__ AType*)l0Offset), layoutAL0);
-                auto tensorBL0 =
-                    AscendC::Te::MakeTensor(AscendC::Te::MakeL0BmemPtr((__cb__ BType*)l0Offset), layoutBL0);
+                // auto tensorBL0 =
+                //     AscendC::Te::MakeTensor(AscendC::Te::MakeL0BmemPtr((__cb__ BType*)l0Offset), layoutBL0);
                 auto tensorBlockAL1 =
                     tensorAL1(AscendC::Te::MakeCoord(0, iter1 * baseK_), AscendC::Te::MakeShape(curM, curKL0));
                 AscendC::Te::Copy(
                     AscendC::Te::CopyAtom<
                         AscendC::Te::CopyTraits<AscendC::Te::CopyL12L0, AscendC::Te::LoadDataTraitDefault>>{},
                     tensorAL0, tensorBlockAL1);
+
+                auto layoutBL0 = AscendC::Te::MakeZnLayout<BType>(curKL0, curN);
+                auto tensorBL0 =
+                    AscendC::Te::MakeTensor(AscendC::Te::MakeL0BmemPtr((__cb__ BType*)l0Offset), layoutBL0);
                 auto tensorBlockBL1 =
                     tensorBL1(AscendC::Te::MakeCoord(iter1 * baseK_, 0), AscendC::Te::MakeShape(curKL0, curN));
-                if constexpr(transB) {  // TODO: 后续asc自动推导后删除通过trait传递转置属性
-                    AscendC::Te::Copy(
-                        AscendC::Te::CopyAtom<
-                            AscendC::Te::CopyTraits<AscendC::Te::CopyL12L0, AscendC::Te::LoadDataTraitDefault>>{},
-                        tensorBL0, tensorBlockBL1);
-                } else {
-                    AscendC::Te::Copy(
-                        AscendC::Te::CopyAtom<
-                            AscendC::Te::CopyTraits<AscendC::Te::CopyL12L0, AscendC::Te::LoadData2BTrait>>{},
-                        tensorBL0, tensorBlockBL1);
-                }
+                AscendC::Te::Copy(
+                    AscendC::Te::CopyAtom<
+                        AscendC::Te::CopyTraits<AscendC::Te::CopyL12L0, AscendC::Te::LoadDataTraitDefault>>{},
+                    tensorBL0, tensorBlockBL1);
 
                 // scaleA, scaleB L1->L0
                 auto coordScaleKL1 = (iter0 % (scaleKL1_ / kL1_)) * CeilDiv(kL1_, MXFP_DIVISOR_SIZE) * 2;
@@ -399,7 +399,7 @@ public:
         // C L0C->GM
         AscendC::Te::Copy(
             AscendC::Te::CopyAtom<
-                AscendC::Te::CopyTraits<AscendC::Te::CopyL0C2GM, AscendC::Te::MxFixpipeTrait<CType>>>{},
+                AscendC::Te::CopyTraits<AscendC::Te::CopyL0C2GM, AscendC::Te::MxFixpipeTrait>>{},
             gmC, tensorL0C);
         if (enableL0cPingPong_) {
             l0cPingPong_++;
