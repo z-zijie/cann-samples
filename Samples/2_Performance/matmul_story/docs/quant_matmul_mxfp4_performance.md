@@ -206,7 +206,7 @@ $$
 化简后得到MTE1 Bound条件：
 
 $$
-\frac{baseM \times baseN}{16 \times 64 \times 16 \times 频率} \geq \frac{baseM \times (1 \times sizeof(dtype) + \frac{1}{32})}{BandWidth_{L{0}A}} + \frac{baseN \times (1 \times sizeof(dtype) + \frac{1}{32})}{Bandwidth_{L{0}B}}
+\frac{baseM \times baseN}{16 \times 64 \times 16 \times 频率} \geq \frac{baseM \times (1 \times sizeof(dtype) + \frac{1}{32})}{BandWidth_{L{0}A}} + \frac{baseN \times (1 \times sizeof(dtype) + \frac{1}{32})}{BandWidth_{L{0}B}}
 $$
 
 当L0A和L0B的带宽一致时，可进一步化简：
