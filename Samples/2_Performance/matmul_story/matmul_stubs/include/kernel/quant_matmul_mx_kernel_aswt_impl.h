@@ -153,6 +153,7 @@ public:
     __aicore__ inline void operator()(const Params& params);
 
 private:
+    __aicore__ inline void ResetGmAddr(const Params& params);
     __aicore__ inline void Process(const Params& params, BlockSchedulerOp& bs);
     __aicore__ inline TupleShape ToShapeTuple(const ProblemShape& problemShape)
     {
@@ -163,6 +164,14 @@ private:
     BlockMmad mmadOp_;
     TupleShape problemShape_{};
     BlockOffset blockOffset_{0, 0, 0, 0, 0, 0};
+
+    __gm__ AType* aGmAddr_;
+    __gm__ BType* bGmAddr_;
+    __gm__ CType* cGmAddr_;
+    __gm__ BiasType* biasGmAddr_ = nullptr;  // 可选输入，直接初始化
+    __gm__ fp8_e8m0_t* pertokenScaleGmAddr_;
+    __gm__ fp8_e8m0_t* scaleGmAddr_;
+
     bool isBias_{false};
 };
 
@@ -190,6 +199,24 @@ __aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS
 QBMM_MX_KERNEL_CLASS_TEM_PARAMS
 __aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS>::Init(const Params& params)
 {
+    ResetGmAddr(params);
+}
+
+QBMM_MX_KERNEL_CLASS_TEM_PARAMS
+__aicore__ inline void QuantMmBatchMX<QBMM_MX_KERNEL_FUN_TEM_PARAMS>::ResetGmAddr(const Params& params)
+{
+    if ASCEND_IS_AIV {
+        return;
+    }
+
+    aGmAddr_ = reinterpret_cast<__gm__ AType*>(params.mmadParams.aGmAddr);
+    bGmAddr_ = reinterpret_cast<__gm__ BType*>(params.mmadParams.bGmAddr);
+    cGmAddr_ = reinterpret_cast<__gm__ CType*>(params.mmadParams.cGmAddr);
+    pertokenScaleGmAddr_ = reinterpret_cast<__gm__ fp8_e8m0_t*>(params.mmadParams.pertokenScaleGmAddr);
+    scaleGmAddr_ = reinterpret_cast<__gm__ fp8_e8m0_t*>(params.mmadParams.scaleGmAddr);
+    if (isBias_) {
+        biasGmAddr_ = reinterpret_cast<__gm__ BiasType*>(params.mmadParams.biasGmAddr);
+    }
 }
 
 QBMM_MX_KERNEL_CLASS_TEM_PARAMS
@@ -202,19 +229,14 @@ __aicore__ inline void QuantMatmulMxKernelAswtImpl<QBMM_MX_KERNEL_FUN_TEM_PARAMS
     auto layoutB = MakeLayoutB::Execute(params.problemShape.k, params.problemShape.n);
     auto layoutScaleB =
         MakeLayoutScaleB::Execute(CeilDiv(params.problemShape.k, 64) * 2, params.problemShape.n);
-    auto gmA = AscendC::Te::MakeTensor(AscendC::Te::MakeGMmemPtr((__gm__ AType*)params.mmadParams.aGmAddr), layoutA);
-    auto gmScaleA = AscendC::Te::MakeTensor(
-        AscendC::Te::MakeGMmemPtr(reinterpret_cast<__gm__ fp8_e8m0_t*>(params.mmadParams.scaleAGmAddr)),
-        layoutScaleA);
-    auto gmB = AscendC::Te::MakeTensor(AscendC::Te::MakeGMmemPtr((__gm__ BType*)params.mmadParams.bGmAddr), layoutB);
-    auto gmScaleB = AscendC::Te::MakeTensor(
-        AscendC::Te::MakeGMmemPtr(reinterpret_cast<__gm__ fp8_e8m0_t*>(params.mmadParams.scaleBGmAddr)), layoutScaleB);
+    auto gmA = AscendC::Te::MakeTensor(AscendC::Te::MakeGMmemPtr(aGmAddr_), layoutA);
+    auto gmScaleA = AscendC::Te::MakeTensor(AscendC::Te::MakeGMmemPtr(pertokenScaleGmAddr_), layoutScaleA);
+    auto gmB = AscendC::Te::MakeTensor(AscendC::Te::MakeGMmemPtr(bGmAddr_), layoutB);
+    auto gmScaleB = AscendC::Te::MakeTensor(AscendC::Te::MakeGMmemPtr(scaleGmAddr_), layoutScaleB);
     auto layoutBias = AscendC::Te::MakeNDLayout<BiasType>(1L, params.problemShape.n);
-    auto gmBias = AscendC::Te::MakeTensor(
-        AscendC::Te::MakeGMmemPtr(reinterpret_cast<__gm__ BiasType*>(params.mmadParams.biasGmAddr)), layoutBias);
+    auto gmBias = AscendC::Te::MakeTensor(AscendC::Te::MakeGMmemPtr(biasGmAddr_), layoutBias);
     auto layoutC = AscendC::Te::MakeNDLayout<CType>(params.problemShape.m, params.problemShape.n);
-    auto gmC = AscendC::Te::MakeTensor(
-        AscendC::Te::MakeGMmemPtr(reinterpret_cast<__gm__ CType*>(params.mmadParams.cGmAddr)), layoutC);
+    auto gmC = AscendC::Te::MakeTensor(AscendC::Te::MakeGMmemPtr(cGmAddr_), layoutC);
 
     BlockCoord blockIdx;
     // // 每个核依次处理 block

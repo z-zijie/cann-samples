@@ -16,7 +16,7 @@
 #ifndef MATMUL_TILE_DATAMOVE_COPY_L1_TO_L0B_H
 #define MATMUL_TILE_DATAMOVE_COPY_L1_TO_L0B_H
 #include "impl/experimental/tensor_api/atom/cube_datamove/copy_l12l0.h"
-#include "host_utils/common_utils.h"
+#include "../utils/common_utils.h"
 
 namespace Cmct::Gemm::Tile {
 struct CopyL12L0MxScaleB3510 {
@@ -33,8 +33,8 @@ struct CopyL12L0MxScaleB3510 {
         // shape ((2, k/64), (n0, n1))
         // stride ((2, k/64*n0*2), (1, n0*2))
         // Nn -> Nn
-        uint16_t nStartPosition = CeilDiv(AscendC::Std::get<1>(coord), MATMUL_MNK_ALIGN);
-        uint16_t kStartPosition = CeilDiv(AscendC::Std::get<0>(coord), MXFP_DIVISOR_SIZE);
+        uint16_t nStartPosition = Cmct::Gemm::CeilDiv(AscendC::Std::get<1>(coord), MATMUL_MNK_ALIGN);
+        uint16_t kStartPosition = Cmct::Gemm::CeilDiv(AscendC::Std::get<0>(coord), MXFP_DIVISOR_SIZE);
         auto nStep = AscendC::Std::get<1>(AscendC::Std::get<1>(dst.Layout().Shape()));
         auto kStep = AscendC::Std::get<1>(AscendC::Std::get<0>(dst.Layout().Shape()));
         auto srcStride = AscendC::Std::get<1>(AscendC::Std::get<1>(src.Layout().Stride())) >> 5;
