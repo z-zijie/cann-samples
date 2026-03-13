@@ -59,7 +59,7 @@ __global__ __aicore__ void QuantMatmulMxfp4Kernel(
     using AType = fp4x2_e2m1_t;
     using BType = fp4x2_e2m1_t;
     using BiasType = float;
-    using CType = float;
+    using CType = bfloat16_t;
 
     // Logical tensor layouts as seen by the matmul template.
     //
@@ -238,7 +238,7 @@ int main(int argc, char* argv[])
     uint8_t* hScaleA = nullptr;
     uint8_t* hScaleB = nullptr;
     float* hBias = nullptr;
-    float* hC = nullptr;
+    half* hC = nullptr;
 
     // Device buffers mirror the host buffers.
     //
@@ -268,13 +268,13 @@ int main(int argc, char* argv[])
     //   one fp32 bias per output column N.
     //
     // C:
-    //   full fp32 output matrix of shape [M, N].
+    //   full bf16 output matrix of shape [M, N].
     size_t sizeA = ((m * k + 1) >> 1) * sizeof(uint8_t);
     size_t sizeB = ((k * n + 1) >> 1) * sizeof(uint8_t);
     size_t sizeScaleA = (m * CeilDiv(k, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE) * sizeof(uint8_t);
     size_t sizeScaleB = (n * CeilDiv(k, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE) * sizeof(uint8_t);
     size_t sizeBias = n * sizeof(float);
-    size_t sizeC = m * n * sizeof(float);
+    size_t sizeC = m * n * sizeof(half);
 
     // Materialize the default tiling configuration for this problem shape.
     QuantMatmulTilingData quantMatmulTilingData;
@@ -373,7 +373,10 @@ int main(int argc, char* argv[])
     CHECK_COND(aclrtSynchronizeStream(stream) == ACL_SUCCESS, "aclrtSynchronizeStream failed.");
 
     WriteFile("./output/npu_out.bin", hC, sizeC);
-
+    std::string verify_script =
+        "python3 \"build_out/2_Performance/matmul_story/common/golden/quant_matmul_mxfp4/verify_result.py\"";
+    std::string cmd = verify_script + " " + std::to_string(m) + " " + std::to_string(n);
+    system(cmd.c_str());
     // `unique_ptr` takes care of freeing host/device buffers.
     // The runtime objects still need explicit destruction/finalization.
     aclrtDestroyStream(stream);
