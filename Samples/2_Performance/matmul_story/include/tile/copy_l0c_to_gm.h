@@ -15,7 +15,7 @@
 
 #ifndef MATMUL_TILE_DATAMOVE_COPY_L0C_TO_GM_H
 #define MATMUL_TILE_DATAMOVE_COPY_L0C_TO_GM_H
-#include "impl/experimental/tensor_api/atom/cube_datamove/copy_l0c2gm.h"
+#include "impl/experimental/tensor_api/atom/cube_datamove/copy_l0c2out.h"
 
 namespace AscendC::Te {
 constexpr FixpipeTrait MX_FIXPIPE_TRAIT_F16{
