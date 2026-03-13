@@ -125,11 +125,13 @@ MXFP4矩阵乘算子的性能瓶颈主要分为以下两类：
 
 ### 性能建模公式
 
-理论计算时间 = max(计算时间, MTE2搬运时间, MTE1搬运时间, FIXPIPE搬出时间)
+理论计算时间 = max(MMAD时间, MTE2搬运时间, MTE1搬运时间, FIXPIPE搬出时间)
 
-其中不同耗时的理论公式如下所示：
+为此需要评估不同流水的理论耗时，并加以对比得到影响耗时的决定性因素，从而选择对应的优化策略。
 
-- 计算时间
+#### 流水理论耗时评估
+
+- **MMAD时间**
 
 $$
 T_{cube} = \frac{计算量}{算力} =  \frac{M \times K \times N}{16 \times 64 \times 16 \times 核数 \times 频率}
@@ -137,10 +139,10 @@ $$
 
 `16 * 64 * 16`表示MXFP4在Cube核上每拍的计算量。
 
-- MTE2搬运时间
+- **MTE2搬运时间**
 
 $$
-T_{mte2} = \frac{MTE2搬运量}{MTE2带宽} = \frac{(M \times \frac{N}{baseN} + N \times \frac{M}{baseM}) \times K \times (1 + \frac{1}{32}) \times sizeof(dtype)}{BandWidth_{mte2}}
+T_{mte2} = \frac{MTE2搬运量}{MTE2带宽} = \frac{(M \times \frac{N}{baseN} + N \times \frac{M}{baseM}) \times K \times (1 \times sizeof(dtype) + \frac{1}{32})}{BandWidth_{mte2}}
 $$
 
 MTE2的搬运量包含了因切分带来的重复搬运，以及对应Scale的重复搬运。
@@ -156,24 +158,91 @@ $$
 其中DDR和L2部分的搬运量，通常可以简化成首次搬运量和重复搬运量两部分，即假设重复搬运的数据均是从L2中获取。
 
 $$
-Size_{DDR} = 首次搬运量 = ((M \times K) + (K \times N)) \times sizeof(dtype)
+Size_{DDR} = 首次搬运量 = (M + N) \times K \times (1 \times sizeof(dtype) + \frac{1}{32})
 $$
 
 $$
-Size_{L2} = MTE2搬运量 - 首次搬运量 = (M \times \frac{N}{baseN} + N \times \frac{M}{baseM}) \times sizeof(dtype) - Size_{DDR}
+Size_{L2} = MTE2搬运量 - 首次搬运量 = (M \times \frac{N}{baseN} + N \times \frac{M}{baseM}) \times K \times (1 \times sizeof(dtype) + \frac{1}{32}) - Size_{DDR}
 $$
 
-- MTE1搬运时间
+- **MTE1搬运时间**
+
+MTE1作为Cube核内的流水，通常以单核内的计算和搬运量进行评估，**此处的带宽也是单核内的传输速率**
 
 $$
-T_{mte1} = \frac{L0A搬运量+L0A\_MX搬运量}{L0A带宽} + \frac{L0B搬运量+L0B\_MX搬运量}{L0B带宽} = \frac{baseM \times baseK \times (1 + \frac{1}{32})}{BandWidth_{L0A}} + \frac{baseN \times baseK \times (1 + \frac{1}{32})}{BandWidth_{L0B}}
+T_{mte1} = \frac{L0A搬运量+L0A\_MX搬运量}{L0A带宽} + \frac{L0B搬运量+L0B\_MX搬运量}{L0B带宽} = \frac{baseM \times baseK \times (1 \times sizeof(dtype) + \frac{1}{32}) }{BandWidth_{L0A}} + \frac{baseN \times baseK \times (1 \times sizeof(dtype) + \frac{1}{32})}{BandWidth_{L0B}}
 $$
 
-- FIXP搬运时间
+- **FIXP搬运时间**
 
 $$
 T_{fixp} = \frac{FIXP搬出量}{FIXP带宽} = \frac{M \times N \times sizeof(dtype)}{BandWidth_{fixp}}
 $$
+
+#### 流水理论耗时对比
+
+算子期望最终变成CubeBound，因此可以将不同的搬运流水和计算流水展开对比，分析影响CubeBound的决定性因素。并在理论无法达成CubeBound的背景下，选择优化策略优化各条搬运流水。
+
+- **MTE2 VS MMAD**
+
+$$
+T_{cube} \geq T_{mte2} \Rightarrow \frac{M \times K \times N}{16 \times 64 \times 16 \times 核数 \times 频率} \geq \frac{(M \times \frac{N}{baseN} + N \times \frac{M}{baseM}) \times K \times (1 \times sizeof(dtype) + \frac{1}{32})}{BandWidth_{mte2}}
+$$
+
+化简后得到MTE2 Bound条件：
+
+$$
+BandWidth_{mte2} \geq (\frac{1}{baseN} + \frac{1}{baseM}) \times (1 \times sizeof(dtype) + \frac{1}{32}) \times 16 \times 64 \times 16 \times 核数 \times 频率
+$$
+
+- **特征分析**：
+  - 当MTE2带宽满足上述条件时，算子性能受限于计算单元（Cube Bound）
+  - 不满足条件时，算子性能受限于MTE2数据搬运（MTE2 Bound）
+  - 右侧表达式主要受tiling参数（baseM, baseN）和硬件配置（核数、频率）影响
+  - 增大baseM和baseN可以降低右侧数值，更容易满足Cube Bound条件，(baseM, baseN)主要受限于L0C缓冲区大小。
+
+- **MTE1 VS MMAD**
+
+由于MTE1和MMAD均为Cube核内部流水，因此可以将公式化简到单核内对比
+
+$$
+T_{cube} \geq T_{mte1} \Rightarrow \frac{baseM \times baseK \times baseN}{16 \times 64 \times 16 \times 频率} \geq \frac{baseM \times baseK \times (1 \times sizeof(dtype) + \frac{1}{32})}{BandWidth_{L0A}} + \frac{baseN \times baseK \times (1 \times sizeof(dtype) + \frac{1}{32})}{BandWidth_{L0B}}
+$$
+
+化简后得到MTE1 Bound条件：
+
+$$
+\frac{baseM \times baseN}{16 \times 64 \times 16 \times 频率} \geq \frac{baseM \times (1 \times sizeof(dtype) + \frac{1}{32})}{BandWidth_{L0A}} + \frac{baseN \times (1 \times sizeof(dtype) + \frac{1}{32})}{BandWidth_{L0B}}
+$$
+
+当L0A和L0B的带宽一致时，可进一步化简：
+
+$$
+BandWidth_{mte1} \geq (\frac{1}{baseN} + \frac{1}{baseM}) \times (1 \times sizeof(dtype) + \frac{1}{32}) \times 16 \times 64 \times 16 \times 频率
+$$
+
+- **特征分析**：
+  - 当满足上述条件时，L1到L0的数据搬运不成为性能瓶颈
+  - 不满足条件时，算子性能受限于MTE1数据搬运（MTE1 Bound）
+  - 右侧表达式主要受tiling参数（baseM, baseN）和L0缓冲区带宽影响
+  - 增大baseM和baseN可以降低右侧数值，更容易满足Cube Bound条件。
+
+- FIXP VS MMAD
+
+$$
+T_{cube} \geq T_{fixp} \Rightarrow \frac{M \times K \times N}{16 \times 64 \times 16 \times 核数 \times 频率} \geq \frac{M \times N \times sizeof(dtype)}{BandWidth_{fixp}}
+$$
+
+化简后得到FIXPIPE Bound条件：
+
+$$
+BandWidth_{fixp} \geq \frac{16 \times 64 \times 16 \times 核数 \times 频率 \times sizeof(dtype)}{K}
+$$
+
+- **特征分析**：
+  - 当满足上述条件时，L0C到GM的数据搬出不成为性能瓶颈
+  - 不满足条件时，算子性能受限于FIXPIPE数据搬出（FIXPIPE Bound）
+  - 右侧表达式与K维度成反比；对于大K场景，通常不会出现FIXPIPE Bound；对于小K场景，FIXPIPE Bound更容易成为瓶颈
 
 **建模说明**：
 - 该模型基于流水线理论，整体性能受限于最慢的流水阶段
