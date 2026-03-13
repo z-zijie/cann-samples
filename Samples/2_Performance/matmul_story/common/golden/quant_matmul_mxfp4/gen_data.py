@@ -61,7 +61,7 @@ def gen_golden_data_simple(m, k, n):
     a_cpu = torch.from_numpy(a_dequant)
     b_cpu = torch.from_numpy(b_dequant)
 
-    out = torch.matmul(a_cpu, b_cpu)
+    out = torch.matmul(a_cpu, b_cpu).to(torch.bfloat16)
 
     os.makedirs("input", exist_ok=True)
     os.makedirs("output", exist_ok=True)
@@ -69,7 +69,7 @@ def gen_golden_data_simple(m, k, n):
     b_pack_int8.tofile("./input/input_b.bin")
     a_scale.tofile("./input/input_scaleA.bin")
     b_scale.tofile("./input/input_scaleB.bin")
-    out.numpy().tofile("./output/golden_out.bin")
+    out.view(torch.uint16).numpy().tofile("./output/golden_out.bin")
 
 if __name__ == "__main__":
     if len(sys.argv) != 4:
