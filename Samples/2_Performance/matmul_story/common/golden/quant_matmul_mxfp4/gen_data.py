@@ -61,7 +61,7 @@ def gen_golden_data_simple(m, k, n):
     a_cpu = torch.from_numpy(a_dequant)
     b_cpu = torch.from_numpy(b_dequant)
 
-    out = torch.matmul(a_cpu, b_cpu)
+    out = torch.matmul(a_cpu, b_cpu).to(torch.bfloat16)
 
     os.makedirs("input", exist_ok=True)
     os.makedirs("output", exist_ok=True)
