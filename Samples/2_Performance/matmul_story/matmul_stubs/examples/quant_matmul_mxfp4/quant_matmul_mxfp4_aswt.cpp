@@ -12,9 +12,11 @@
  * \file quant_matmul_mxfp4_aswt.cpp
  * \brief
  */
-#include <iostream>
 #include <cstdlib>
+#include <filesystem>
+#include <iostream>
 #include <memory>
+#include <unistd.h>
 
 #include "acl/acl.h"
 #include "tiling/platform/platform_ascendc.h"
@@ -59,6 +61,7 @@ __global__ __aicore__ void QuantMatmulMxfp4Kernel(
     using AType = fp4x2_e2m1_t;
     using BType = fp4x2_e2m1_t;
     using BiasType = float;
+    //using CType = bfloat16_t;
     using CType = float;
 
     // Logical tensor layouts as seen by the matmul template.
@@ -268,7 +271,7 @@ int main(int argc, char* argv[])
     //   one fp32 bias per output column N.
     //
     // C:
-    //   full fp32 output matrix of shape [M, N].
+    //   full bf16 output matrix of shape [M, N].
     size_t sizeA = ((m * k + 1) >> 1) * sizeof(uint8_t);
     size_t sizeB = ((k * n + 1) >> 1) * sizeof(uint8_t);
     size_t sizeScaleA = (m * CeilDiv(k, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE) * sizeof(uint8_t);
@@ -373,7 +376,12 @@ int main(int argc, char* argv[])
     CHECK_COND(aclrtSynchronizeStream(stream) == ACL_SUCCESS, "aclrtSynchronizeStream failed.");
 
     WriteFile("./output/npu_out.bin", hC, sizeC);
-
+    std::filesystem::path exe_path = std::filesystem::canonical("/proc/self/exe");
+    std::filesystem::path exe_dir = exe_path.parent_path();
+    std::filesystem::path script =
+        exe_dir.parent_path().parent_path().parent_path() / "common/golden/quant_matmul_mxfp4/verify_result.py";
+    std::string cmd = "python3 \"" + script.string() + "\" " + std::to_string(m) + " " + std::to_string(n);
+    system(cmd.c_str());
     // `unique_ptr` takes care of freeing host/device buffers.
     // The runtime objects still need explicit destruction/finalization.
     aclrtDestroyStream(stream);

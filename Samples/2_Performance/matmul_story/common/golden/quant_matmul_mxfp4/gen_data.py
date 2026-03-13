@@ -69,7 +69,7 @@ def gen_golden_data_simple(m, k, n):
     b_pack_int8.tofile("./input/input_b.bin")
     a_scale.tofile("./input/input_scaleA.bin")
     b_scale.tofile("./input/input_scaleB.bin")
-    out.numpy().tofile("./output/golden_out.bin")
+    out.view(torch.uint16).numpy().tofile("./output/golden_out.bin")
 
 if __name__ == "__main__":
     if len(sys.argv) != 4:
