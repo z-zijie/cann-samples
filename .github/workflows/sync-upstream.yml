@@ -1,0 +1,39 @@
+name: Sync upstream master to sync/upstream/master
+
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream-master
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream and fetch master
+        run: |
+          git remote remove upstream || true
+          git remote add upstream https://gitcode.com/cann/cann-samples.git
+          git fetch upstream master --prune
+
+      - name: Update sync/upstream/master branch
+        run: |
+          git checkout -B sync/upstream/master FETCH_HEAD
+          git push origin sync/upstream/master --force
