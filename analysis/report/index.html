@@ -1,0 +1,1094 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cann-samples vs cuda-samples · 开源生态深度对比</title>
+<!-- BODY-CONTENT-START -->
+<style>
+/* ============================================================ DESIGN SYSTEM */
+:root{
+  --bg:#F4F5F3; --surface:#FFFFFF; --surface-2:#FAFBF9; --surface-3:#F0F2EE;
+  --ink:#16191D; --ink-2:#33383F; --muted:#5B636E; --faint:#8A929C;
+  --hairline:#E2E5E0; --hairline-2:#EDEFEB;
+  --cann:#C8102E; --cann-ink:#A50D26; --cann-soft:rgba(200,16,46,.10);
+  --cuda:#6DA800; --cuda-ink:#4C7A00; --cuda-soft:rgba(118,185,0,.14);
+  --graphite:#2E3440; --signal:#B7791F; --signal-soft:rgba(183,121,31,.12);
+  --shadow:0 1px 2px rgba(20,25,30,.05),0 8px 24px -12px rgba(20,25,30,.16);
+  --shadow-lg:0 2px 4px rgba(20,25,30,.06),0 24px 60px -24px rgba(20,25,30,.24);
+  --r:14px; --r-sm:9px; --r-xs:6px;
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue","PingFang SC","Microsoft YaHei",Arial,sans-serif;
+  --mono:ui-monospace,"SF Mono","JetBrains Mono","Cascadia Code",Menlo,Consolas,"DejaVu Sans Mono",monospace;
+  --gap:clamp(16px,2.2vw,26px);
+  --maxw:1180px;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#0F1216; --surface:#161A20; --surface-2:#1B2028; --surface-3:#212732;
+    --ink:#E9ECE7; --ink-2:#C6CCD3; --muted:#97A0AB; --faint:#6B7380;
+    --hairline:#282E38; --hairline-2:#20262F;
+    --cann:#FF4D63; --cann-ink:#FF8296; --cann-soft:rgba(255,77,99,.14);
+    --cuda:#8FD400; --cuda-ink:#AEE23F; --cuda-soft:rgba(143,212,0,.16);
+    --graphite:#C6CCD3; --signal:#E0A94A; --signal-soft:rgba(224,169,74,.14);
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 30px -14px rgba(0,0,0,.6);
+    --shadow-lg:0 2px 6px rgba(0,0,0,.5),0 30px 70px -28px rgba(0,0,0,.7);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0F1216; --surface:#161A20; --surface-2:#1B2028; --surface-3:#212732;
+  --ink:#E9ECE7; --ink-2:#C6CCD3; --muted:#97A0AB; --faint:#6B7380;
+  --hairline:#282E38; --hairline-2:#20262F;
+  --cann:#FF4D63; --cann-ink:#FF8296; --cann-soft:rgba(255,77,99,.14);
+  --cuda:#8FD400; --cuda-ink:#AEE23F; --cuda-soft:rgba(143,212,0,.16);
+  --graphite:#C6CCD3; --signal:#E0A94A; --signal-soft:rgba(224,169,74,.14);
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 30px -14px rgba(0,0,0,.6);
+  --shadow-lg:0 2px 6px rgba(0,0,0,.5),0 30px 70px -28px rgba(0,0,0,.7);
+}
+:root[data-theme="light"]{
+  --bg:#F4F5F3; --surface:#FFFFFF; --surface-2:#FAFBF9; --surface-3:#F0F2EE;
+  --ink:#16191D; --ink-2:#33383F; --muted:#5B636E; --faint:#8A929C;
+  --hairline:#E2E5E0; --hairline-2:#EDEFEB;
+  --cann:#C8102E; --cann-ink:#A50D26; --cann-soft:rgba(200,16,46,.10);
+  --cuda:#6DA800; --cuda-ink:#4C7A00; --cuda-soft:rgba(118,185,0,.14);
+  --graphite:#2E3440; --signal:#B7791F; --signal-soft:rgba(183,121,31,.12);
+  --shadow:0 1px 2px rgba(20,25,30,.05),0 8px 24px -12px rgba(20,25,30,.16);
+  --shadow-lg:0 2px 4px rgba(20,25,30,.06),0 24px 60px -24px rgba(20,25,30,.24);
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto} *{animation-duration:.001ms!important;transition-duration:.001ms!important}}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.6;
+  -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;font-size:15.5px}
+[data-density="compact"]{font-size:14px}
+[data-density="compact"] .card{padding:16px}
+[data-density="compact"] section{padding-block:34px}
+h1,h2,h3,h4{margin:0;line-height:1.15;text-wrap:balance;letter-spacing:-.01em}
+p{margin:0}
+a{color:var(--cuda-ink);text-decoration:none}
+.wrap{max-width:var(--maxw);margin:0 auto;padding:0 clamp(16px,4vw,40px)}
+.eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--faint);font-weight:600}
+.mono{font-family:var(--mono)}
+.tnum{font-variant-numeric:tabular-nums}
+section{padding-block:clamp(40px,6vw,68px);border-top:1px solid var(--hairline-2)}
+.sec-head{display:flex;flex-direction:column;gap:8px;margin-bottom:26px;max-width:78ch}
+.sec-head h2{font-size:clamp(23px,3vw,31px);font-weight:750}
+.sec-head .lead{color:var(--muted);font-size:15.5px}
+.sec-n{font-family:var(--mono);color:var(--cann-ink);font-weight:600}
+
+/* chips shared */
+.chip{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:12px;
+  padding:4px 10px;border-radius:999px;border:1px solid var(--hairline);background:var(--surface-2);color:var(--ink-2);white-space:nowrap}
+.dot{width:9px;height:9px;border-radius:50%;flex:none}
+.dot.cann{background:var(--cann)} .dot.cuda{background:var(--cuda)}
+.cann-fg{color:var(--cann-ink)} .cuda-fg{color:var(--cuda-ink)}
+
+/* ============================================================ MASTHEAD */
+.masthead{position:relative;overflow:hidden;padding-block:clamp(40px,7vw,84px) clamp(30px,4vw,44px);border-top:none}
+.masthead::before{content:"";position:absolute;inset:0;pointer-events:none;
+  background:
+   radial-gradient(70% 120% at 12% -10%,var(--cann-soft),transparent 60%),
+   radial-gradient(70% 120% at 88% -10%,var(--cuda-soft),transparent 60%);}
+.mh-grid{position:absolute;inset:0;opacity:.5;pointer-events:none;
+  background-image:linear-gradient(var(--hairline-2) 1px,transparent 1px),linear-gradient(90deg,var(--hairline-2) 1px,transparent 1px);
+  background-size:34px 34px;mask-image:linear-gradient(180deg,#000,transparent 78%)}
+.masthead .wrap{position:relative}
+.kicker{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:20px}
+.masthead h1{font-size:clamp(30px,5.4vw,58px);font-weight:800;letter-spacing:-.025em;line-height:1.03}
+.masthead h1 .vs{color:var(--faint);font-weight:500;font-family:var(--mono);font-size:.5em;vertical-align:middle;margin:0 .35em;letter-spacing:0}
+.masthead .sub{margin-top:20px;max-width:70ch;color:var(--muted);font-size:clamp(15px,1.7vw,18px)}
+.repo-a{color:var(--cann-ink)} .repo-b{color:var(--cuda-ink)}
+.mh-meta{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:32px}
+@media(max-width:680px){.mh-meta{grid-template-columns:1fr}}
+.mh-card{border:1px solid var(--hairline);border-radius:var(--r);background:var(--surface);padding:18px 20px;box-shadow:var(--shadow)}
+.mh-card.a{border-top:3px solid var(--cann)} .mh-card.b{border-top:3px solid var(--cuda)}
+.mh-card h3{font-size:19px;font-weight:750;display:flex;align-items:center;gap:9px}
+.mh-card .tag{font-family:var(--mono);font-size:11px;color:var(--faint);margin-top:2px}
+.mh-card dl{margin:14px 0 0;display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:13px}
+.mh-card dt{color:var(--faint);font-family:var(--mono);font-size:11.5px;white-space:nowrap}
+.mh-card dd{margin:0;color:var(--ink-2)}
+.lic-pill{display:inline-block;font-family:var(--mono);font-size:11px;padding:2px 8px;border-radius:999px;margin-top:3px}
+.lic-open{background:var(--cuda-soft);color:var(--cuda-ink)} .lic-restrict{background:var(--cann-soft);color:var(--cann-ink)}
+
+/* ============================================================ STAT TILES */
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:28px}
+@media(max-width:900px){.tiles{grid-template-columns:repeat(2,1fr)}}
+.tile{border:1px solid var(--hairline);border-radius:var(--r);background:var(--surface);padding:16px 18px;box-shadow:var(--shadow)}
+.tile .lab{font-family:var(--mono);font-size:11px;letter-spacing:.04em;color:var(--faint);text-transform:uppercase}
+.tile .vs{display:flex;align-items:baseline;gap:8px;margin-top:8px;flex-wrap:wrap}
+.tile .n{font-size:26px;font-weight:800;font-variant-numeric:tabular-nums;line-height:1}
+.tile .sep{color:var(--faint);font-family:var(--mono);font-size:14px}
+.tile .ratio{margin-top:9px;font-size:11.5px;color:var(--muted);font-family:var(--mono)}
+
+/* ============================================================ CONTROL DECK */
+.deck{position:sticky;top:0;z-index:40;background:color-mix(in srgb,var(--surface) 88%,transparent);
+  backdrop-filter:blur(12px) saturate(1.3);border-bottom:1px solid var(--hairline);border-top:1px solid var(--hairline)}
+.deck-inner{max-width:var(--maxw);margin:0 auto;padding:10px clamp(16px,4vw,40px);display:flex;gap:10px 18px;align-items:center;flex-wrap:wrap}
+.deck .grp{display:flex;align-items:center;gap:8px}
+.deck .glab{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint)}
+.seg{display:inline-flex;border:1px solid var(--hairline);border-radius:999px;overflow:hidden;background:var(--surface-2)}
+.seg button{appearance:none;border:0;background:transparent;color:var(--muted);font-family:var(--mono);font-size:12px;
+  padding:6px 12px;cursor:pointer;transition:.15s;white-space:nowrap;font-weight:600}
+.seg button[aria-pressed="true"]{background:var(--graphite);color:var(--surface)}
+:root[data-theme="dark"] .seg button[aria-pressed="true"],
+@media (prefers-color-scheme:dark){.seg button[aria-pressed="true"]{color:var(--bg)}}
+.seg button:hover:not([aria-pressed="true"]){color:var(--ink)}
+select.knob{appearance:none;border:1px solid var(--hairline);background:var(--surface-2) ;color:var(--ink);
+  font-family:var(--mono);font-size:12px;padding:6px 30px 6px 12px;border-radius:999px;cursor:pointer;font-weight:600;
+  background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);
+  background-position:calc(100% - 16px) 55%,calc(100% - 11px) 55%;background-size:5px 5px,5px 5px;background-repeat:no-repeat}
+.deck .spacer{flex:1}
+.deck-note{font-family:var(--mono);font-size:10.5px;color:var(--faint)}
+
+/* ============================================================ CARDS / GRID */
+.card{border:1px solid var(--hairline);border-radius:var(--r);background:var(--surface);padding:22px;box-shadow:var(--shadow)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:var(--gap)}
+.grid-l{display:grid;grid-template-columns:1.15fr .85fr;gap:var(--gap)}
+@media(max-width:860px){.grid2,.grid-l{grid-template-columns:1fr}}
+.card h3{font-size:17px;font-weight:750;margin-bottom:4px;display:flex;align-items:center;gap:8px}
+.card .ch-sub{color:var(--muted);font-size:13px;margin-bottom:16px}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-family:var(--mono);font-size:12px;color:var(--muted);margin-top:6px}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{width:12px;height:12px;border-radius:3px;display:inline-block}
+
+/* svg chart shells */
+.chart svg{display:block;width:100%;height:auto;overflow:visible}
+.axis-lab{font-family:var(--mono);font-size:11px;fill:var(--muted)}
+.bar-val{font-family:var(--mono);font-size:11px;font-weight:600;fill:var(--ink)}
+.gridline{stroke:var(--hairline);stroke-width:1}
+text{fill:var(--ink)}
+
+/* fit meter */
+.fitrow{display:flex;align-items:center;gap:12px;margin:10px 0}
+.fitrow .name{width:104px;font-weight:700;font-size:14px;flex:none;display:flex;align-items:center;gap:7px}
+.fittrack{flex:1;height:26px;border-radius:8px;background:var(--surface-3);position:relative;overflow:hidden;border:1px solid var(--hairline-2)}
+.fitfill{position:absolute;inset:0 auto 0 0;border-radius:7px;transition:width .35s cubic-bezier(.2,.7,.2,1)}
+.fitfill.cann{background:linear-gradient(90deg,var(--cann),color-mix(in srgb,var(--cann) 70%,#000))}
+.fitfill.cuda{background:linear-gradient(90deg,var(--cuda),color-mix(in srgb,var(--cuda) 78%,#000))}
+.fitval{width:56px;text-align:right;font-family:var(--mono);font-weight:700;font-variant-numeric:tabular-nums;flex:none}
+.winner{margin-top:12px;font-size:13px;color:var(--muted);font-family:var(--mono)}
+.winner b{color:var(--ink)}
+
+/* sliders */
+.sliders{display:grid;gap:9px;margin-top:4px}
+.sl{display:grid;grid-template-columns:130px 1fr 34px;align-items:center;gap:12px}
+.sl label{font-size:12.5px;color:var(--ink-2);font-weight:600}
+.sl output{font-family:var(--mono);font-size:12px;color:var(--muted);text-align:right}
+input[type=range]{-webkit-appearance:none;appearance:none;height:5px;border-radius:5px;background:var(--surface-3);outline:none;cursor:pointer}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;background:var(--graphite);border:2px solid var(--surface);box-shadow:var(--shadow);cursor:pointer}
+input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--graphite);border:2px solid var(--surface);cursor:pointer}
+.presets{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.pbtn{appearance:none;border:1px solid var(--hairline);background:var(--surface-2);color:var(--ink-2);border-radius:999px;
+  padding:7px 13px;font-size:12.5px;cursor:pointer;transition:.15s;font-weight:600}
+.pbtn:hover{border-color:var(--graphite);color:var(--ink)}
+.pbtn.active{background:var(--graphite);color:var(--surface);border-color:var(--graphite)}
+:root[data-theme="dark"] .pbtn.active,@media(prefers-color-scheme:dark){.pbtn.active{color:var(--bg)}}
+
+/* tables */
+.tbl-wrap{overflow-x:auto;border:1px solid var(--hairline);border-radius:var(--r);background:var(--surface);box-shadow:var(--shadow)}
+table{border-collapse:collapse;width:100%;font-size:13.5px;min-width:520px}
+th,td{text-align:left;padding:11px 14px;border-bottom:1px solid var(--hairline-2);vertical-align:top}
+thead th{position:sticky;top:0;background:var(--surface-2);font-family:var(--mono);font-size:11px;letter-spacing:.03em;
+  text-transform:uppercase;color:var(--muted);font-weight:600;cursor:pointer;user-select:none;white-space:nowrap}
+thead th .arr{opacity:.4;font-size:9px}
+tbody tr:hover{background:var(--surface-2)}
+tbody tr:last-child td{border-bottom:none}
+td.edge-cann{box-shadow:inset 3px 0 0 var(--cann)} td.edge-cuda{box-shadow:inset 3px 0 0 var(--cuda)}
+.edgebadge{font-family:var(--mono);font-size:10.5px;padding:2px 7px;border-radius:999px;font-weight:600}
+.eb-cann{background:var(--cann-soft);color:var(--cann-ink)} .eb-cuda{background:var(--cuda-soft);color:var(--cuda-ink)} .eb-tie{background:var(--surface-3);color:var(--muted)}
+
+/* coverage matrix */
+.filterbar{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:16px}
+.fchip{appearance:none;border:1px solid var(--hairline);background:var(--surface-2);color:var(--muted);border-radius:999px;
+  padding:5px 11px;font-family:var(--mono);font-size:11.5px;cursor:pointer;transition:.12s;font-weight:600}
+.fchip[aria-pressed="true"]{background:var(--graphite);color:var(--surface);border-color:var(--graphite)}
+:root[data-theme="dark"] .fchip[aria-pressed="true"],@media(prefers-color-scheme:dark){.fchip[aria-pressed="true"]{color:var(--bg)}}
+.cov{display:grid;grid-template-columns:1fr 88px 88px;gap:6px;align-items:stretch}
+.cov .ch{font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--faint);
+  padding:6px 4px;border-bottom:1px solid var(--hairline);position:sticky;top:0;background:var(--surface)}
+.cov .ch.c{text-align:center}
+.cov .dom{padding:9px 8px;font-size:13px;border-bottom:1px solid var(--hairline-2);display:flex;align-items:center;gap:8px}
+.cov .cell{border-bottom:1px solid var(--hairline-2);display:flex;align-items:center;justify-content:center;padding:5px}
+.heat{width:100%;height:30px;border-radius:var(--r-xs);display:flex;align-items:center;justify-content:center;
+  font-family:var(--mono);font-size:11px;font-weight:700;border:1px solid transparent}
+.tagdot{font-family:var(--mono);font-size:9.5px;color:var(--faint);border:1px solid var(--hairline);border-radius:4px;padding:0 5px;flex:none}
+.cov .row{display:contents}
+.cov .row.hide{display:none}
+
+/* only-in lists */
+.only{display:grid;grid-template-columns:1fr 1fr;gap:var(--gap)}
+@media(max-width:860px){.only{grid-template-columns:1fr}}
+.only ul{list-style:none;margin:14px 0 0;padding:0;display:grid;gap:10px}
+.only li{display:flex;gap:11px;font-size:13.5px;color:var(--ink-2);line-height:1.5}
+.only li::before{content:"";width:7px;height:7px;border-radius:2px;margin-top:8px;flex:none}
+.only .a li::before{background:var(--cann)} .only .b li::before{background:var(--cuda)}
+
+/* sample explorer */
+.explorer input[type=search]{width:100%;border:1px solid var(--hairline);background:var(--surface-2);color:var(--ink);
+  border-radius:var(--r-sm);padding:11px 14px;font-family:var(--mono);font-size:13px;margin-bottom:14px}
+.exp-grid{display:flex;flex-direction:column;gap:6px;max-height:420px;overflow:auto}
+.exp-item{display:grid;grid-template-columns:64px 1fr auto;gap:12px;align-items:center;padding:9px 12px;border:1px solid var(--hairline-2);
+  border-radius:var(--r-xs);background:var(--surface-2);font-size:13px}
+.exp-item .badge{font-family:var(--mono);font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px;text-align:center}
+.exp-item .badge.cann{background:var(--cann-soft);color:var(--cann-ink)} .exp-item .badge.cuda{background:var(--cuda-soft);color:var(--cuda-ink)}
+.exp-item .path{font-family:var(--mono);font-size:11px;color:var(--faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.exp-empty{color:var(--muted);font-size:13px;padding:20px;text-align:center}
+
+/* callouts */
+.callout{border-left:3px solid var(--signal);background:var(--signal-soft);border-radius:0 var(--r-sm) var(--r-sm) 0;padding:14px 18px;font-size:14px;color:var(--ink-2)}
+.callout b{color:var(--ink)}
+.two-col-note{display:grid;grid-template-columns:1fr 1fr;gap:var(--gap);margin-top:18px}
+@media(max-width:860px){.two-col-note{grid-template-columns:1fr}}
+.noteblk h4{font-size:14px;font-weight:750;margin-bottom:6px;display:flex;align-items:center;gap:8px}
+.noteblk p{font-size:13.5px;color:var(--muted)}
+
+/* recommendation */
+.rec{display:grid;grid-template-columns:1fr 1fr;gap:var(--gap)}
+@media(max-width:860px){.rec{grid-template-columns:1fr}}
+.reccard{border:1px solid var(--hairline);border-radius:var(--r);padding:20px;background:var(--surface);box-shadow:var(--shadow)}
+.reccard.a{border-top:3px solid var(--cann)} .reccard.b{border-top:3px solid var(--cuda)}
+.reccard h3{font-size:18px;margin-bottom:12px}
+.reccard .when{font-family:var(--mono);font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px}
+.reccard ul{margin:6px 0 0;padding-left:18px;font-size:13.5px;color:var(--ink-2);display:grid;gap:6px}
+
+/* footer */
+footer{padding:40px 0 60px;border-top:1px solid var(--hairline);color:var(--muted);font-size:12.5px}
+footer .wrap{display:flex;flex-direction:column;gap:8px}
+footer code{font-family:var(--mono);color:var(--ink-2);background:var(--surface-2);padding:1px 6px;border-radius:4px;font-size:11.5px}
+
+.tooltip{position:fixed;z-index:100;pointer-events:none;background:var(--graphite);color:var(--surface);font-family:var(--mono);
+  font-size:11.5px;padding:6px 9px;border-radius:6px;opacity:0;transition:opacity .12s;box-shadow:var(--shadow-lg);max-width:240px;line-height:1.45}
+:root[data-theme="dark"] .tooltip,@media(prefers-color-scheme:dark){.tooltip{color:var(--bg)}}
+.methodology dl{display:grid;grid-template-columns:auto 1fr;gap:8px 18px;font-size:13px;margin-top:6px}
+.methodology dt{font-family:var(--mono);font-size:11.5px;color:var(--faint);white-space:nowrap}
+.methodology dd{margin:0;color:var(--ink-2)}
+.disclaim{font-size:12px;color:var(--faint);margin-top:14px;font-style:italic}
+</style>
+
+<!-- ============================================================ MASTHEAD -->
+<header class="masthead">
+  <div class="mh-grid"></div>
+  <div class="wrap">
+    <div class="kicker">
+      <span class="eyebrow">开源生态深度对比报告</span>
+      <span class="chip mono">2026-07-09</span>
+      <span class="chip"><span class="dot cann"></span>Ascend NPU</span>
+      <span class="chip"><span class="dot cuda"></span>CUDA GPU</span>
+    </div>
+    <h1><span class="repo-a">cann-samples</span><span class="vs">VS</span><span class="repo-b">cuda-samples</span></h1>
+    <p class="sub">对华为 <b>cann-samples</b>（分支 <code class="mono">sync/upstream/master</code>）与英伟达 <b>NVIDIA/cuda-samples</b>（<code class="mono">master</code>，Release v13.3）做目录级、定位级、覆盖级与开源生态级的全方位对比。一份可交互、可操控旋钮的分析仪表盘 —— 拨动权重、切换视角、筛选领域，得到属于你的选型结论。</p>
+
+    <div class="mh-meta">
+      <div class="mh-card a">
+        <h3><span class="dot cann"></span>cann-samples</h3>
+        <div class="tag">gitcode.com/cann/cann-samples · 昇腾 CANN 算子实战样例</div>
+        <dl>
+          <dt>厂商</dt><dd>华为 Huawei</dd>
+          <dt>平台</dt><dd>Ascend NPU（昇腾 910B/C · 950）</dd>
+          <dt>对比引用</dt><dd>分支 <span class="mono">sync/upstream/master</span></dd>
+          <dt>主托管</dt><dd>GitCode（GitHub 为只读镜像）</dd>
+          <dt>内核语言</dt><dd>Ascend C <span class="mono">.asc</span></dd>
+          <dt>许可证</dt><dd>CANN OSL v2.0 <span class="lic-pill lic-restrict">受限 · 非 OSI</span></dd>
+        </dl>
+      </div>
+      <div class="mh-card b">
+        <h3><span class="dot cuda"></span>cuda-samples</h3>
+        <div class="tag">github.com/NVIDIA/cuda-samples · CUDA Toolkit 特性样例</div>
+        <dl>
+          <dt>厂商</dt><dd>英伟达 NVIDIA</dd>
+          <dt>平台</dt><dd>CUDA GPU（含 Tegra / DriveOS）</dd>
+          <dt>对比引用</dt><dd>分支 <span class="mono">master</span> · v13.3</dd>
+          <dt>主托管</dt><dd>GitHub（PR 原生协作 · v13.3 release PR #435）</dd>
+          <dt>内核语言</dt><dd>CUDA C++ <span class="mono">.cu / .cuh</span></dd>
+          <dt>许可证</dt><dd>BSD-3-Clause <span class="lic-pill lic-open">宽松 · OSI</span></dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="tiles" id="tiles"></div>
+  </div>
+</header>
+
+<!-- ============================================================ CONTROL DECK -->
+<div class="deck" role="region" aria-label="报表控制旋钮">
+  <div class="deck-inner">
+    <div class="grp"><span class="glab">主题</span>
+      <div class="seg" id="themeSeg" role="group" aria-label="主题">
+        <button data-theme-val="auto" aria-pressed="true">自动</button>
+        <button data-theme-val="light" aria-pressed="false">浅色</button>
+        <button data-theme-val="dark" aria-pressed="false">深色</button>
+      </div>
+    </div>
+    <div class="grp"><span class="glab">视图</span>
+      <div class="seg" id="viewSeg" role="group" aria-label="图表视图">
+        <button data-view="grouped" aria-pressed="true">并排</button>
+        <button data-view="overlay" aria-pressed="false">叠加</button>
+      </div>
+    </div>
+    <div class="grp"><span class="glab">主指标</span>
+      <select class="knob" id="metricSel" aria-label="主指标选择"></select>
+    </div>
+    <div class="grp"><span class="glab">刻度</span>
+      <div class="seg" id="scaleSeg" role="group" aria-label="刻度">
+        <button data-scale="linear" aria-pressed="true">线性</button>
+        <button data-scale="log" aria-pressed="false">对数</button>
+      </div>
+    </div>
+    <div class="grp"><span class="glab">密度</span>
+      <div class="seg" id="densitySeg" role="group" aria-label="密度">
+        <button data-density="comfortable" aria-pressed="true">舒适</button>
+        <button data-density="compact" aria-pressed="false">紧凑</button>
+      </div>
+    </div>
+    <div class="spacer"></div>
+    <span class="deck-note">旋钮实时驱动下方图表与评分 ▾</span>
+  </div>
+</div>
+
+<main>
+
+<!-- ============================================================ 1 · SCORECARD -->
+<section id="scorecard">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow"><span class="sec-n">01</span> &nbsp;总览 · 加权契合度</span>
+      <h2>一张能被你操控的记分牌</h2>
+      <p class="lead">下面七个能力轴是一套<b>显式的分析模型</b>（0–100 分，源自目录事实与许可条款，非官方指标）。左侧雷达是两仓的原始能力画像；右侧滑杆决定每个轴在你心中的权重，实时算出各自的<b>加权契合度</b>。先选一个身份预设，再微调旋钮。</p>
+    </div>
+    <div class="grid-l">
+      <div class="card">
+        <h3>能力画像雷达 <span class="chip mono" style="margin-left:auto">原始分 0–100</span></h3>
+        <div class="ch-sub">七轴能力对照 —— 面积越大代表该维度越强。</div>
+        <div class="chart" id="radar"></div>
+        <div class="legend">
+          <span><i style="background:var(--cann)"></i>cann-samples</span>
+          <span><i style="background:var(--cuda)"></i>cuda-samples</span>
+        </div>
+      </div>
+      <div class="card">
+        <h3>你的加权契合度</h3>
+        <div class="ch-sub">选择身份预设，或拖动滑杆自定义七轴权重。</div>
+        <div class="presets" id="presets"></div>
+        <div id="fitmeters"></div>
+        <div class="sliders" id="sliders"></div>
+      </div>
+    </div>
+    <div class="callout" style="margin-top:var(--gap)">
+      <b>一句话结论：</b>cuda-samples 是<b>广度取胜</b>的「CUDA 工具链全景陈列馆」——238 个可运行样例横跨库、图形、HPC、跨平台，且以 <b>BSD-3 真开源</b>许可分发；cann-samples 是<b>深度取胜</b>的「昇腾算子调优知识库」——用逐步教程与 LLM 算子 story 把矩阵乘/MoE/注意力打穿到极致，但以<b>受限的 CANN OSL 许可</b>（仅限昇腾用途、非 OSI）分发。选型取决于你要「学生态广度」还是「攻单点深度」，以及你对开源合规与硬件可得性的要求。
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 2 · DIRECTORY -->
+<section id="directory">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow"><span class="sec-n">02</span> &nbsp;目录结构与定位映射</span>
+      <h2>相同的编号骨架，不同的血肉</h2>
+      <p class="lead">两仓都采用「数字前缀分层」的样例骨架，但 cuda 是<b>扁平陈列</b>（类目/样例，两层到底），cann 是<b>深层嵌套</b>（类目/story/recipes｜tutorials/example/step，最深达 6 层）。cann 的 <code class="mono">2_Performance</code> 与 cuda 的 <code class="mono">4_CUDA_Libraries + 5_Domain_Specific</code> 承担了各自的重心，而彼此几乎不重叠。</p>
+    </div>
+    <div class="grid2">
+      <div class="card">
+        <h3><span class="dot cann"></span>cann-samples 目录树</h3>
+        <div class="ch-sub">4 个顶层类目 · 深藏 story / recipes / tutorials</div>
+        <pre class="mono" style="font-size:12px;line-height:1.7;overflow-x:auto;color:var(--ink-2);margin:0">Samples/
+├─ <b>0_Introduction</b>/          入门 · 5 组
+│   ├─ vector_add / vector_add_c_api
+│   ├─ matmul / npu_execution
+│   └─ vector_function_getting_started
+├─ <b>1_Features</b>/              特性 · 15 叶
+│   ├─ hardware_features/     hif8·simt·vector_function
+│   ├─ instruction_optimization/ mte2_preload·unit_flag…
+│   ├─ memory_optimization/   full_load·l1_bank_conflict…
+│   └─ system_optimization/   streamk·tail_rebalance
+├─ <b>2_Performance</b>/           性能调优 · 9 story
+│   ├─ matmul_story/          recipes(7)+tutorials(0→7)
+│   ├─ grouped_matmul_story/  recipes(4)
+│   ├─ moe_dispatch_and_combine_story/
+│   ├─ moe_init_routing_story/
+│   ├─ full_quant_fused_infer_attention_score_story/
+│   ├─ kv_rms_norm_rope_cache_story/ membase·regbase
+│   ├─ rms_norm_quant_story/ · simd_vf_story/
+│   └─ scalar_story/
+└─ <b>3_Utilities</b>/             工具 · 1
+    └─ simulation-based-vf-profiling</pre>
+      </div>
+      <div class="card">
+        <h3><span class="dot cuda"></span>cuda-samples 目录树</h3>
+        <div class="ch-sub">cpp/ 10 类目（205）+ python/ 4 类目（33）</div>
+        <pre class="mono" style="font-size:12px;line-height:1.7;overflow-x:auto;color:var(--ink-2);margin:0">cpp/
+├─ <b>0_Introduction</b>/            46  vectorAdd·matrixMul…
+├─ <b>1_Utilities</b>/               3   deviceQuery·topology
+├─ <b>2_Concepts_and_Techniques</b>/ 32  reduction·scan·sort
+├─ <b>3_CUDA_Features</b>/           24  graphs·tensorCore·CDP
+├─ <b>4_CUDA_Libraries</b>/          39  cuBLAS·cuFFT·NPP·CUB
+├─ <b>5_Domain_Specific</b>/         36  BlackScholes·nbody·GL
+├─ <b>6_Performance</b>/             5   transpose·alignedTypes
+├─ <b>7_libNVVM</b>/                 9   NVVM IR / ptxgen
+├─ <b>8_Platform_Specific</b>/       1   Tegra
+└─ <b>9_CUDA_Tile</b>/               10  helloTile·tileMatmul
+python/
+├─ <b>1_GettingStarted</b>/          8   vectorAdd·deviceQuery
+├─ <b>2_CoreConcepts</b>/            20  cudaGraphs·prefixSum
+├─ <b>3_FrameworkInterop</b>/        2   PyTorch·TensorFlow
+└─ <b>4_DistributedComputing</b>/    3   simpleP2P·multiGPU</pre>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:var(--gap)">
+      <h3>类目对应关系映射</h3>
+      <div class="ch-sub">两仓类目并非一一对应；下表给出语义上的对齐与错位。</div>
+      <div class="tbl-wrap" style="border:none;box-shadow:none">
+      <table>
+        <thead><tr><th>语义领域</th><th>cann-samples 对应</th><th>cuda-samples 对应</th><th>关系</th></tr></thead>
+        <tbody>
+          <tr><td>入门原语</td><td>0_Introduction</td><td>0_Introduction / python 1_GettingStarted</td><td><span class="edgebadge eb-tie">对齐</span></td></tr>
+          <tr><td>设备/工具查询</td><td>3_Utilities（profiling）</td><td>1_Utilities（deviceQuery）</td><td><span class="edgebadge eb-tie">弱对齐</span></td></tr>
+          <tr><td>并行算法/概念</td><td>—（仅 simd_vf 内含 reduce）</td><td>2_Concepts_and_Techniques</td><td><span class="edgebadge eb-cuda">cuda 独有</span></td></tr>
+          <tr><td>硬件/指令/访存特性</td><td>1_Features（4 子类）</td><td>3_CUDA_Features（部分）</td><td><span class="edgebadge eb-cann">cann 更细</span></td></tr>
+          <tr><td>数值库</td><td>—（仅 ops-tensor 子模块）</td><td>4_CUDA_Libraries</td><td><span class="edgebadge eb-cuda">cuda 独有</span></td></tr>
+          <tr><td>领域应用/图形/金融</td><td>—</td><td>5_Domain_Specific</td><td><span class="edgebadge eb-cuda">cuda 独有</span></td></tr>
+          <tr><td>算子性能调优</td><td>2_Performance（9 story）</td><td>6_Performance（5 样例）</td><td><span class="edgebadge eb-cann">cann 独深</span></td></tr>
+          <tr><td>LLM 推理算子</td><td>2_Performance（MoE/FIA/RoPE）</td><td>—</td><td><span class="edgebadge eb-cann">cann 独有</span></td></tr>
+          <tr><td>底层 IR / 编译</td><td>—</td><td>7_libNVVM</td><td><span class="edgebadge eb-cuda">cuda 独有</span></td></tr>
+          <tr><td>新编程模型</td><td>—（VF / SIMD 编程范式）</td><td>9_CUDA_Tile</td><td><span class="edgebadge eb-tie">各有其一</span></td></tr>
+          <tr><td>Python / 框架互操作</td><td>—（Python 仅为校验脚本）</td><td>python/ 3_FrameworkInterop</td><td><span class="edgebadge eb-cuda">cuda 独有</span></td></tr>
+          <tr><td>跨平台/嵌入式</td><td>—</td><td>8_Platform_Specific（Tegra）</td><td><span class="edgebadge eb-cuda">cuda 独有</span></td></tr>
+        </tbody>
+      </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 3 · COVERAGE -->
+<section id="coverage">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow"><span class="sec-n">03</span> &nbsp;覆盖范围 · 广度 vs 深度</span>
+      <h2>谁覆盖得更广，谁挖得更深</h2>
+      <p class="lead">用领域热力矩阵量化两仓覆盖：颜色越深代表投入越深（无 / 基础 / 覆盖 / 深耕）。用上方标签旋钮筛选你关心的领域族。下方两块柱状图展示各自类目的样例分布。</p>
+    </div>
+
+    <div class="grid-l">
+      <div class="card">
+        <h3>领域覆盖热力矩阵</h3>
+        <div class="ch-sub">深度分级：<span class="mono">0 无 · 1 基础 · 2 覆盖 · 3 深耕</span>。点击标签筛选。</div>
+        <div class="filterbar" id="covFilter"></div>
+        <div class="cov" id="covMatrix"></div>
+      </div>
+      <div class="card">
+        <h3>主指标对比 <span class="chip mono" id="metricLabelChip" style="margin-left:auto"></span></h3>
+        <div class="ch-sub">由控制台「主指标 / 视图 / 刻度」旋钮驱动。</div>
+        <div class="chart" id="metricBar"></div>
+        <div class="legend">
+          <span><i style="background:var(--cann)"></i>cann-samples</span>
+          <span><i style="background:var(--cuda)"></i>cuda-samples</span>
+        </div>
+        <h3 style="margin-top:26px">文件构成</h3>
+        <div class="ch-sub">按扩展名占比 —— 折射两仓「代码 vs 文档 vs 数据」的重心差异。</div>
+        <div class="chart" id="fileComp"></div>
+      </div>
+    </div>
+
+    <div class="callout" style="margin-top:var(--gap)">
+      <b>一处公平性说明：</b>cann 在「注意力 / LLM 推理算子」上的深耕（融合 RMSNorm+RoPE+KV-Cache、MoE 派发/合并、全量化 FIA）确为 cuda 所无；但并非零重叠 —— cuda 在 <code class="mono">cpp/9_CUDA_Tile</code> 中提供了<b>孤立原语</b> <code class="mono">tileRope</code>（RoPE 前向）、<code class="mono">tileLayerNorm</code>、<code class="mono">tileBmm</code>。故热力矩阵中 cuda 该项记为「基础」而非「无」：它有零件，但没有 cann 那种把整条算子链打穿的<b>融合调优 story</b>。
+    </div>
+
+    <div class="grid2" style="margin-top:var(--gap)">
+      <div class="card">
+        <h3><span class="dot cuda"></span>cuda-samples 类目样例分布</h3>
+        <div class="ch-sub">cpp/ 205 + python/ 33 = 238 个叶子样例</div>
+        <div class="chart" id="cudaCatBar"></div>
+      </div>
+      <div class="card">
+        <h3><span class="dot cann"></span>cann-samples 类目样例分布</h3>
+        <div class="ch-sub">展开 recipes / tutorials / variants 计 ≈ 62 叶</div>
+        <div class="chart" id="cannCatBar"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 4 · POSITIONING / OPENNESS -->
+<section id="openness">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow"><span class="sec-n">04</span> &nbsp;产品定位 · 开源开放定位</span>
+      <h2>「真开源」与「源码可得」之间</h2>
+      <p class="lead">这是全对比中最具决策分量的一节。cuda-samples 采用 <b>BSD-3-Clause</b>——OSI 认证、任意用途、可商用可分发；cann-samples 采用 <b>CANN Open Software License Agreement v2.0</b>——<b>限定用途</b>（仅可为「华为 AI 处理器」开发/分发）、<b>可撤销</b>、含<b>专利反制终止</b>条款，<b>不是 OSI 认证的开源许可</b>。二者「开放」的含义并不相同。</p>
+    </div>
+
+    <div class="grid-l">
+      <div class="card">
+        <h3>开源开放度记分卡</h3>
+        <div class="ch-sub">逐条对照两仓在许可、托管、贡献、可得性上的开放姿态。</div>
+        <div class="tbl-wrap" style="border:none;box-shadow:none">
+        <table id="openTable">
+          <thead><tr><th data-k="crit">评估维度</th><th data-k="cann">cann-samples</th><th data-k="cuda">cuda-samples</th><th data-k="edge" class="c">占优</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        </div>
+      </div>
+      <div class="card">
+        <h3>开放度仪表</h3>
+        <div class="ch-sub">对上表逐项占优计分的归一化结果。</div>
+        <div class="chart" id="openGauge"></div>
+        <div class="two-col-note" style="margin-top:8px">
+          <div class="noteblk">
+            <h4><span class="dot cuda"></span>cuda 定位</h4>
+            <p>面向<b>所有 CUDA 开发者</b>的工具链特性陈列 —— 「展示 CUDA Toolkit 能做什么」。广、浅、可运行、可自由取用。</p>
+          </div>
+          <div class="noteblk">
+            <h4><span class="dot cann"></span>cann 定位</h4>
+            <p>面向<b>昇腾算子工程师</b>的实战调优知识库 —— 「教你把某个算子在昇腾上打到极致」。窄、深、重文档、限昇腾用途。</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout" style="margin-top:var(--gap)">
+      <b>许可条款关键差异：</b>BSD-3 只要求「保留版权声明、不得以 NVIDIA 名义背书」，此外<b>无任何用途或硬件限制</b>，授权永久不可撤销。CANN OSL v2.0 的授权则明确写道：许可仅用于「开发<b>专用于搭载华为 AI 处理器</b>系统的软件」，且华为可在你违约或发起专利诉讼时<b>随时终止</b>授权、要求你<b>删除软件及衍生作品</b>。因此在「可自由分发 / 可用于非昇腾平台 / 长期法律确定性」上，cuda-samples 明显更开放。
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 5 · DEVELOPER SAMPLES -->
+<section id="developer">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow"><span class="sec-n">05</span> &nbsp;给开发者的 samples</span>
+      <h2>一个是「样例库」，一个是「教科书」</h2>
+      <p class="lead">同样叫 samples，开发体验却不同。cuda 每个样例是<b>一段聚焦的可运行程序</b> + 精简 README + 跨平台 CMake + 自动化回归；cann 每个 story 是<b>一部逐步教程</b>：从 <code class="mono">0_naive</code> 基准一路优化到 <code class="mono">7_fullload</code>，配性能建模文档、profiling 截图与数据校验脚本。</p>
+    </div>
+
+    <div class="two-col-note">
+      <div class="card">
+        <h3><span class="dot cann"></span>cann：递进式「story / recipe」</h3>
+        <ul style="list-style:none;padding:0;margin:12px 0 0;display:grid;gap:9px;font-size:13.5px;color:var(--ink-2)">
+          <li>📈 <b>逐步教程</b>：matmul_tutorials <span class="mono">0_naive→1_pingpong→2_block_swat→…→7_fullload</span>，每步一个优化点</li>
+          <li>🧩 <b>多配方 recipe</b>：同一算子的 MXFP4/MXFP8/HiF8/INT8 多量化实现并列</li>
+          <li>📚 <b>重文档</b>：67 个 README/.md + 210 张图/图示，含性能建模与访存分析</li>
+          <li>🛠 <b>构建门槛高</b>：<span class="mono">cmake -DNPU_ARCH=dav-3510/2201</span> + ops-tensor 子模块 + 指定 Toolkit 版本</li>
+          <li>🧪 Python 仅作<b>数据生成/精度校验</b>脚本，非可运行样例</li>
+          <li>🔒 <b>硬件门槛</b>：需 Ascend 910B/C 或 950 真机，特性样例挑架构</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3><span class="dot cuda"></span>cuda：聚焦式「一样例一特性」</h3>
+        <ul style="list-style:none;padding:0;margin:12px 0 0;display:grid;gap:9px;font-size:13.5px;color:var(--ink-2)">
+          <li>🎯 <b>单点可运行</b>：一个样例演示一个 API/特性，读完即跑</li>
+          <li>🔁 <b>NVRTC 变体</b>：多样例提供运行时编译版（<span class="mono">*_nvrtc</span>）</li>
+          <li>⚙️ <b>跨平台 CMake</b>：Linux / Windows / Tegra 交叉 / DriveOS 一套构建</li>
+          <li>✅ <b>自动化回归</b>：<span class="mono">run_tests.py</span> + <span class="mono">test_args.json</span> 逐样例参数化跑测</li>
+          <li>🐍 <b>真 Python 样例</b>：cuda-python + PyTorch/TF 自定义算子互操作</li>
+          <li>🟢 <b>硬件门槛低</b>：任意 NVIDIA GPU 即可，README 精简</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="callout" style="margin-top:var(--gap)">
+      <b>文档密度是最直观的分野：</b>两仓 README 总量相近（各约 585&nbsp;KB），但 cuda 摊在 <b>258</b> 篇里、单篇均值仅 ~2.3&nbsp;KB（模板式卡片）；cann 集中在 <b>67</b> 篇里、单篇均值 ~10.6&nbsp;KB（长文教程），单篇最大 64&nbsp;KB。cann README 含约 <b>7.6 万</b>汉字与 184 张 tiling/流水/profiling 图；<code class="mono">simd_vf_story</code> 单篇 README 达 1644 行、<code class="mono">matmul_story</code> 1180 行并配 8 级递进教程。cuda 侧几乎无图，靠精炼英文小节 + 外链 SM 兼容矩阵。
+    </div>
+
+    <div class="only" style="margin-top:var(--gap)">
+      <div class="card">
+        <h3><span class="dot cann"></span>仅 cann 独有</h3>
+        <ul class="a" id="onlyCann"></ul>
+      </div>
+      <div class="card">
+        <h3><span class="dot cuda"></span>仅 cuda 独有</h3>
+        <ul class="b" id="onlyCuda"></ul>
+      </div>
+    </div>
+
+    <div class="card explorer" style="margin-top:var(--gap)">
+      <h3>样例浏览器 <span class="chip mono" style="margin-left:auto" id="expCount"></span></h3>
+      <div class="ch-sub">搜索任意样例/类目名称，跨两仓即时过滤（代表性子集）。</div>
+      <input type="search" id="expSearch" placeholder="搜索：matmul / moe / cuBLAS / graphs / vulkan / rope …" aria-label="搜索样例">
+      <div class="exp-grid" id="expGrid"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 6 · ECOSYSTEM -->
+<section id="ecosystem">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow"><span class="sec-n">06</span> &nbsp;开源开放生态 · 治理与维护</span>
+      <h2>全球 PR 社区 vs 结构化 SIG 门禁</h2>
+      <p class="lead">两仓代表两种开源运营范式。cuda 是 <b>GitHub 原生</b>：任何人 fork + PR，pre-commit.ci 自动格式化，随 CUDA Toolkit 版本发布，历经 10.x→13.3 多年沉淀。cann 主场在 <b>GitCode</b>：SIG ops-basic 治理，Committer/Maintainer 分级评审，620 行 CONTRIBUTING 规范 story 模板，真机 CI 功能门禁；GitHub 侧只是同步镜像。</p>
+    </div>
+    <div class="grid2">
+      <div class="card">
+        <div class="methodology">
+          <h3><span class="dot cann"></span>cann-samples 生态</h3>
+          <dl style="margin-top:12px">
+            <dt>主平台</dt><dd>GitCode（中国）· Issues/Discussions/SIG 均在此</dd>
+            <dt>GitHub</dt><dd>只读镜像分支 <span class="mono">sync/upstream/master</span>（.ci/mirror_update_time.txt）</dd>
+            <dt>治理</dt><dd>SIG <span class="mono">ops-basic</span> · Committer <span class="mono">/lgtm</span> → Maintainer <span class="mono">/approve</span> 两级评审</dd>
+            <dt>贡献规范</dt><dd>620 行 CONTRIBUTING（A/B/C 三种 Sample 模板）+ OAT.xml 全库许可声明强制</dd>
+            <dt>CI 门禁</dt><dd><span class="mono">run_ci_functional.py</span> 真机功能测试</dd>
+            <dt>依赖</dt><dd>git 子模块 ops-tensor / shmem（来自 gitcode）</dd>
+            <dt>成熟度</dt><dd>年轻 · 镜像分支约 50 提交（2026-05→07）· 约 21 位作者（多为华为）</dd>
+            <dt>语言</dt><dd>中文优先</dd>
+          </dl>
+        </div>
+      </div>
+      <div class="card">
+        <div class="methodology">
+          <h3><span class="dot cuda"></span>cuda-samples 生态</h3>
+          <dl style="margin-top:12px">
+            <dt>主平台</dt><dd>GitHub（全球）· 原生 PR 协作</dd>
+            <dt>版本</dt><dd>随 CUDA Toolkit 发布（本次 v13.3）· CHANGELOG 27 版本上溯 CUDA 9.2/10.0</dd>
+            <dt>治理</dt><dd>NVIDIA 维护 · 外部 Fork + PR</dd>
+            <dt>贡献规范</dt><dd>94 行 CONTRIBUTING + pre-commit 钩子（clang-format + ruff）</dd>
+            <dt>CI 门禁</dt><dd>pre-commit.ci 格式化 + <span class="mono">run_tests.py</span> 回归</dd>
+            <dt>依赖</dt><dd>CPM 拉取 CCCL（pin v3.3.3）</dd>
+            <dt>成熟度</dt><dd>多年沉淀 · CHANGELOG 覆盖 CUDA 10.x→13.3</dd>
+            <dt>语言</dt><dd>英文 / 全球</dd>
+          </dl>
+        </div>
+      </div>
+    </div>
+    <div class="two-col-note">
+      <div class="callout"><b>cann 的生态强项：</b>结构化治理与真机 CI 功能门禁、极深的中文调优文档、面向 AI 大模型算子的前沿覆盖（MX 量化、MoE、注意力）。</div>
+      <div class="callout"><b>cuda 的生态强项：</b>宽松许可带来的低法律摩擦、全球社区可达性、跨平台与数值库的极致广度、随工具链长期演进的成熟度。</div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 7 · RECOMMENDATION -->
+<section id="recommend">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow"><span class="sec-n">07</span> &nbsp;选型建议</span>
+      <h2>什么时候选哪一个</h2>
+      <p class="lead">二者不是替代关系，而是服务于不同目标与不同硬件栈。用你在第 01 节调好的旋钮回看契合度，再对照下面的场景清单。</p>
+    </div>
+    <div class="rec">
+      <div class="reccard a">
+        <div class="when">选 cann-samples 当你…</div>
+        <h3><span class="dot cann"></span>攻昇腾算子深度</h3>
+        <ul>
+          <li>在 Ascend 910B/C 或 950 上做<b>高性能算子开发/调优</b></li>
+          <li>需要 <b>LLM 推理算子</b>（MoE、Fused Attention、RoPE+RMSNorm KV Cache）的工程实现范式</li>
+          <li>需要 <b>MX/HiF8/INT8 低比特量化</b>矩阵乘的完整 recipe</li>
+          <li>想系统学习「访存/指令/系统」三层<b>逐步优化方法论</b></li>
+          <li>接受<b>限昇腾用途</b>的许可与真机门槛，看重中文深度文档</li>
+        </ul>
+      </div>
+      <div class="reccard b">
+        <div class="when">选 cuda-samples 当你…</div>
+        <h3><span class="dot cuda"></span>学 CUDA 生态广度</h3>
+        <ul>
+          <li>要<b>系统入门/概览</b> CUDA 全栈能力与 API 特性</li>
+          <li>需要 <b>cuBLAS/cuFFT/cuSOLVER/NPP/CUB/Thrust</b> 等库的可运行示例</li>
+          <li>做<b>图形互操作</b>（D3D/Vulkan/GL）或<b>经典 HPC/金融</b>计算</li>
+          <li>关心<b>开源合规、可商用、可分发</b>与跨平台（Windows/Tegra/DriveOS）</li>
+          <li>想要<b>低硬件门槛</b>（任意 NVIDIA GPU）与全球社区支持</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ METHODOLOGY -->
+<section id="method" class="methodology">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="eyebrow"><span class="sec-n">08</span> &nbsp;方法与数据来源</span>
+      <h2>口径与免责声明</h2>
+    </div>
+    <div class="card">
+      <dl>
+        <dt>对比对象</dt><dd>cann-samples <span class="mono">sync/upstream/master</span>（本仓工作树与该分支内容一致）；NVIDIA/cuda-samples <span class="mono">master</span>，Release v13.3（对齐 CUDA Toolkit 13.3）。快照日期 2026-07-09。</dd>
+        <dt>计数口径</dt><dd>所有文件数、类目数、样例数均由对两仓工作树的 <span class="mono">find</span>/<span class="mono">ls</span> 直接枚举得到（排除 .git）。cuda「叶子样例」= cpp 各类目二级目录（205）+ python 各类目二级目录（33）=238；cann「叶子样例」在展开 <span class="mono">recipes/examples</span>、<span class="mono">matmul_tutorials</span> 步骤与 <span class="mono">membase/regbase</span> 等变体后约 62，其顶层可见样例组为 19。</dd>
+        <dt>能力评分</dt><dd>七轴 0–100 分为<b>显式分析模型</b>，由目录事实、覆盖广度/深度、许可条款与治理信号推导，供读者用滑杆重加权；<b>非任一厂商官方指标</b>，属本报告的编辑判断。</dd>
+        <dt>许可判定</dt><dd>直接研读两仓 <span class="mono">LICENSE</span> 全文。cuda=BSD-3-Clause（OSI 认证）；cann=CANN OSL v2.0（含用途限制、可撤销、专利反制条款，非 OSI 认证）。</dd>
+        <dt>局限</dt><dd>cuda-samples 为浅克隆，历史提交/贡献者数以公开 PR 编号与 CHANGELOG 佐证，未做全量 git 统计。样例浏览器仅收录代表性子集。领域深度分级含主观成分。</dd>
+      </dl>
+      <p class="disclaim">本报告为独立技术对比分析，非任何厂商官方文档；商标与许可条款归各自权利人所有。数值以快照日两仓实际内容为准。</p>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div>📊 <b>cann-samples vs cuda-samples · 开源生态深度对比</b> —— 交互式分析仪表盘</div>
+    <div>数据快照 <code>2026-07-09</code> · cann <code>sync/upstream/master</code> · cuda <code>master · v13.3</code> · 计数来自两仓工作树直接枚举</div>
+    <div>旋钮：主题 · 视图 · 主指标 · 刻度 · 密度 · 领域筛选 · 加权契合度滑杆与身份预设</div>
+  </div>
+</footer>
+
+<div class="tooltip" id="tt"></div>
+
+<script>
+/* ============================================================ DATA */
+const DATA = {"meta":{"generated":"2026-07-09","cann":{"key":"cann","name":"cann-samples","vendor":"华为 Huawei","platform":"Ascend NPU（昇腾）","ref":"分支 sync/upstream/master","home":"GitCode（gitcode.com/cann/cann-samples）","githubRole":"GitHub 为只读镜像（sync/upstream/master）","version":"对齐 CANN Toolkit 9.1.0（社区版）","license":"CANN Open Software License Agreement v2.0","licenseClass":"受限 / 源码可得（source-available）","osi":false,"kernelLang":"Ascend C（.asc）","totalFiles":782,"catRoot":"Samples/","color":"cann"},"cuda":{"key":"cuda","name":"cuda-samples","vendor":"英伟达 NVIDIA","platform":"CUDA GPU","ref":"分支 master（Release v13.3）","home":"GitHub（github.com/NVIDIA/cuda-samples）","githubRole":"GitHub 原生仓库（PR 协作，已至 #435）","version":"对齐 CUDA Toolkit 13.3","license":"BSD 3-Clause","licenseClass":"OSI 认证 · 宽松许可（permissive）","osi":true,"kernelLang":"CUDA C++（.cu / .cuh）","totalFiles":2022,"catRoot":"cpp/ + python/","color":"cuda"}},"headline":[{"label":"顶层样例类目 (categories)","cann":4,"cuda":14,"note":"cann: 4 (Samples/0-3)；cuda: 10 (cpp) + 4 (python)"},{"label":"叶子样例 (leaf samples)","cann":62,"cuda":238,"note":"cann 展开 recipes/tutorials/variants 计数；cuda 205 cpp + 33 python"},{"label":"顶层样例组 (sample groups)","cann":19,"cuda":238,"note":"cann 顶层可见样例目录数 19，深藏于 story/recipes"},{"label":"仓库总文件数 (files)","cann":782,"cuda":2022},{"label":"内核源文件 (kernel src)","cann":116,"cuda":239,"note":"cann .asc 116；cuda .cu 189 + .cuh 50"},{"label":"文档文件 README/.md","cann":67,"cuda":258},{"label":"Python 文件","cann":79,"cuda":37,"note":"cann: 数据生成/校验脚本；cuda: 可运行 CUDA-Python 样例"},{"label":"图片/图示资产","cann":210,"cuda":200,"note":"cann .png184+.svg26=210；cuda png20+jpg28+ppm54+pgm21+bmp12+gif6+…"}],"cudaCpp":[{"cat":"0_Introduction","n":46},{"cat":"1_Utilities","n":3},{"cat":"2_Concepts_and_Techniques","n":32},{"cat":"3_CUDA_Features","n":24},{"cat":"4_CUDA_Libraries","n":39},{"cat":"5_Domain_Specific","n":36},{"cat":"6_Performance","n":5},{"cat":"7_libNVVM","n":9},{"cat":"8_Platform_Specific","n":1},{"cat":"9_CUDA_Tile","n":10}],"cudaPython":[{"cat":"1_GettingStarted","n":8},{"cat":"2_CoreConcepts","n":20},{"cat":"3_FrameworkInterop","n":2},{"cat":"4_DistributedComputing","n":3}],"cannCat":[{"cat":"0_Introduction","n":5,"groups":["matmul","npu_execution","vector_add","vector_add_c_api","vector_function_getting_started"]},{"cat":"1_Features","n":15,"groups":["hardware_features (hif8, simt, vector_function, simd_vf_constraints)","instruction_optimization (mte2_preload, n_buffer, unit_flag, weightnz)","memory_optimization (full_load, l1_bank_conflict, reg_data_movement, scale_cache, slide_window_adaptive_template)","system_optimization (streamk, tail_rebalance)"]},{"cat":"2_Performance","n":41,"groups":["matmul_story (7 recipes + 8 tutorials)","grouped_matmul_story (4 recipes)","moe_dispatch_and_combine_story","moe_init_routing_story","full_quant_fused_infer_attention_score_story","kv_rms_norm_rope_cache_story (membase, regbase)","rms_norm_quant_story","simd_vf_story (broadcast, elemwise, reduce)","scalar_story"]},{"cat":"3_Utilities","n":1,"groups":["simulation-based-vf-profiling"]}],"fileTypes":{"cann":[{"ext":".h 头文件","n":235},{"ext":".png 图片","n":184},{"ext":".asc 内核源","n":116},{"ext":".py 脚本","n":79},{"ext":".md 文档","n":67},{"ext":".txt","n":51},{"ext":".svg","n":26},{"ext":".sh","n":9},{"ext":"其它","n":15}],"cuda":[{"ext":".json 测试参数","n":379},{"ext":".txt","n":265},{"ext":".md 文档","n":258},{"ext":".h 头文件","n":219},{"ext":".cu 内核源","n":189},{"ext":".cpp","n":189},{"ext":".hpp","n":106},{"ext":".cuh 内核头","n":50},{"ext":".py 样例","n":37},{"ext":"图片/数据","n":168},{"ext":"其它","n":162}]},"coverage":[{"domain":"入门原语 (vector add / hello / template)","cann":3,"cuda":2,"tag":"入门"},{"domain":"设备/拓扑查询 (device / topology query)","cann":1,"cuda":2,"tag":"入门"},{"domain":"并行算法原语 (reduction / scan / sort / histogram)","cann":1,"cuda":3,"tag":"通算"},{"domain":"矩阵乘 / GEMM","cann":3,"cuda":2,"tag":"计算"},{"domain":"注意力 / LLM 推理算子 (FIA / MoE / RoPE / RMSNorm)","cann":3,"cuda":1,"tag":"LLM"},{"domain":"量化 (MX FP4/FP8 · HiF8 · INT8)","cann":3,"cuda":1,"tag":"LLM"},{"domain":"数值库 (BLAS/FFT/SOLVER/RAND/CUB/Thrust/CCCL)","cann":0,"cuda":3,"tag":"库"},{"domain":"图像/信号处理 (NPP · JPEG · DCT · 滤波)","cann":0,"cuda":3,"tag":"库"},{"domain":"图形互操作 (D3D11/12 · Vulkan · OpenGL)","cann":0,"cuda":3,"tag":"图形"},{"domain":"金融/科学 HPC (BlackScholes · nbody · FDTD · Monte Carlo)","cann":0,"cuda":3,"tag":"HPC"},{"domain":"执行模型 (Graphs · Streams · CDP · IPC · P2P)","cann":1,"cuda":3,"tag":"系统"},{"domain":"性能调优方法论 (逐步优化实践)","cann":3,"cuda":1,"tag":"性能"},{"domain":"硬件微架构特性 (SIMD/SIMT · bank conflict · 多缓冲)","cann":3,"cuda":1,"tag":"硬件"},{"domain":"多卡/分布式 (multi-GPU · MPI · shmem)","cann":1,"cuda":2,"tag":"系统"},{"domain":"Python / 框架互操作 (PyTorch / TF / cuda-python)","cann":0,"cuda":2,"tag":"生态"},{"domain":"仿真 / Profiling 工具","cann":2,"cuda":1,"tag":"工具"},{"domain":"跨平台/嵌入式 (Windows · Tegra · DriveOS)","cann":0,"cuda":3,"tag":"平台"}],"axes":[{"key":"breadth","label":"覆盖广度 Breadth","cann":35,"cuda":95},{"key":"depth","label":"单点深度 Depth","cann":88,"cuda":60},{"key":"openness","label":"开放度 Openness (许可)","cann":32,"cuda":92},{"key":"portable","label":"跨平台 Portability","cann":22,"cuda":90},{"key":"pedagogy","label":"教学/文档 Pedagogy","cann":90,"cuda":58},{"key":"maturity","label":"成熟度/社区 Maturity","cann":45,"cuda":95},{"key":"llmops","label":"LLM 算子聚焦 AI-ops","cann":95,"cuda":28}],"presets":[{"id":"balanced","label":"均衡视角","w":{"breadth":1,"depth":1,"openness":1,"portable":1,"pedagogy":1,"maturity":1,"llmops":1}},{"id":"breadth","label":"我要广度学 CUDA 生态","w":{"breadth":3,"depth":1,"openness":2,"portable":2,"pedagogy":1,"maturity":2,"llmops":0.3}},{"id":"llmtune","label":"我要深挖昇腾 LLM 算子调优","w":{"breadth":0.5,"depth":3,"openness":0.5,"portable":0.3,"pedagogy":2.5,"maturity":1,"llmops":3}},{"id":"compliance","label":"我关心开源合规/可分发","w":{"breadth":1,"depth":1,"openness":3,"portable":2,"pedagogy":0.5,"maturity":2,"llmops":0.5}},{"id":"teaching","label":"我要教学/自学素材","w":{"breadth":1.5,"depth":1.5,"openness":1,"portable":1,"pedagogy":3,"maturity":1,"llmops":1}}],"openness":[{"crit":"许可证类型","cann":"CANN OSL v2.0（受限）","cuda":"BSD-3-Clause（宽松）","edge":"cuda"},{"crit":"OSI 认证开源","cann":"否","cuda":"是","edge":"cuda"},{"crit":"使用范围限制","cann":"仅限为华为 AI 处理器开发/分发","cuda":"无用途限制","edge":"cuda"},{"crit":"许可可撤销 / 专利反制条款","cann":"可撤销 + 专利诉讼即终止","cuda":"无（永久授权）","edge":"cuda"},{"crit":"衍生作品分发","cann":"须随附本协议、保留声明、限昇腾用途","cuda":"保留版权声明即可，任意用途","edge":"cuda"},{"crit":"主托管平台","cann":"GitCode（中国）","cuda":"GitHub（全球）","edge":"cuda"},{"crit":"GitHub 角色","cann":"只读镜像 sync/upstream/master","cuda":"原生开发主仓","edge":"cuda"},{"crit":"贡献流程","cann":"SIG + Committer/Maintainer 门禁，620 行 CONTRIBUTING","cuda":"Fork + PR，pre-commit.ci","edge":"tie"},{"crit":"功能性 CI 门禁","cann":"run_ci_functional.py（真机功能测试）","cuda":"run_tests.py + test_args.json + pre-commit","edge":"tie"},{"crit":"文档语言 / i18n","cann":"中文优先","cuda":"英文 / 全球","edge":"cuda"},{"crit":"硬件可得性","cann":"需 Ascend 910B/C 或 950 + 指定 Toolkit","cuda":"任意 NVIDIA GPU","edge":"cuda"},{"crit":"领域文档/调优知识库深度","cann":"逐步教程 + 性能建模 + profiling 图","cuda":"以可运行样例为主，文档较简","edge":"cann"}],"onlyCann":["逐步性能调优教程：matmul_tutorials 0_naive → 7_fullload（Ping-Pong / SWAT / UnitFlag / Half-L1 / 全载）","LLM 推理算子专题 story：MoE dispatch/combine、MoE init routing、Fused-Infer-Attention-Score、KV-RMSNorm-RoPE-Cache","前沿低比特量化 recipes：MXFP4 / MXFP8 / HiFloat8 / INT8 及 Weight-NZ","昇腾微架构特性样例：HiF8、SIMT、Vector Function、L1 bank conflict、N-buffer、MTE2 preload、Unit Flag","面向 NPU 的访存/指令/系统三层优化方法（StreamK、尾轮均衡、滑窗自适应模板）","基于仿真的 VF Profiling 工具链（simulation-based-vf-profiling）","结构化社区治理：SIG ops-basic、Committer/Maintainer 分级评审、真机 CI 功能门禁"],"onlyCuda":["完整数值库样例：cuBLAS / cuFFT / cuSOLVER / cuRAND / NPP / nvJPEG / CUB / Thrust / CCCL 3.3","图形互操作：Direct3D 11/12、Vulkan、OpenGL 全套渲染 + CUDA 互操作","经典 HPC / 金融：BlackScholes、二项式期权、Monte Carlo、nbody、FDTD3d、Mandelbrot","并行算法教科书样例：reduction、scan、radix/merge sort、histogram、卷积、协作组","CUDA 执行模型全景：CUDA Graphs、条件节点、Streams、动态并行(CDP)、IPC、P2P、Tensor Core GEMM","跨平台：Windows / Linux / Tegra 交叉编译 / DriveOS 汽车平台","CUDA-Python 可运行样例 + PyTorch / TensorFlow 自定义算子互操作 + 新 CUDA Tile 编程模型","自动化测试：run_tests.py 驱动全样例回归，test_args.json 逐样例参数化"]};
+
+/* ============================================================ HELPERS */
+const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
+const svgNS="http://www.w3.org/2000/svg";
+function el(t,a={},kids=[]){const e=document.createElement(t);
+  for(const k in a){if(k==="_ns")continue; if(k==="text")e.textContent=a[k]; else e.setAttribute(k,a[k]);}
+  (Array.isArray(kids)?kids:[kids]).forEach(c=>c&&e.appendChild(typeof c==="string"?document.createTextNode(c):c));return e;}
+function S(t,a={},kids=[]){const e=document.createElementNS(svgNS,t);
+  for(const k in a)if(a[k]!=null)e.setAttribute(k,a[k]);
+  (Array.isArray(kids)?kids:[kids]).forEach(c=>c&&e.appendChild(typeof c==="string"?document.createTextNode(c):c));return e;}
+const css=v=>getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const COL=()=>({cann:css('--cann'),cuda:css('--cuda'),cannInk:css('--cann-ink'),cudaInk:css('--cuda-ink'),
+  ink:css('--ink'),muted:css('--muted'),faint:css('--faint'),hair:css('--hairline'),surf3:css('--surface-3')});
+
+/* tooltip */
+const tt=$('#tt');
+function showTip(html,x,y){tt.innerHTML=html;tt.style.opacity=1;
+  const r=tt.getBoundingClientRect();let px=x+14,py=y+14;
+  if(px+r.width>innerWidth-8)px=x-r.width-14; if(py+r.height>innerHeight-8)py=y-r.height-14;
+  tt.style.left=px+'px';tt.style.top=py+'px';}
+function hideTip(){tt.style.opacity=0;}
+
+/* ============================================================ STATE */
+const state={view:'grouped',metric:0,scale:'linear',weights:{},preset:'balanced',covTags:new Set()};
+DATA.axes.forEach(a=>state.weights[a.key]=1);
+
+/* ============================================================ TILES */
+function renderTiles(){
+  const box=$('#tiles');box.innerHTML='';
+  DATA.headline.slice(0,4).forEach(h=>{
+    const ratio=(h.cuda>=h.cann)?(h.cuda/h.cann):(h.cann/h.cuda);
+    const lead=h.cuda>=h.cann?'cuda':'cann';
+    box.appendChild(el('div',{class:'tile'},[
+      el('div',{class:'lab',text:h.label}),
+      el('div',{class:'vs'},[
+        el('span',{class:'n cann-fg',text:h.cann.toLocaleString()}),
+        el('span',{class:'sep',text:'/'}),
+        el('span',{class:'n cuda-fg',text:h.cuda.toLocaleString()}),
+      ]),
+      el('div',{class:'ratio',text:`${lead==='cuda'?'cuda':'cann'} ≈ ${ratio.toFixed(1)}×`}),
+    ]));
+  });
+}
+
+/* ============================================================ METRIC SELECT */
+function initMetricSel(){
+  const sel=$('#metricSel');
+  DATA.headline.forEach((h,i)=>sel.appendChild(el('option',{value:i,text:h.label})));
+  sel.value=state.metric;
+  sel.addEventListener('change',()=>{state.metric=+sel.value;renderMetricBar();});
+}
+
+/* ============================================================ BAR: metric */
+function renderMetricBar(){
+  const c=COL(),h=DATA.headline[state.metric];
+  $('#metricLabelChip').textContent=h.label;
+  const box=$('#metricBar');box.innerHTML='';
+  const W=440,H=170,padL=8,padR=8,padT=14,padB=34;
+  const svg=S('svg',{viewBox:`0 0 ${W} ${H}`,role:'img'});
+  const vals=[{k:'cann',v:h.cann,col:c.cann},{k:'cuda',v:h.cuda,col:c.cuda}];
+  const tf=state.scale==='log'?(x=>Math.log10(Math.max(1,x))):(x=>x);
+  const maxV=Math.max(tf(h.cann),tf(h.cuda))*1.12||1;
+  const plotW=W-padL-padR, plotH=H-padT-padB;
+  // baseline
+  svg.appendChild(S('line',{x1:padL,y1:padT+plotH,x2:W-padR,y2:padT+plotH,class:'gridline'}));
+  const groupW=plotW/2;
+  vals.forEach((d,i)=>{
+    const bw=state.view==='overlay'?groupW*0.5:groupW*0.44;
+    let bx;
+    if(state.view==='overlay'){ bx=padL+plotW/2-bw/2 + (i===0?-bw*0.55:bw*0.55); }
+    else { bx=padL+i*groupW+groupW/2-bw/2; }
+    const bh=Math.max(2,tf(d.v)/maxV*plotH);
+    const by=padT+plotH-bh;
+    const rect=S('rect',{x:bx,y:by,width:bw,height:bh,rx:5,fill:d.col,opacity:state.view==='overlay'?0.82:1,style:'cursor:pointer;transition:.3s'});
+    rect.addEventListener('mousemove',e=>showTip(`<b>${d.k}-samples</b><br>${h.label}: ${d.v.toLocaleString()}`,e.clientX,e.clientY));
+    rect.addEventListener('mouseleave',hideTip);
+    svg.appendChild(rect);
+    svg.appendChild(S('text',{x:bx+bw/2,y:by-6,'text-anchor':'middle',class:'bar-val',fill:d.col},String(d.v.toLocaleString())));
+    svg.appendChild(S('text',{x:state.view==='overlay'?padL+plotW/2:padL+i*groupW+groupW/2,y:H-12,'text-anchor':'middle',class:'axis-lab'},''));
+  });
+  if(state.view==='grouped'){
+    svg.appendChild(S('text',{x:padL+groupW/2,y:H-12,'text-anchor':'middle',class:'axis-lab',fill:c.cannInk},'cann'));
+    svg.appendChild(S('text',{x:padL+groupW*1.5,y:H-12,'text-anchor':'middle',class:'axis-lab',fill:c.cudaInk},'cuda'));
+  }else{
+    svg.appendChild(S('text',{x:padL+plotW/2,y:H-12,'text-anchor':'middle',class:'axis-lab'},state.scale==='log'?'对数刻度 · 叠加':'叠加视图'));
+  }
+  if(h.note){svg.appendChild(S('text',{x:padL,y:12,class:'axis-lab','font-size':'9.5'},''));}
+  box.appendChild(svg);
+}
+
+/* ============================================================ CATEGORY BARS */
+function catBar(container,rows,color,inkColor){
+  const c=COL();const box=$(container);box.innerHTML='';
+  const max=Math.max(...rows.map(r=>r.n));
+  const rowH=26,W=440,labW=state==='x'?0:0;
+  const svg=S('svg',{viewBox:`0 0 ${W} ${rows.length*rowH+6}`});
+  rows.forEach((r,i)=>{
+    const y=i*rowH+4, bw=Math.max(3,r.n/max*(W-150));
+    svg.appendChild(S('text',{x:0,y:y+13,class:'axis-lab','font-size':'11'},r.cat));
+    const rect=S('rect',{x:140,y:y+2,width:bw,height:16,rx:4,fill:color,style:'cursor:pointer'});
+    const grp=(r.groups||[]).join(' · ');
+    rect.addEventListener('mousemove',e=>showTip(`<b>${r.cat}</b> — ${r.n} 样例${grp?'<br>'+grp:''}`,e.clientX,e.clientY));
+    rect.addEventListener('mouseleave',hideTip);
+    svg.appendChild(rect);
+    svg.appendChild(S('text',{x:140+bw+6,y:y+14,class:'bar-val',fill:inkColor},String(r.n)));
+  });
+  box.appendChild(svg);
+}
+
+/* ============================================================ FILE COMPOSITION */
+function fileComp(){
+  const c=COL();const box=$('#fileComp');box.innerHTML='';
+  const rows=[{k:'cann',data:DATA.fileTypes.cann,col:c.cann},{k:'cuda',data:DATA.fileTypes.cuda,col:c.cuda}];
+  const W=440,barH=30,gap=42;
+  const svg=S('svg',{viewBox:`0 0 ${W} ${rows.length*(barH+gap)}`});
+  rows.forEach((r,ri)=>{
+    const total=r.data.reduce((s,d)=>s+d.n,0);
+    const y=ri*(barH+gap)+16;
+    svg.appendChild(S('text',{x:0,y:y-4,class:'axis-lab','font-weight':'700',fill:r.col},`${r.k}-samples · ${total} files`));
+    let x=0;const scale=W/total;
+    r.data.forEach((d,di)=>{
+      const w=d.n*scale;
+      const shade=0.35+0.6*(1-di/r.data.length);
+      const rect=S('rect',{x:x,y:y,width:Math.max(0,w-1.5),height:barH,rx:2,fill:r.col,opacity:shade.toFixed(2),style:'cursor:pointer'});
+      rect.addEventListener('mousemove',e=>showTip(`<b>${r.k}</b> ${d.ext}: ${d.n} (${(d.n/total*100).toFixed(1)}%)`,e.clientX,e.clientY));
+      rect.addEventListener('mouseleave',hideTip);
+      svg.appendChild(rect);
+      if(w>44)svg.appendChild(S('text',{x:x+w/2,y:y+barH/2+4,'text-anchor':'middle','font-family':'var(--mono)','font-size':'9.5',fill:'#fff','font-weight':'700'},d.ext.split(' ')[0]));
+      x+=w;
+    });
+  });
+  box.appendChild(svg);
+}
+
+/* ============================================================ RADAR */
+function radar(){
+  const c=COL();const box=$('#radar');box.innerHTML='';
+  const ax=DATA.axes,n=ax.length,size=300,cx=size/2,cy=size/2+6,R=size/2-46;
+  const svg=S('svg',{viewBox:`0 0 ${size} ${size+18}`});
+  const ptFor=(i,r)=>{const a=-Math.PI/2+i/n*2*Math.PI;return[cx+Math.cos(a)*r,cy+Math.sin(a)*r];};
+  // rings
+  [0.25,0.5,0.75,1].forEach(f=>{
+    const pts=ax.map((_,i)=>ptFor(i,R*f).join(',')).join(' ');
+    svg.appendChild(S('polygon',{points:pts,fill:'none',stroke:c.hair,'stroke-width':1}));
+  });
+  ax.forEach((a,i)=>{
+    const[x,y]=ptFor(i,R);
+    svg.appendChild(S('line',{x1:cx,y1:cy,x2:x,y2:y,stroke:c.hair,'stroke-width':1}));
+    const[lx,ly]=ptFor(i,R+22);
+    const anchor=Math.abs(lx-cx)<12?'middle':(lx>cx?'start':'end');
+    const t=S('text',{x:lx,y:ly+3,'text-anchor':anchor,class:'axis-lab','font-size':'10.5'});
+    t.textContent=a.label.split(' ')[0];
+    svg.appendChild(t);
+  });
+  const poly=(key,col,fill)=>{
+    const pts=ax.map((a,i)=>ptFor(i,R*a[key]/100));
+    svg.appendChild(S('polygon',{points:pts.map(p=>p.join(',')).join(' '),fill:col,'fill-opacity':fill,stroke:col,'stroke-width':2,'stroke-linejoin':'round'}));
+    pts.forEach((p,i)=>{
+      const dot=S('circle',{cx:p[0],cy:p[1],r:3.2,fill:col,stroke:css('--surface'),'stroke-width':1.5,style:'cursor:pointer'});
+      dot.addEventListener('mousemove',e=>showTip(`<b>${key}-samples</b><br>${ax[i].label}: ${ax[i][key]}/100`,e.clientX,e.clientY));
+      dot.addEventListener('mouseleave',hideTip);
+      svg.appendChild(dot);
+    });
+  };
+  poly('cann',c.cann,0.14);poly('cuda',c.cuda,0.14);
+  box.appendChild(svg);
+}
+
+/* ============================================================ FIT METERS + SLIDERS */
+function fit(key){
+  let num=0,den=0;
+  DATA.axes.forEach(a=>{const w=state.weights[a.key];num+=w*a[key];den+=w*100;});
+  return den?Math.round(num/den*100):0;
+}
+function renderFit(){
+  const box=$('#fitmeters');box.innerHTML='';
+  const fc=fit('cann'),fu=fit('cuda');
+  [['cann',fc,'cann-samples'],['cuda',fu,'cuda-samples']].forEach(([k,v,name])=>{
+    box.appendChild(el('div',{class:'fitrow'},[
+      el('div',{class:'name'},[el('span',{class:'dot '+k}),name]),
+      el('div',{class:'fittrack'},[el('div',{class:'fitfill '+k,style:`width:${v}%`})]),
+      el('div',{class:'fitval '+k+'-fg',text:v+'%'}),
+    ]));
+  });
+  const win=fc===fu?'两者持平':(fc>fu?'cann-samples':'cuda-samples');
+  const diff=Math.abs(fc-fu);
+  box.appendChild(el('div',{class:'winner'},[document.createTextNode('当前权重下更契合：'),el('b',{text:win}),document.createTextNode(diff?` （领先 ${diff} 分）`:'')]));
+}
+function renderSliders(){
+  const box=$('#sliders');box.innerHTML='';
+  DATA.axes.forEach(a=>{
+    const row=el('div',{class:'sl'});
+    const out=el('output',{text:state.weights[a.key].toFixed(1)+'×'});
+    const inp=el('input',{type:'range',min:'0',max:'3',step:'0.1',value:state.weights[a.key],'aria-label':a.label+' 权重'});
+    inp.addEventListener('input',()=>{state.weights[a.key]=+inp.value;out.textContent=(+inp.value).toFixed(1)+'×';
+      $$('#presets .pbtn').forEach(b=>b.classList.remove('active'));renderFit();});
+    row.appendChild(el('label',{text:a.label.split(' ')[0]}));
+    row.appendChild(inp);row.appendChild(out);
+    box.appendChild(row);
+  });
+}
+function renderPresets(){
+  const box=$('#presets');box.innerHTML='';
+  DATA.presets.forEach(p=>{
+    const b=el('button',{class:'pbtn'+(p.id==='balanced'?' active':''),text:p.label});
+    b.addEventListener('click',()=>{
+      $$('#presets .pbtn').forEach(x=>x.classList.remove('active'));b.classList.add('active');
+      DATA.axes.forEach(a=>state.weights[a.key]=p.w[a.key]??1);
+      renderSliders();renderFit();
+    });
+    box.appendChild(b);
+  });
+}
+
+/* ============================================================ OPENNESS TABLE + GAUGE */
+function renderOpenTable(){
+  const tb=$('#openTable tbody');tb.innerHTML='';
+  DATA.openness.forEach(r=>{
+    const eb=r.edge==='cann'?'<span class="edgebadge eb-cann">cann</span>':r.edge==='cuda'?'<span class="edgebadge eb-cuda">cuda</span>':'<span class="edgebadge eb-tie">持平</span>';
+    const tr=el('tr');
+    tr.appendChild(el('td',{style:'font-weight:600'},r.crit));
+    const td1=el('td',{class:r.edge==='cann'?'edge-cann':''});td1.textContent=r.cann;
+    const td2=el('td',{class:r.edge==='cuda'?'edge-cuda':''});td2.textContent=r.cuda;
+    tr.appendChild(td1);tr.appendChild(td2);
+    const td3=el('td',{style:'text-align:center'});td3.innerHTML=eb;tr.appendChild(td3);
+    tb.appendChild(tr);
+  });
+}
+function renderGauge(){
+  const c=COL();const box=$('#openGauge');box.innerHTML='';
+  let cann=0,cuda=0,tie=0;DATA.openness.forEach(r=>{if(r.edge==='cann')cann++;else if(r.edge==='cuda')cuda++;else tie++;});
+  const tot=DATA.openness.length;
+  const W=440,H=54;const svg=S('svg',{viewBox:`0 0 ${W} ${H}`});
+  const seg=[['cann',cann,c.cann],['tie',tie,c.surf3],['cuda',cuda,c.cuda]];
+  let x=0;const bh=30,y=8;
+  seg.forEach(([k,v,col])=>{const w=v/tot*W;if(w>0){
+    const rect=S('rect',{x:x+(x>0?1.5:0),y:y,width:Math.max(0,w-1.5),height:bh,rx:4,fill:col,style:'cursor:pointer'});
+    rect.addEventListener('mousemove',e=>showTip(`${k==='tie'?'持平':k+' 占优'}: ${v}/${tot} 项`,e.clientX,e.clientY));
+    rect.addEventListener('mouseleave',hideTip);
+    svg.appendChild(rect);
+    if(w>34)svg.appendChild(S('text',{x:x+w/2,y:y+bh/2+4,'text-anchor':'middle','font-family':'var(--mono)','font-size':'11',fill:k==='tie'?c.muted:'#fff','font-weight':'700'},String(v)));
+    x+=w;}});
+  svg.appendChild(S('text',{x:0,y:H-4,class:'axis-lab'},`开放度占优：cuda ${cuda} · 持平 ${tie} · cann ${cann}（共 ${tot} 项）`));
+  box.appendChild(svg);
+}
+
+/* ============================================================ COVERAGE MATRIX */
+function renderCovFilter(){
+  const box=$('#covFilter');box.innerHTML='';
+  const tags=[...new Set(DATA.coverage.map(d=>d.tag))];
+  state.covTags=new Set(tags);
+  const mkChip=(label,val)=>{const b=el('button',{class:'fchip',text:label,'aria-pressed':'true'});
+    b.addEventListener('click',()=>{
+      const on=b.getAttribute('aria-pressed')==='true';b.setAttribute('aria-pressed',(!on).toString());
+      if(val==='__all__'){state.covTags=new Set(on?[]:tags);$$('#covFilter .fchip[data-tag]').forEach(x=>x.setAttribute('aria-pressed',(!on).toString()));}
+      else{if(on)state.covTags.delete(val);else state.covTags.add(val);}
+      renderCovMatrix();});
+    if(val!=='__all__')b.setAttribute('data-tag',val);
+    return b;};
+  box.appendChild(mkChip('全部','__all__'));
+  tags.forEach(t=>box.appendChild(mkChip(t,t)));
+}
+function renderCovMatrix(){
+  const c=COL();const box=$('#covMatrix');box.innerHTML='';
+  box.appendChild(el('div',{class:'ch',text:'领域'}));
+  box.appendChild(el('div',{class:'ch c',text:'cann'}));
+  box.appendChild(el('div',{class:'ch c',text:'cuda'}));
+  const lvlTxt=['—','基础','覆盖','深耕'];
+  DATA.coverage.forEach(d=>{
+    if(!state.covTags.has(d.tag))return;
+    const dom=el('div',{class:'dom'},[el('span',{class:'tagdot',text:d.tag}),document.createTextNode(d.domain)]);
+    box.appendChild(dom);
+    [['cann',d.cann,c.cann],['cuda',d.cuda,c.cuda]].forEach(([k,lvl,col])=>{
+      const cell=el('div',{class:'cell'});
+      const op=lvl===0?0.06:0.18+lvl*0.26;
+      const heat=el('div',{class:'heat',text:lvlTxt[lvl]});
+      heat.style.background=lvl===0?c.surf3:col;
+      heat.style.opacity=lvl===0?1:op;
+      heat.style.color=lvl>=2?'#fff':(lvl===0?c.faint:c.ink);
+      heat.style.cursor='pointer';
+      heat.addEventListener('mousemove',e=>showTip(`<b>${k}</b> · ${d.domain}<br>投入：${lvlTxt[lvl]} (${lvl}/3)`,e.clientX,e.clientY));
+      heat.addEventListener('mouseleave',hideTip);
+      cell.appendChild(heat);box.appendChild(cell);
+    });
+  });
+}
+
+/* ============================================================ ONLY-IN LISTS */
+function renderOnly(){
+  const a=$('#onlyCann'),b=$('#onlyCuda');a.innerHTML='';b.innerHTML='';
+  DATA.onlyCann.forEach(t=>a.appendChild(el('li',{text:t})));
+  DATA.onlyCuda.forEach(t=>b.appendChild(el('li',{text:t})));
+}
+
+/* ============================================================ SAMPLE EXPLORER */
+const SAMPLES=[
+  // cann representative
+  ...['vector_add','vector_add_c_api','matmul','npu_execution','vector_function_getting_started'].map(s=>({repo:'cann',cat:'0_Introduction',name:s})),
+  ...['hif8','simt','vector_function','simd_vf_constraints','mte2_preload','n_buffer','unit_flag','weightnz','full_load','l1_bank_conflict','reg_data_movement','scale_cache','slide_window_adaptive_template','streamk','tail_rebalance'].map(s=>({repo:'cann',cat:'1_Features',name:s})),
+  ...['matmul_story','grouped_matmul_story','moe_dispatch_and_combine_story','moe_init_routing_story','full_quant_fused_infer_attention_score_story','kv_rms_norm_rope_cache_story','rms_norm_quant_story','simd_vf_story','scalar_story','quant_matmul_mxfp4','quant_matmul_mxfp8','quant_matmul_hifp8','matmul_a16w16','weight_quant_matmul_mxfp8fp4'].map(s=>({repo:'cann',cat:'2_Performance',name:s})),
+  {repo:'cann',cat:'3_Utilities',name:'simulation-based-vf-profiling'},
+  // cuda representative
+  ...['vectorAdd','matrixMul','simpleStreams','simpleCooperativeGroups','asyncAPI','mergeSort','template','fp16ScalarProduct'].map(s=>({repo:'cuda',cat:'0_Introduction',name:s})),
+  ...['deviceQuery','topologyQuery'].map(s=>({repo:'cuda',cat:'1_Utilities',name:s})),
+  ...['reduction','scan','histogram','radixSortThrust','convolutionSeparable','particles','dct8x8','sortingNetworks'].map(s=>({repo:'cuda',cat:'2_Concepts_and_Techniques',name:s})),
+  ...['cudaTensorCoreGemm','simpleCudaGraphs','graphConditionalNodes','cdpQuadtree','bf16TensorCoreGemm','warpAggregatedAtomicsCG'].map(s=>({repo:'cuda',cat:'3_CUDA_Features',name:s})),
+  ...['simpleCUBLAS','simpleCUFFT','cuSolverDn_LinearSolver','boxFilterNPP','nvJPEG','conjugateGradient','cubDeviceTransform','watershedSegmentationNPP'].map(s=>({repo:'cuda',cat:'4_CUDA_Libraries',name:s})),
+  ...['BlackScholes','nbody','MonteCarloMultiGPU','FDTD3d','Mandelbrot','simpleVulkan','simpleD3D12','simpleGL','fluidsGL','marchingCubes'].map(s=>({repo:'cuda',cat:'5_Domain_Specific',name:s})),
+  ...['transpose','alignedTypes','UnifiedMemoryPerf','cudaGraphsPerfScaling'].map(s=>({repo:'cuda',cat:'6_Performance',name:s})),
+  ...['helloTile','tileMatmul','tileRope','tileSpMV'].map(s=>({repo:'cuda',cat:'9_CUDA_Tile',name:s})),
+  ...['customPyTorchKernel','customTensorFlowKernel','simpleP2P','multiGPUGradientAverage','cudaGraphs','prefixSum'].map(s=>({repo:'cuda',cat:'python',name:s})),
+];
+function renderExplorer(q=''){
+  const grid=$('#expGrid');grid.innerHTML='';
+  const ql=q.trim().toLowerCase();
+  const rows=SAMPLES.filter(s=>!ql||s.name.toLowerCase().includes(ql)||s.cat.toLowerCase().includes(ql)||s.repo.includes(ql));
+  $('#expCount').textContent=`${rows.length} / ${SAMPLES.length}`;
+  if(!rows.length){grid.appendChild(el('div',{class:'exp-empty',text:'无匹配样例 —— 试试 matmul / graphs / vulkan / moe'}));return;}
+  rows.slice(0,120).forEach(s=>{
+    grid.appendChild(el('div',{class:'exp-item'},[
+      el('span',{class:'badge '+s.repo,text:s.repo}),
+      el('span',{style:'font-weight:600',text:s.name}),
+      el('span',{class:'path',text:s.cat}),
+    ]));
+  });
+}
+
+/* ============================================================ CONTROLS WIRING */
+function seg(id,attr,cb){
+  const box=$(id);box.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;
+    $$('button',box).forEach(x=>x.setAttribute('aria-pressed','false'));b.setAttribute('aria-pressed','true');cb(b.getAttribute(attr));});
+}
+function applyTheme(v){
+  if(v==='auto')document.documentElement.removeAttribute('data-theme');
+  else document.documentElement.setAttribute('data-theme',v);
+  // re-render color-dependent charts
+  requestAnimationFrame(()=>{radar();renderMetricBar();fileComp();renderGauge();renderCovMatrix();
+    catBar('#cudaCatBar',[...DATA.cudaCpp,...DATA.cudaPython.map(p=>({cat:'py '+p.cat,n:p.n}))],COL().cuda,COL().cudaInk);
+    catBar('#cannCatBar',DATA.cannCat,COL().cann,COL().cannInk);});
+}
+
+/* ============================================================ INIT */
+function init(){
+  renderTiles();initMetricSel();
+  renderMetricBar();fileComp();radar();renderPresets();renderSliders();renderFit();
+  renderOpenTable();renderGauge();renderCovFilter();renderCovMatrix();renderOnly();renderExplorer();
+  catBar('#cudaCatBar',[...DATA.cudaCpp,...DATA.cudaPython.map(p=>({cat:'py '+p.cat,n:p.n}))],COL().cuda,COL().cudaInk);
+  catBar('#cannCatBar',DATA.cannCat,COL().cann,COL().cannInk);
+
+  seg('#themeSeg','data-theme-val',applyTheme);
+  seg('#viewSeg','data-view',v=>{state.view=v;renderMetricBar();});
+  seg('#scaleSeg','data-scale',v=>{state.scale=v;renderMetricBar();});
+  seg('#densitySeg','data-density',v=>document.documentElement.setAttribute('data-density',v));
+  document.documentElement.setAttribute('data-density','comfortable');
+  $('#expSearch').addEventListener('input',e=>renderExplorer(e.target.value));
+
+  // re-render on OS theme change when in auto
+  matchMedia('(prefers-color-scheme:dark)').addEventListener('change',()=>{
+    if(!document.documentElement.hasAttribute('data-theme'))applyTheme('auto');
+  });
+}
+init();
+</script>
+<!-- BODY-CONTENT-END -->
+</body>
+</html>
