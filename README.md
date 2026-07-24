@@ -192,6 +192,11 @@ toolkit 安装包文件名格式如下：
 └── README.md                                # 项目说明文档
 ```
 
+
+## 🔎关键词索引
+
+- [SEO 关键词清单（中文 + English）](SEO_KEYWORDS.md)
+
 ## 💬相关信息
 
 - [许可证](LICENSE)
