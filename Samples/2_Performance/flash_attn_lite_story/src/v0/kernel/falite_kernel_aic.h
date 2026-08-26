@@ -14,14 +14,15 @@
 
 namespace FALite {
 
-constexpr AscendC::TEventID EV_K_L1_READY = 1;
-constexpr AscendC::TEventID EV_QK_L0_READY = 0;
-constexpr AscendC::TEventID EV_S_L0C_READY = 0;
-constexpr AscendC::TEventID EV_P_L1_DONE = 0;
-constexpr AscendC::TEventID EV_V_L1_READY = 2;
-constexpr AscendC::TEventID EV_PV_L0_READY = 1;
-constexpr AscendC::TEventID EV_DO_L0C_READY = 1;
-constexpr AscendC::TEventID EV_Q_L1_READY = 0;
+// Mutex IDs for intra-core pipeline synchronization (AIC side)
+constexpr AscendC::MutexID MUTEX_Q_L1 = 0;
+constexpr AscendC::MutexID MUTEX_K_L1 = 1;
+constexpr AscendC::MutexID MUTEX_QK_L0 = 2;
+constexpr AscendC::MutexID MUTEX_S_L0C = 3;
+constexpr AscendC::MutexID MUTEX_P_L1 = 4;
+constexpr AscendC::MutexID MUTEX_V_L1 = 5;
+constexpr AscendC::MutexID MUTEX_PV_L0 = 6;
+constexpr AscendC::MutexID MUTEX_DO_L0C = 7;
 
 // C1: K×Q^T → S^T→GM. Q 已在 L1.
 __aicore__ inline void CubeStage1(
@@ -34,14 +35,29 @@ __aicore__ inline void CubeStage1(
     if ASCEND_IS_AIC {
         const uint32_t br = data.br, bc = data.bc, d = data.headDim;
         const uint64_t kOff = static_cast<uint64_t>(batchIdx) * data.seqLen * d + static_cast<uint64_t>(j) * bc * d;
+        Mutex::Lock<PIPE_MTE2>(MUTEX_K_L1);
         CopyGmToL1<bfloat16_t>(kL1Local, kGlobal[kOff], bc, d, d);
-        SetWaitFlag<HardEvent::MTE2_MTE1>(EV_K_L1_READY);
+        Mutex::Unlock<PIPE_MTE2>(MUTEX_K_L1);
+
+        Mutex::Lock<PIPE_MTE1>(MUTEX_K_L1);
+        Mutex::Lock<PIPE_MTE1>(MUTEX_QK_L0);
         CopyL1ToL0A<bfloat16_t>(aL0ALocal, kL1Local, bc, d, bc, d);
+        Mutex::Unlock<PIPE_MTE1>(MUTEX_K_L1);
+
+        Mutex::Lock<PIPE_MTE1>(MUTEX_Q_L1);
         CopyL1ToL0B<bfloat16_t>(bL0BLocal, qL1Local, br, d, d, br, false);
-        SetWaitFlag<HardEvent::MTE1_M>(EV_QK_L0_READY);
+        Mutex::Unlock<PIPE_MTE1>(MUTEX_Q_L1);
+        Mutex::Unlock<PIPE_MTE1>(MUTEX_QK_L0);
+
+        Mutex::Lock<PIPE_M>(MUTEX_QK_L0);
+        Mutex::Lock<PIPE_M>(MUTEX_S_L0C);
         CubeMmad<float, bfloat16_t, bfloat16_t>(mmadL0CLocal, aL0ALocal, bL0BLocal, bc, br, d, true);
-        SetWaitFlag<HardEvent::M_FIX>(EV_S_L0C_READY);
+        Mutex::Unlock<PIPE_M>(MUTEX_QK_L0);
+        Mutex::Unlock<PIPE_M>(MUTEX_S_L0C);
+
+        Mutex::Lock<PIPE_FIX>(MUTEX_S_L0C);
         FixpipeL0CToGM<float, float>(sGlobal[sOff], mmadL0CLocal, bc, br, data.br);
+        Mutex::Unlock<PIPE_FIX>(MUTEX_S_L0C);
         PipeBarrier<PIPE_FIX>();
     }
 }
@@ -58,16 +74,32 @@ __aicore__ inline void CubeStage2(
     if ASCEND_IS_AIC {
         const uint32_t br = data.br, bc = data.bc, d = data.headDim;
         const uint64_t pTaskBase = static_cast<uint64_t>(taskId) * bc * br;
+        Mutex::Lock<PIPE_MTE1>(MUTEX_P_L1);
         LoadPTransToL0A(pL1Local, aL0ALocal, pGlobal, pTaskBase, data);
-        SetWaitFlag<HardEvent::MTE1_MTE2>(EV_P_L1_DONE);
+        Mutex::Unlock<PIPE_MTE1>(MUTEX_P_L1);
+
+        Mutex::Lock<PIPE_MTE2>(MUTEX_P_L1);
+        Mutex::Lock<PIPE_MTE2>(MUTEX_V_L1);
         const uint64_t vOff = static_cast<uint64_t>(batchIdx) * data.seqLen * d + static_cast<uint64_t>(j) * bc * d;
         CopyGmToL1<bfloat16_t>(vL1Local, vGlobal[vOff], bc, d, d);
-        SetWaitFlag<HardEvent::MTE2_MTE1>(EV_V_L1_READY);
+        Mutex::Unlock<PIPE_MTE2>(MUTEX_V_L1);
+        Mutex::Unlock<PIPE_MTE2>(MUTEX_P_L1);
+
+        Mutex::Lock<PIPE_MTE1>(MUTEX_V_L1);
+        Mutex::Lock<PIPE_MTE1>(MUTEX_PV_L0);
         CopyL1ToL0B<bfloat16_t>(bL0BLocal, vL1Local, bc, d, bc, d, true);
-        SetWaitFlag<HardEvent::MTE1_M>(EV_PV_L0_READY);
+        Mutex::Unlock<PIPE_MTE1>(MUTEX_V_L1);
+        Mutex::Unlock<PIPE_MTE1>(MUTEX_PV_L0);
+
+        Mutex::Lock<PIPE_M>(MUTEX_PV_L0);
+        Mutex::Lock<PIPE_M>(MUTEX_DO_L0C);
         CubeMmad<float, bfloat16_t, bfloat16_t>(mmadL0CLocal, aL0ALocal, bL0BLocal, br, d, bc, true);
-        SetWaitFlag<HardEvent::M_FIX>(EV_DO_L0C_READY);
+        Mutex::Unlock<PIPE_M>(MUTEX_PV_L0);
+        Mutex::Unlock<PIPE_M>(MUTEX_DO_L0C);
+
+        Mutex::Lock<PIPE_FIX>(MUTEX_DO_L0C);
         FixpipeL0CToGM<float, float>(dOGlobal[dOOff], mmadL0CLocal, br, d, d);
+        Mutex::Unlock<PIPE_FIX>(MUTEX_DO_L0C);
         PipeBarrier<PIPE_FIX>();
     }
 }
@@ -83,8 +115,9 @@ __aicore__ inline void ProcessOneTaskAIC(
     const uint32_t batchIdx = taskId / data.tr, tileIdx = taskId % data.tr;
     const uint32_t br = data.br, d = data.headDim;
     const uint64_t qOff = static_cast<uint64_t>(batchIdx) * data.seqLen * d + static_cast<uint64_t>(tileIdx) * br * d;
+    Mutex::Lock<PIPE_MTE2>(MUTEX_Q_L1);
     CopyGmToL1<bfloat16_t>(ws.qL1, qGlobal[qOff], br, d, d);
-    SetWaitFlag<HardEvent::MTE2_MTE1>(EV_Q_L1_READY);
+    Mutex::Unlock<PIPE_MTE2>(MUTEX_Q_L1);
 
     for (uint32_t j = 0; j < data.tc; ++j) {
         if (j > 0) CrossCoreWaitFlag<GROUP_CROSS_MODE, PIPE_MTE2>(FLAG_DONE);

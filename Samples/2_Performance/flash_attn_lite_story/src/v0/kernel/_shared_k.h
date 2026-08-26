@@ -22,12 +22,14 @@ constexpr uint32_t VL_B32 = VECTOR_REG_WIDTH / sizeof(float);
 constexpr uint32_t VL_B16 = VECTOR_REG_WIDTH / sizeof(bfloat16_t);
 constexpr uint32_t B16_PER_DATABLOCK = C0_BYTES / sizeof(bfloat16_t);
 constexpr float FLOAT_LOWEST = -3.402823466e+38F;
-constexpr AscendC::TEventID STATIC_EVENT_ID0 = 0;
-constexpr AscendC::TEventID STATIC_EVENT_ID1 = 1;
-constexpr AscendC::TEventID STATIC_EVENT_ID2 = 2;
 constexpr AscendC::FixpipeConfig PFA_CFG_UB = {AscendC::CO2Layout::ROW_MAJOR, true};
 constexpr AscendC::FixpipeConfig PFA_CFG_GM = {AscendC::CO2Layout::ROW_MAJOR, false};
 constexpr uint8_t GROUP_CROSS_MODE = 2;
+
+// Mutex IDs for intra-core pipeline synchronization (AIV side)
+constexpr AscendC::MutexID MUTEX_S_UB = 8;
+constexpr AscendC::MutexID MUTEX_OD_UB = 9;
+constexpr AscendC::MutexID MUTEX_P_UB_GM = 10;
 #ifdef SIM_COMPATIBLE
 constexpr uint8_t PAIR_CROSS_MODE = 4;
 constexpr uint16_t AIV1_FLAG_OFFSET = 16;
@@ -41,13 +43,6 @@ static constexpr AscendC::Reg::CastTrait castTraitOne = {
     AscendC::RoundMode::CAST_ROUND};
 
 // ── Helper ──
-template <AscendC::HardEvent E>
-__aicore__ inline void SetWaitFlag(const AscendC::TEventID eventId)
-{
-    AscendC::SetFlag<E>(eventId);
-    AscendC::WaitFlag<E>(eventId);
-}
-
 template <typename R, typename T1, typename T2>
 __aicore__ inline R CeilDiv(T1 x, T2 y)
 {
@@ -267,7 +262,10 @@ __aicore__ inline void SoftmaxAndCastP(
     const uint16_t bc, const float scale, const bool isFirst)
 {
     RunOnlineSoftmax(sUBLocal, mUBLocal, lUBLocal, alphaUBLocal, halfBr, bc, scale, isFirst);
+
+    AscendC::Mutex::Lock<PIPE_V>(MUTEX_P_UB_GM);
     Cast<bfloat16_t, float>(pUBLocal, sUBLocal, AscendC::RoundMode::CAST_RINT, bc * halfBr);
+    AscendC::Mutex::Unlock<PIPE_V>(MUTEX_P_UB_GM);
 }
 
 // v0/v1 共享: Cast 后的 P(BF16) → GM. 用于 SoftmaxAndWriteP 的公共尾段.
@@ -276,13 +274,13 @@ __aicore__ inline void WritePToGM(
     const uint16_t bc, const uint16_t halfBr, const uint16_t br)
 {
     using namespace AscendC;
-    SetWaitFlag<HardEvent::V_MTE3>(STATIC_EVENT_ID1);
+    Mutex::Lock<PIPE_MTE3>(MUTEX_P_UB_GM);
     DataCopy(
         pGlobal[pHead], pUBLocal,
         DataCopyParams(
             static_cast<uint16_t>(bc), static_cast<uint16_t>(halfBr * sizeof(bfloat16_t) / C0_BYTES), 0,
             static_cast<uint16_t>((br - halfBr) * sizeof(bfloat16_t) / C0_BYTES)));
-    SetWaitFlag<HardEvent::MTE3_V>(STATIC_EVENT_ID1);
+    Mutex::Unlock<PIPE_MTE3>(MUTEX_P_UB_GM);
 }
 
 // v0/v1 共享: O_acc = alpha * O_acc + ΔO
@@ -377,13 +375,20 @@ __aicore__ inline void FinalOutput(
     const uint16_t halfBr, const uint16_t d)
 {
     using namespace AscendC;
+
+    Mutex::Lock<PIPE_V>(MUTEX_P_UB_GM);
     asc_vf_call<FusedDivCastVF>(
         reinterpret_cast<__ubuf__ bfloat16_t*>(pUBLocal.GetPhyAddr()),
         reinterpret_cast<__ubuf__ float*>(oAccUBLocal.GetPhyAddr()),
         reinterpret_cast<__ubuf__ float*>(lUBLocal.GetPhyAddr()), halfBr, d);
-    SetWaitFlag<HardEvent::V_MTE3>(STATIC_EVENT_ID1);
+    Mutex::Unlock<PIPE_V>(MUTEX_P_UB_GM);
+
+    Mutex::Lock<PIPE_MTE3>(MUTEX_P_UB_GM);
     DataCopy(outGlobal[outOff], pUBLocal, halfBr * d);
-    SetWaitFlag<HardEvent::MTE3_V>(STATIC_EVENT_ID1);
+    Mutex::Unlock<PIPE_MTE3>(MUTEX_P_UB_GM);
+
+    Mutex::Lock<PIPE_V>(MUTEX_P_UB_GM);
+    Mutex::Unlock<PIPE_V>(MUTEX_P_UB_GM);
 }
 
 } // namespace FALite

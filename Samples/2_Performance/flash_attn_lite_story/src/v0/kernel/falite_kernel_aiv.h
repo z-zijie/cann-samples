@@ -25,15 +25,19 @@ __aicore__ inline void SoftmaxAndWriteP(
     using namespace AscendC;
     const uint32_t halfBr = data.br / 2, bc = data.bc;
     CrossCoreWaitFlag<GROUP_CROSS_MODE, PIPE_MTE2>(FLAG_S_READY);
+    Mutex::Lock<PIPE_MTE2>(MUTEX_S_UB);
     DataCopy(
         sUBLocal, sGlobal[sHead],
         DataCopyParams(
             static_cast<uint16_t>(bc), static_cast<uint16_t>(halfBr * sizeof(float) / C0_BYTES),
             static_cast<uint16_t>((data.br - halfBr) * sizeof(float) / C0_BYTES), 0));
-    SetWaitFlag<HardEvent::MTE2_V>(STATIC_EVENT_ID0);
+    Mutex::Unlock<PIPE_MTE2>(MUTEX_S_UB);
+
+    Mutex::Lock<PIPE_V>(MUTEX_S_UB);
     SoftmaxAndCastP(
         sUBLocal, mUBLocal, lUBLocal, alphaUBLocal, pUBLocal, static_cast<uint16_t>(halfBr), static_cast<uint16_t>(bc),
         data.scale, j == 0);
+    Mutex::Unlock<PIPE_V>(MUTEX_S_UB);
     WritePToGM(
         pUBLocal, pGlobal, pHead, static_cast<uint16_t>(bc), static_cast<uint16_t>(halfBr),
         static_cast<uint16_t>(data.br));
@@ -49,10 +53,14 @@ __aicore__ inline void AccumulateDeltaO(
     using namespace AscendC;
     const uint32_t halfBr = data.br / 2, d = data.headDim;
     CrossCoreWaitFlag<GROUP_CROSS_MODE, PIPE_MTE2>(FLAG_O_READY);
+    Mutex::Lock<PIPE_MTE2>(MUTEX_OD_UB);
     DataCopy(oDeltaUBLocal, dOGlobal[oHead], halfBr * d);
-    SetWaitFlag<HardEvent::MTE2_V>(STATIC_EVENT_ID0);
+    Mutex::Unlock<PIPE_MTE2>(MUTEX_OD_UB);
+
+    Mutex::Lock<PIPE_V>(MUTEX_OD_UB);
     AccumulateDeltaOCore(
         oAccUBLocal, oDeltaUBLocal, alphaUBLocal, static_cast<uint16_t>(halfBr), static_cast<uint16_t>(d));
+    Mutex::Unlock<PIPE_V>(MUTEX_OD_UB);
     CrossCoreSetFlag<GROUP_CROSS_MODE, PIPE_V>(FLAG_DONE);
 }
 
