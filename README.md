@@ -71,6 +71,7 @@
 | `9.1.0` | `20260513000324948` | ✅ PASS | [aarch64](https://ascend.devcloud.huaweicloud.com/artifactory/cann-run-mirror/software/legacy/20260513000324948/Ascend-cann-toolkit_9.1.0_linux-aarch64.run) / [x86_64](https://ascend.devcloud.huaweicloud.com/artifactory/cann-run-mirror/software/legacy/20260513000324948/Ascend-cann-toolkit_9.1.0_linux-x86_64.run) |
 | `9.1.0` | `20260508171052185` | ✅ PASS | [aarch64](https://ascend.devcloud.huaweicloud.com/artifactory/cann-run-mirror/software/legacy/20260508171052185/Ascend-cann-toolkit_9.1.0_linux-aarch64.run) / [x86_64](https://ascend.devcloud.huaweicloud.com/artifactory/cann-run-mirror/software/legacy/20260508171052185/Ascend-cann-toolkit_9.1.0_linux-x86_64.run) |
 | `9.0.0` | `20260422000325096` | ✅ PASS | [aarch64](https://ascend.devcloud.huaweicloud.com/artifactory/cann-run-mirror/software/legacy/20260422000325096/Ascend-cann-toolkit_9.0.0_linux-aarch64.run) / [x86_64](https://ascend.devcloud.huaweicloud.com/artifactory/cann-run-mirror/software/legacy/20260422000325096/Ascend-cann-toolkit_9.0.0_linux-x86_64.run) |
+| `9.1.0` | `20260720000024864` | ✅ PASS | [aarch64](https://ascend.devcloud.huaweicloud.com/artifactory/cann-run-mirror/software/legacy/20260720000024864/Ascend-cann-toolkit_9.1.0_linux-aarch64.run) / [x86_64](https://ascend.devcloud.huaweicloud.com/artifactory/cann-run-mirror/software/legacy/20260720000024864/Ascend-cann-toolkit_9.1.0_linux-x86_64.run) |
 
 请根据实际 CPU 架构，从上述链接目录中自行选择对应的 `.run` 安装包。
 

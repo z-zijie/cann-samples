@@ -14,6 +14,10 @@
 
 NPU ARCH dav-2201, dav-3510
 
+## 环境要求
+
+- CANN 版本：需使用 CANN 9.1.0 weekly（20260708）及以上版本。本样例使用了 `aclprofTensor` 等性能分析元信息上报 API。
+
 ## 参数说明
 
 - totalLength: 向量长度
