@@ -14,8 +14,22 @@
 
 namespace FALite {
 
-// V_MTE3 的 ID 0/1 用于 PWork 双槽, ID 2/3 用于双槽输出.
-constexpr AscendC::TEventID EVENT_V_MTE3_OUTPUT_READY_BASE = PIPELINE_SLOT_NUM;
+// Mutex IDs for intra-core pipeline synchronization (AIV side)
+constexpr AscendC::MutexID MUTEX_PWORK_UB_L1_SLOT0 = 8;
+constexpr AscendC::MutexID MUTEX_PWORK_UB_L1_SLOT1 = 9;
+
+constexpr AscendC::MutexID MUTEX_OUTPUT_IO0 = 10;
+constexpr AscendC::MutexID MUTEX_OUTPUT_IO1 = 11;
+
+__aicore__ inline AscendC::MutexID PWorkSlotMutex(uint32_t slot)
+{
+    return slot == 0 ? MUTEX_PWORK_UB_L1_SLOT0 : MUTEX_PWORK_UB_L1_SLOT1;
+}
+
+__aicore__ inline AscendC::MutexID OutputIOMutex(uint32_t ioSlot)
+{
+    return ioSlot == 0 ? MUTEX_OUTPUT_IO0 : MUTEX_OUTPUT_IO1;
+}
 
 // ZERO/ONE layout 分别写 BF16 寄存器的低半段和高半段, 随后用 Or 合并.
 static constexpr AscendC::Reg::CastTrait castTraitZero = {
@@ -159,7 +173,7 @@ __simd_vf__ inline void FusedDivCastInplaceVF(
 __aicore__ inline void VectorStage1(
     AscendC::LocalTensor<float>& sUBLocal, AscendC::LocalTensor<float>& mUBLocal, AscendC::LocalTensor<float>& lUBLocal,
     AscendC::LocalTensor<float>& alphaUBLocal, AscendC::LocalTensor<bfloat16_t>& pWorkUBLocal,
-    const FlashAttnLiteTilingData& data, uint32_t j)
+    const FlashAttnLiteTilingData& data, uint32_t j, uint32_t slot)
 {
     using namespace AscendC;
 
@@ -177,10 +191,13 @@ __aicore__ inline void VectorStage1(
                 sUBAddr, mUBAddr, lUBAddr, alphaUBAddr, static_cast<uint16_t>(data.br / 2),
                 static_cast<uint16_t>(data.bc), data.scale);
         }
+        const auto pWorkMutex = PWorkSlotMutex(slot);
+        Mutex::Lock<PIPE_V>(pWorkMutex);
         asc_vf_call<FusedDNToNZCastVF>(
             reinterpret_cast<__ubuf__ bfloat16_t*>(pWorkUBLocal.GetPhyAddr()),
             reinterpret_cast<__ubuf__ float*>(sUBLocal.GetPhyAddr()), static_cast<uint16_t>(data.br / 2),
             static_cast<uint16_t>(data.bc));
+        Mutex::Unlock<PIPE_V>(pWorkMutex);
     }
 }
 
@@ -251,10 +268,6 @@ __aicore__ inline void KernelProcessForAIV(__gm__ bfloat16_t* outGMAddr, FlashAt
         LocalTensor<float> lUBLocal(TPosition::VECCALC, aiv.lUBAddr, aiv.rowStatsUBElems);
         LocalTensor<float> alphaUBLocal(TPosition::VECCALC, aiv.alphaUBAddr, PIPELINE_SLOT_NUM * aiv.rowStatsUBElems);
 
-        for (TEventID ioSlotId = 0; ioSlotId < IO_SLOT_NUM; ++ioSlotId) {
-            SetFlag<HardEvent::MTE3_V>(ioSlotId);
-        }
-
         uint32_t ioSlot = 0;
         for (uint32_t taskId = aicIdx; taskId < data.numTasks; taskId += data.useAicNum) {
             const uint32_t batchIdx = taskId / data.tr;
@@ -267,10 +280,12 @@ __aicore__ inline void KernelProcessForAIV(__gm__ bfloat16_t* outGMAddr, FlashAt
             auto outputSlotUBLocal =
                 outputUBLocal[static_cast<uint64_t>(ioSlot) * outputHalfElements * sizeof(float) / sizeof(bfloat16_t)];
 
-            WaitFlag<HardEvent::MTE3_V>(ioSlot);
+            const auto outputMutex = OutputIOMutex(ioSlot);
+            Mutex::Lock<PIPE_V>(outputMutex);
             Duplicate<float>(oAccSlotUBLocal, 0.0f, outputHalfElements);
             Duplicate<float>(mUBLocal, FLOAT_LOWEST, halfBr);
             Duplicate<float>(lUBLocal, 0.0f, halfBr);
+            Mutex::Unlock<PIPE_V>(outputMutex);
 
             for (uint32_t groupStart = 0; groupStart < data.tc; groupStart += PIPELINE_SLOT_NUM) {
                 const uint32_t groupEnd =
@@ -283,14 +298,15 @@ __aicore__ inline void KernelProcessForAIV(__gm__ bfloat16_t* outGMAddr, FlashAt
                     auto sSlotUBLocal = sUBLocal[static_cast<uint64_t>(slot) * sTileElements];
                     auto alphaSlotUBLocal = alphaUBLocal[static_cast<uint64_t>(slot) * halfBr];
                     auto pWorkSlotUBLocal = pWorkUBLocal[static_cast<uint64_t>(slot) * pWorkTileElements];
-                    VectorStage1(sSlotUBLocal, mUBLocal, lUBLocal, alphaSlotUBLocal, pWorkSlotUBLocal, data, j);
+                    VectorStage1(sSlotUBLocal, mUBLocal, lUBLocal, alphaSlotUBLocal, pWorkSlotUBLocal, data, j, slot);
 
-                    const TEventID pWorkSlotEventId = static_cast<TEventID>(slot);
-                    SetWaitFlag<HardEvent::V_MTE3>(pWorkSlotEventId);
+                    const auto pWorkMutex = PWorkSlotMutex(slot);
+                    Mutex::Lock<PIPE_MTE3>(pWorkMutex);
                     auto pSliceL1Local = pL1Local
                         [static_cast<uint64_t>(slot) * pTileElements +
                          static_cast<uint64_t>(subAivIdx) * pHalfElements];
                     CopyPWorkToL1(pSliceL1Local, pWorkSlotUBLocal, halfBr, bc);
+                    Mutex::Unlock<PIPE_MTE3>(pWorkMutex);
                     SetAivToAic<PIPE_MTE3>(SlotFlagId(FLAG_P_READY_BASE, slot));
                 }
 
@@ -303,19 +319,17 @@ __aicore__ inline void KernelProcessForAIV(__gm__ bfloat16_t* outGMAddr, FlashAt
                     VectorStage2(oAccSlotUBLocal, oDeltaSlotUBLocal, alphaSlotUBLocal, data);
                 }
             }
+            Mutex::Lock<PIPE_V>(outputMutex);
             asc_vf_call<FusedDivCastInplaceVF>(
                 reinterpret_cast<__ubuf__ float*>(oAccSlotUBLocal.GetPhyAddr()),
                 reinterpret_cast<__ubuf__ float*>(lUBLocal.GetPhyAddr()), static_cast<uint16_t>(halfBr),
                 static_cast<uint16_t>(d));
-            SetWaitFlag<HardEvent::V_MTE3>(EVENT_V_MTE3_OUTPUT_READY_BASE + ioSlot);
-            DataCopy(outGlobal[outGMOffset], outputSlotUBLocal, outputHalfElements);
-            SetFlag<HardEvent::MTE3_V>(ioSlot);
-            ioSlot ^= 1;
-        }
+            Mutex::Unlock<PIPE_V>(outputMutex);
 
-        // Kernel 退出前等待两槽输出全部写回.
-        for (TEventID ioSlotId = 0; ioSlotId < IO_SLOT_NUM; ++ioSlotId) {
-            WaitFlag<HardEvent::MTE3_V>(ioSlotId);
+            Mutex::Lock<PIPE_MTE3>(outputMutex);
+            DataCopy(outGlobal[outGMOffset], outputSlotUBLocal, outputHalfElements);
+            Mutex::Unlock<PIPE_MTE3>(outputMutex);
+            ioSlot ^= 1;
         }
     }
 }

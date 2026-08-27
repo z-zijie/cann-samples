@@ -39,14 +39,6 @@ constexpr uint32_t B16_PER_DATABLOCK = C0_BYTES / sizeof(bfloat16_t);
 // float 的最低有限值, 即 -FLT_MAX; FLT_MIN 是最小正正规数.
 constexpr float FLOAT_LOWEST = -3.402823466e+38F;
 
-template <AscendC::HardEvent E>
-__aicore__ inline void SetWaitFlag(const AscendC::TEventID eventId)
-{
-    using namespace AscendC;
-    SetFlag<E>(eventId);
-    WaitFlag<E>(eventId);
-}
-
 __aicore__ inline uint16_t SlotFlagId(uint16_t baseFlagId, uint32_t slot)
 {
     return baseFlagId + static_cast<uint16_t>(slot);
