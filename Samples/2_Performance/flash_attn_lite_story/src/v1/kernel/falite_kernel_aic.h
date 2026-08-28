@@ -14,104 +14,266 @@
 
 namespace FALite {
 
-constexpr AscendC::TEventID EV_K_L1_READY = 1;
-constexpr AscendC::TEventID EV_QK_L0_READY = 0;
-constexpr AscendC::TEventID EV_S_L0C_READY = 0;
-constexpr AscendC::TEventID EV_P_L1_DONE = 0;
-constexpr AscendC::TEventID EV_V_L1_READY = 2;
-constexpr AscendC::TEventID EV_PV_L0_READY = 1;
-constexpr AscendC::TEventID EV_DO_L0C_READY = 1;
-constexpr AscendC::TEventID EV_Q_L1_READY = 0;
+// 每个物理槽对应一个 MutexID；同一 ID 在相邻流水间交接该槽的所有权。
+constexpr MutexID MUTEX_K_L1 = 0;
+constexpr MutexID MUTEX_V_L1 = 1;
+constexpr MutexID MUTEX_Q_L1 = 2;
+constexpr MutexID MUTEX_P_L1 = 3;
+constexpr MutexID MUTEX_L0AB = 4;
+constexpr MutexID MUTEX_L0C = 5;
 
-// C1: K×Q^T → S^T→UB. Q 已在 L1.
+template <typename T>
+__aicore__ inline uint32_t C0ElemNum()
+{
+    return C0_BYTES / sizeof(T);
+}
+
+template <typename T>
+__aicore__ inline void CopyGmToL1(
+    const AscendC::LocalTensor<T>& dstL1Local, const AscendC::GlobalTensor<T>& srcGlobal, uint32_t tileRow,
+    uint32_t tileCol, uint32_t gmColStride)
+{
+    using namespace AscendC;
+    Nd2NzParams p;
+    p.ndNum = 1;
+    p.nValue = tileRow;
+    p.dValue = tileCol;
+    p.srcNdMatrixStride = 1;
+    p.srcDValue = gmColStride;
+    p.dstNzC0Stride = CeilAlign<uint16_t>(tileRow, BLOCK_CUBE);
+    p.dstNzNStride = 1;
+    p.dstNzMatrixStride = 1;
+    DataCopy(dstL1Local, srcGlobal, p);
+}
+
+template <typename T>
+__aicore__ inline void CopyL1ToL0A(
+    const AscendC::LocalTensor<T>& dstL0ALocal, const AscendC::LocalTensor<T>& srcL1Local, uint32_t l1Row,
+    uint32_t l1Col, uint32_t l0Row, uint32_t l0Col, bool transpose = false)
+{
+    using namespace AscendC;
+    LoadData2DParamsV2 p;
+    p.mStartPosition = 0;
+    p.kStartPosition = 0;
+    p.mStep = CeilDiv<uint16_t>(l0Row, BLOCK_CUBE);
+    p.kStep = CeilDiv<uint16_t>(l0Col, C0ElemNum<T>());
+    p.srcStride = CeilDiv<int32_t>(l1Row, BLOCK_CUBE);
+    p.dstStride = p.mStep;
+    p.ifTranspose = transpose;
+    LoadData(dstL0ALocal, srcL1Local, p);
+}
+
+template <typename T>
+__aicore__ inline void CopyL1ToL0B(
+    const AscendC::LocalTensor<T>& dstL0BLocal, const AscendC::LocalTensor<T>& srcL1Local, uint32_t l1Row,
+    uint32_t l1Col, uint32_t l0Row, uint32_t l0Col, bool transpose)
+{
+    using namespace AscendC;
+    LoadData2DParamsV2 p;
+    p.mStartPosition = 0;
+    p.kStartPosition = 0;
+    p.mStep = CeilDiv<uint16_t>(l0Row, BLOCK_CUBE);
+    p.kStep = CeilDiv<uint16_t>(l0Col, BLOCK_CUBE);
+    p.srcStride = CeilDiv<int32_t>(l1Row, BLOCK_CUBE);
+    p.dstStride = CeilDiv<uint16_t>(l0Col, BLOCK_CUBE);
+    p.ifTranspose = transpose;
+    LoadData(dstL0BLocal, srcL1Local, p);
+}
+
+template <typename dstT, typename aT, typename bT>
+__aicore__ inline void CubeMmad(
+    const AscendC::LocalTensor<dstT>& dstL0CLocal, const AscendC::LocalTensor<aT>& aL0ALocal,
+    const AscendC::LocalTensor<bT>& bL0BLocal, uint32_t m, uint32_t n, uint32_t k, bool initC)
+{
+    using namespace AscendC;
+    MmadParams p;
+    p.m = m;
+    p.n = n;
+    p.k = k;
+    p.cmatrixSource = false;
+    p.cmatrixInitVal = initC;
+    p.unitFlag = 0;
+    Mmad(dstL0CLocal, aL0ALocal, bL0BLocal, p);
+}
+
+template <typename dstT, typename srcT>
+__aicore__ inline void FixpipeToVecUB(
+    const AscendC::LocalTensor<dstT>& dstUBLocal, const AscendC::LocalTensor<srcT>& srcL0CLocal, uint32_t m, uint32_t n,
+    uint8_t dualDstCtl = 1)
+{
+    using namespace AscendC;
+    FixpipeParamsArch3510<CO2Layout::ROW_MAJOR> p;
+    constexpr uint32_t FIXPIPE_N_ALIGN = 8;
+    constexpr uint32_t FIXPIPE_M_ALIGN = 2;
+    p.nSize = CeilAlign<uint32_t>(n, FIXPIPE_N_ALIGN);
+    p.mSize = CeilAlign<uint32_t>(m, FIXPIPE_M_ALIGN);
+    p.srcStride = CeilAlign<uint32_t>(p.mSize, BLOCK_CUBE);
+    p.dstStride = dualDstCtl == 2 ? p.nSize / 2 : CeilAlign<uint32_t>(p.nSize, BLOCK_CUBE);
+    p.dualDstCtl = dualDstCtl;
+    p.params.ndNum = 1;
+    p.params.srcNdStride = 0;
+    p.params.dstNdStride = 0;
+    Fixpipe<dstT, srcT, PFA_CFG_UB>(dstUBLocal, srcL0CLocal, p);
+}
+
+// C1：K × Qᵀ -> Sᵀ；Fixpipe 将 Br 个 Query 行均分到两路 AIV UB。
 __aicore__ inline void CubeStage1(
     AscendC::LocalTensor<bfloat16_t>& qL1Local, AscendC::LocalTensor<bfloat16_t>& kL1Local,
     AscendC::LocalTensor<bfloat16_t>& aL0ALocal, AscendC::LocalTensor<bfloat16_t>& bL0BLocal,
     AscendC::LocalTensor<float>& mmadL0CLocal, AscendC::LocalTensor<float>& sUBLocal,
-    AscendC::GlobalTensor<bfloat16_t>& kGlobal, const FlashAttnLiteTilingData& data, uint32_t j, uint32_t batchIdx)
+    AscendC::GlobalTensor<bfloat16_t>& kGlobal, const FlashAttnLiteTilingData& data, uint32_t j, uint32_t batchIdx,
+    uint32_t kvTileCount)
 {
     using namespace AscendC;
+
     if ASCEND_IS_AIC {
-        const uint32_t br = data.br, bc = data.bc, d = data.headDim;
-        const uint64_t kOff = static_cast<uint64_t>(batchIdx) * data.seqLen * d + static_cast<uint64_t>(j) * bc * d;
-        CopyGmToL1<bfloat16_t>(kL1Local, kGlobal[kOff], bc, d, d);
-        SetWaitFlag<HardEvent::MTE2_MTE1>(EV_K_L1_READY);
+        const uint32_t br = data.br, bc = data.bc;
+        constexpr uint32_t d = HEAD_DIM;
+        const uint64_t kGMOffset =
+            static_cast<uint64_t>(batchIdx) * data.seqLen * d + static_cast<uint64_t>(j) * bc * d;
+
+        Mutex::Lock<PIPE_MTE2>(MUTEX_K_L1);
+        CopyGmToL1<bfloat16_t>(kL1Local, kGlobal[kGMOffset], bc, d, d);
+        Mutex::Unlock<PIPE_MTE2>(MUTEX_K_L1);
+
+        // Sᵀ 使用 DN [Bc, Br] 布局; 两路 AIV 各接收 Br/2 列.
+        if (j == 0) {
+            Mutex::Lock<PIPE_MTE1>(MUTEX_Q_L1);
+        }
+        Mutex::Lock<PIPE_MTE1>(MUTEX_L0AB);
+        Mutex::Lock<PIPE_MTE1>(MUTEX_K_L1);
         CopyL1ToL0A<bfloat16_t>(aL0ALocal, kL1Local, bc, d, bc, d);
+        Mutex::Unlock<PIPE_MTE1>(MUTEX_K_L1);
         CopyL1ToL0B<bfloat16_t>(bL0BLocal, qL1Local, br, d, d, br, false);
-        SetWaitFlag<HardEvent::MTE1_M>(EV_QK_L0_READY);
+        Mutex::Unlock<PIPE_MTE1>(MUTEX_L0AB);
+
+        Mutex::Lock<PIPE_M>(MUTEX_L0AB);
+        Mutex::Lock<PIPE_M>(MUTEX_L0C);
         CubeMmad<float, bfloat16_t, bfloat16_t>(mmadL0CLocal, aL0ALocal, bL0BLocal, bc, br, d, true);
-        SetWaitFlag<HardEvent::M_FIX>(EV_S_L0C_READY);
+        Mutex::Unlock<PIPE_M>(MUTEX_L0AB);
+        Mutex::Unlock<PIPE_M>(MUTEX_L0C);
+        Mutex::Lock<PIPE_FIX>(MUTEX_L0C);
         FixpipeToVecUB<float, float>(sUBLocal, mmadL0CLocal, bc, br, 2);
+        Mutex::Unlock<PIPE_FIX>(MUTEX_L0C);
+        if (j + 1 == kvTileCount) {
+            // Q 槽由首个 C1 取得，并在末次 C1 后归还。
+            Mutex::Unlock<PIPE_MTE1>(MUTEX_Q_L1);
+        }
     }
 }
 
-// C2: P×V → ΔO→UB. 单 Mmad.
+// C2：P × V -> ΔO；Fixpipe 将 Br 行均分到两路 AIV UB。
 __aicore__ inline void CubeStage2(
+    AscendC::GlobalTensor<bfloat16_t>& pGlobal, uint64_t pGMOffset,
     AscendC::LocalTensor<bfloat16_t>& pL1Local, AscendC::LocalTensor<bfloat16_t>& vL1Local,
     AscendC::LocalTensor<bfloat16_t>& aL0ALocal, AscendC::LocalTensor<bfloat16_t>& bL0BLocal,
     AscendC::LocalTensor<float>& mmadL0CLocal, AscendC::LocalTensor<float>& oDeltaUBLocal,
-    AscendC::GlobalTensor<bfloat16_t>& vGlobal, AscendC::GlobalTensor<bfloat16_t>& pGlobal,
-    const FlashAttnLiteTilingData& data, uint32_t batchIdx, uint32_t taskId, uint32_t j)
+    AscendC::GlobalTensor<bfloat16_t>& vGlobal,
+    const FlashAttnLiteTilingData& data, uint32_t j, uint32_t batchIdx)
 {
     using namespace AscendC;
+
     if ASCEND_IS_AIC {
-        const uint32_t br = data.br, bc = data.bc, d = data.headDim;
-        const uint64_t pTaskBase = static_cast<uint64_t>(taskId) * bc * br;
-        LoadPTransToL0A(pL1Local, aL0ALocal, pGlobal, pTaskBase, data);
-        SetWaitFlag<HardEvent::MTE1_MTE2>(EV_P_L1_DONE);
-        const uint64_t vOff = static_cast<uint64_t>(batchIdx) * data.seqLen * d + static_cast<uint64_t>(j) * bc * d;
-        CopyGmToL1<bfloat16_t>(vL1Local, vGlobal[vOff], bc, d, d);
-        SetWaitFlag<HardEvent::MTE2_MTE1>(EV_V_L1_READY);
+        const uint32_t br = data.br, bc = data.bc;
+        constexpr uint32_t d = HEAD_DIM;
+        // 两路 AIV 先把 Pᵀ 的两半写到 GM；这里重新搬入 L1，再转置执行 P x V。
+        Mutex::Lock<PIPE_MTE2>(MUTEX_P_L1);
+        CopyGmToL1<bfloat16_t>(pL1Local, pGlobal[pGMOffset], bc, br, br);
+        Mutex::Unlock<PIPE_MTE2>(MUTEX_P_L1);
+
+        Mutex::Lock<PIPE_MTE1>(MUTEX_L0AB);
+        Mutex::Lock<PIPE_MTE1>(MUTEX_P_L1);
+        CopyL1ToL0A<bfloat16_t>(aL0ALocal, pL1Local, bc, br, br, bc, true);
+        Mutex::Unlock<PIPE_MTE1>(MUTEX_P_L1);
+
+        const uint64_t vGMOffset =
+            static_cast<uint64_t>(batchIdx) * data.seqLen * d + static_cast<uint64_t>(j) * bc * d;
+        Mutex::Lock<PIPE_MTE2>(MUTEX_V_L1);
+        CopyGmToL1<bfloat16_t>(vL1Local, vGlobal[vGMOffset], bc, d, d);
+        Mutex::Unlock<PIPE_MTE2>(MUTEX_V_L1);
+
+        Mutex::Lock<PIPE_MTE1>(MUTEX_V_L1);
         CopyL1ToL0B<bfloat16_t>(bL0BLocal, vL1Local, bc, d, bc, d, true);
-        SetWaitFlag<HardEvent::MTE1_M>(EV_PV_L0_READY);
+        Mutex::Unlock<PIPE_MTE1>(MUTEX_V_L1);
+        Mutex::Unlock<PIPE_MTE1>(MUTEX_L0AB);
+
+        Mutex::Lock<PIPE_M>(MUTEX_L0AB);
+        Mutex::Lock<PIPE_M>(MUTEX_L0C);
         CubeMmad<float, bfloat16_t, bfloat16_t>(mmadL0CLocal, aL0ALocal, bL0BLocal, br, d, bc, true);
-        SetWaitFlag<HardEvent::M_FIX>(EV_DO_L0C_READY);
+        Mutex::Unlock<PIPE_M>(MUTEX_L0AB);
+        Mutex::Unlock<PIPE_M>(MUTEX_L0C);
+        Mutex::Lock<PIPE_FIX>(MUTEX_L0C);
         FixpipeToVecUB<float, float>(oDeltaUBLocal, mmadL0CLocal, br, d);
+        Mutex::Unlock<PIPE_FIX>(MUTEX_L0C);
     }
 }
 
-__aicore__ inline void ProcessOneTaskAIC(
-    uint32_t taskId, AicCubeWorkspace<FlashAttnLiteTilingData>& ws, AscendC::LocalTensor<float>& sUBLocal,
-    AscendC::LocalTensor<float>& oDeltaUBLocal, AscendC::GlobalTensor<bfloat16_t>& qGlobal,
-    AscendC::GlobalTensor<bfloat16_t>& kGlobal, AscendC::GlobalTensor<bfloat16_t>& vGlobal,
-    AscendC::GlobalTensor<bfloat16_t>& pGlobal, const FlashAttnLiteTilingData& data)
-{
-    using namespace AscendC;
-    const uint32_t batchIdx = taskId / data.tr, tileIdx = taskId % data.tr;
-    const uint32_t br = data.br, d = data.headDim;
-    const uint64_t qOff = static_cast<uint64_t>(batchIdx) * data.seqLen * d + static_cast<uint64_t>(tileIdx) * br * d;
-    CopyGmToL1<bfloat16_t>(ws.qL1, qGlobal[qOff], br, d, d);
-    SetWaitFlag<HardEvent::MTE2_MTE1>(EV_Q_L1_READY);
-
-    for (uint32_t j = 0; j < data.tc; ++j) {
-        if (j > 0) CrossCoreWaitFlag<GROUP_CROSS_MODE, PIPE_MTE2>(FLAG_DONE);
-        CubeStage1(ws.qL1, ws.kL1, ws.aL0A, ws.bL0B, ws.l0C, sUBLocal, kGlobal, data, j, batchIdx);
-        CrossCoreSetFlag<GROUP_CROSS_MODE, PIPE_FIX>(FLAG_S_READY);
-        CrossCoreWaitFlag<GROUP_CROSS_MODE, PIPE_MTE2>(FLAG_P_READY);
-        CubeStage2(ws.pL1, ws.vL1, ws.aL0A, ws.bL0B, ws.l0C, oDeltaUBLocal, vGlobal, pGlobal, data, batchIdx, taskId, j);
-        CrossCoreSetFlag<GROUP_CROSS_MODE, PIPE_FIX>(FLAG_O_READY);
-    }
-    CrossCoreWaitFlag<GROUP_CROSS_MODE, PIPE_MTE2>(FLAG_DONE);
-}
-
+template <bool CAUSAL_MASK>
 __aicore__ inline void KernelProcessForAIC(
-    __gm__ bfloat16_t* qGMAddr, __gm__ bfloat16_t* kGMAddr, __gm__ bfloat16_t* vGMAddr, __gm__ bfloat16_t* pGMAddr,
-    FlashAttnLiteTilingData data)
+    __gm__ bfloat16_t* qGMAddr, __gm__ bfloat16_t* kGMAddr, __gm__ bfloat16_t* vGMAddr,
+    __gm__ bfloat16_t* pGMAddr, FlashAttnLiteTilingData data)
 {
     using namespace AscendC;
+
     if ASCEND_IS_AIC {
+        const uint32_t br = data.br;
+        constexpr uint32_t d = HEAD_DIM;
+        const uint32_t qTileElements = br * d;
         GlobalTensor<bfloat16_t> qGlobal, kGlobal, vGlobal, pGlobal;
         qGlobal.SetGlobalBuffer(qGMAddr);
         kGlobal.SetGlobalBuffer(kGMAddr);
         vGlobal.SetGlobalBuffer(vGMAddr);
         pGlobal.SetGlobalBuffer(pGMAddr);
+
+        const auto& aic = data.layoutAIC;
         const auto& aiv = data.layoutAIV;
+        // L1 按 P/Q/K/V 排布, 地址由 host tiling 规划.
+        LocalTensor<bfloat16_t> pL1Local(TPosition::A1, aic.pL1Addr, aic.pL1Elems);
+        LocalTensor<bfloat16_t> qL1Local(TPosition::A1, aic.qL1Addr, aic.qL1Elems);
+        LocalTensor<bfloat16_t> kL1Local(TPosition::A1, aic.kL1Addr, aic.kL1Elems);
+        LocalTensor<bfloat16_t> vL1Local(TPosition::A1, aic.vL1Addr, aic.vL1Elems);
+        // L0A/L0B/L0C 均从物理地址 0 开始, 由 C1 和 C2 复用.
+        LocalTensor<bfloat16_t> aL0ALocal(TPosition::A2, aic.aL0AAddr, aic.aL0AElems);
+        LocalTensor<bfloat16_t> bL0BLocal(TPosition::B2, aic.bL0BAddr, aic.bL0BElems);
+        LocalTensor<float> mmadL0CLocal(TPosition::CO1, aic.cL0CAddr, aic.cL0CElems);
+        // Fixpipe 双目的地址必须与两路 AIV 的 S/DeltaO UB 地址一致.
         LocalTensor<float> sUBLocal(TPosition::VECCALC, aiv.sUBAddr, aiv.sUBElems);
         LocalTensor<float> oDeltaUBLocal(TPosition::VECCALC, aiv.oDeltaUBAddr, aiv.oDeltaUBElems);
-        auto ws = MakeAicCubeWorkspace(data);
-        for (uint32_t taskId = GetBlockIdx(); taskId < data.numTasks; taskId += GetBlockNum())
-            ProcessOneTaskAIC(taskId, ws, sUBLocal, oDeltaUBLocal, qGlobal, kGlobal, vGlobal, pGlobal, data);
-    }
+
+        // 每个 AIC 的首个 task 首轮没有前序 DONE; 其余轮次先等待上一轮 DONE.
+        const uint32_t firstTaskId = GetBlockIdx();
+        for (uint32_t taskId = GetBlockIdx(); taskId < data.numTasks; taskId += GetBlockNum()) {
+            const uint32_t batchIdx = taskId / data.tr;
+            const uint32_t tileIdx = taskId % data.tr;
+            const uint32_t kvTileCount = GetKvTileCount<CAUSAL_MASK>(data, tileIdx);
+            const uint64_t qGMOffset =
+                static_cast<uint64_t>(batchIdx) * data.seqLen * d + static_cast<uint64_t>(tileIdx) * qTileElements;
+
+            Mutex::Lock<PIPE_MTE2>(MUTEX_Q_L1);
+            CopyGmToL1<bfloat16_t>(qL1Local, qGlobal[qGMOffset], br, d, d);
+            Mutex::Unlock<PIPE_MTE2>(MUTEX_Q_L1);
+
+            for (uint32_t j = 0; j < kvTileCount; ++j) {
+                if (j > 0 || taskId != firstTaskId) {
+                    WaitAivToAic<PIPE_MTE1>(FLAG_DONE);
+                }
+                CubeStage1(
+                    qL1Local, kL1Local, aL0ALocal, bL0BLocal, mmadL0CLocal, sUBLocal, kGlobal, data, j, batchIdx,
+                    kvTileCount);
+                SetAicToAiv<PIPE_FIX>(FLAG_S_READY);
+                // P 位于 GM，P_READY 绑定 AIC 的 MTE2 消费端。
+                WaitAivToAic<PIPE_MTE2>(FLAG_P_READY);
+                CubeStage2(
+                    pGlobal,
+                    static_cast<uint64_t>(taskId) * data.bc * data.br,
+                    pL1Local, vL1Local, aL0ALocal, bL0BLocal, mmadL0CLocal, oDeltaUBLocal, vGlobal, data, j, batchIdx);
+                SetAicToAiv<PIPE_FIX>(FLAG_O_READY);
+            }
+        }
+
+        // 等待最后一次 V2 完成，避免 AIC 提前退出。
+        WaitAivToAic<PIPE_MTE1>(FLAG_DONE);
+    } // ASCEND_IS_AIC
 }
 
 } // namespace FALite

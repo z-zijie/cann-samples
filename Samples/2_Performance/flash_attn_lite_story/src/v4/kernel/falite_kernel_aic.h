@@ -14,8 +14,12 @@
 
 namespace FALite {
 
-// MTE2_MTE1 的 ID 0/1 用于双槽 K/V, ID 2 用于常驻 Q.
-constexpr AscendC::TEventID EVENT_MTE2_MTE1_Q_READY = 2;
+// 每个物理槽对应一个 MutexID. 相邻流水用同一 ID 交接该槽的所有权.
+constexpr MutexID MUTEX_K_L1_BASE = 0;
+constexpr MutexID MUTEX_V_L1_BASE = MUTEX_K_L1_BASE + PIPELINE_SLOT_NUM;
+constexpr MutexID MUTEX_Q_L1 = MUTEX_V_L1_BASE + PIPELINE_SLOT_NUM;
+constexpr MutexID MUTEX_L0AB_BASE = MUTEX_Q_L1 + 1;
+constexpr MutexID MUTEX_L0C_BASE = MUTEX_L0AB_BASE + PIPELINE_SLOT_NUM;
 
 template <typename T>
 __aicore__ inline uint32_t C0ElemNum()
@@ -111,13 +115,13 @@ __aicore__ inline void FixpipeToVecUB(
     Fixpipe<dstT, srcT, PFA_CFG_UB>(dstUBLocal, srcL0CLocal, p);
 }
 
-// C1: K x Qᵀ -> Sᵀ. Fixpipe 将 Br 列均分到两路 AIV UB.
+// C1：K × Qᵀ -> Sᵀ；Fixpipe 将 Br 个 Query 行均分到两路 AIV UB。
 __aicore__ inline void CubeStage1(
     AscendC::LocalTensor<bfloat16_t>& qL1Local, AscendC::LocalTensor<bfloat16_t>& kL1Local,
     AscendC::LocalTensor<bfloat16_t>& aL0ALocal, AscendC::LocalTensor<bfloat16_t>& bL0BLocal,
     AscendC::LocalTensor<float>& mmadL0CLocal, AscendC::LocalTensor<float>& sUBLocal,
     AscendC::GlobalTensor<bfloat16_t>& kGlobal, const FlashAttnLiteTilingData& data, uint32_t j, uint32_t batchIdx,
-    AscendC::TEventID slotEventId)
+    uint32_t slot, uint32_t kvTileCount)
 {
     using namespace AscendC;
 
@@ -126,63 +130,87 @@ __aicore__ inline void CubeStage1(
         constexpr uint32_t d = HEAD_DIM;
         const uint64_t kGMOffset =
             static_cast<uint64_t>(batchIdx) * data.seqLen * d + static_cast<uint64_t>(j) * bc * d;
-        // 上一组 C2 的 Mmad 读完后, 才能覆写同一 slot 的 L0A/L0B.
-        WaitFlag<HardEvent::M_MTE1>(slotEventId);
-        CopyL1ToL0B<bfloat16_t>(bL0BLocal, qL1Local, br, d, d, br, false);
+        const MutexID kMutexId = MUTEX_K_L1_BASE + static_cast<MutexID>(slot);
+        const MutexID l0abMutexId = MUTEX_L0AB_BASE + static_cast<MutexID>(slot);
+        const MutexID l0cMutexId = MUTEX_L0C_BASE + static_cast<MutexID>(slot);
 
+        Mutex::Lock<PIPE_MTE2>(kMutexId);
         CopyGmToL1<bfloat16_t>(kL1Local, kGlobal[kGMOffset], bc, d, d);
-        SetWaitFlag<HardEvent::MTE2_MTE1>(slotEventId); // 等待 K 写入 L1, 再由 LoadData 读取 kL1Local.
+        Mutex::Unlock<PIPE_MTE2>(kMutexId);
+
+        if (j == 0) {
+            Mutex::Lock<PIPE_MTE1>(MUTEX_Q_L1);
+        }
+        Mutex::Lock<PIPE_MTE1>(l0abMutexId);
+        CopyL1ToL0B<bfloat16_t>(bL0BLocal, qL1Local, br, d, d, br, false);
+        Mutex::Lock<PIPE_MTE1>(kMutexId);
         // Sᵀ 使用 DN [Bc, Br] 布局; 两路 AIV 各接收 Br/2 列.
         CopyL1ToL0A<bfloat16_t>(aL0ALocal, kL1Local, bc, d, bc, d);
-        SetWaitFlag<HardEvent::MTE1_M>(slotEventId); // 等待 Q/K 写入 L0A/L0B, 再由 Mmad 读取.
-        // L0A/L0B 可以先装载; L0C 仍需等待上一组 C2 的 Fix 读完.
-        WaitFlag<HardEvent::FIX_M>(slotEventId);
+        Mutex::Unlock<PIPE_MTE1>(kMutexId);
+        Mutex::Unlock<PIPE_MTE1>(l0abMutexId);
+        if (j + 1 == kvTileCount) {
+            Mutex::Unlock<PIPE_MTE1>(MUTEX_Q_L1);
+        }
+
+        Mutex::Lock<PIPE_M>(l0abMutexId);
+        Mutex::Lock<PIPE_M>(l0cMutexId);
         CubeMmad<float, bfloat16_t, bfloat16_t>(mmadL0CLocal, aL0ALocal, bL0BLocal, bc, br, d, true);
-        SetWaitFlag<HardEvent::M_FIX>(slotEventId); // 等待 S 写入 L0C, 再由 Fixpipe 读取.
+        Mutex::Unlock<PIPE_M>(l0abMutexId);
+        Mutex::Unlock<PIPE_M>(l0cMutexId);
+
+        Mutex::Lock<PIPE_FIX>(l0cMutexId);
         FixpipeToVecUB<float, float>(sUBLocal, mmadL0CLocal, bc, br, 2);
+        Mutex::Unlock<PIPE_FIX>(l0cMutexId);
     }
 }
 
-// C2: P x V -> DeltaO. Fixpipe 将 Br 行均分到两路 AIV UB.
+// C2：P × V -> ΔO；Fixpipe 将 Br 行均分到两路 AIV UB。
 __aicore__ inline void CubeStage2(
     AscendC::LocalTensor<bfloat16_t>& pL1Local, AscendC::LocalTensor<bfloat16_t>& vL1Local,
     AscendC::LocalTensor<bfloat16_t>& aL0ALocal, AscendC::LocalTensor<bfloat16_t>& bL0BLocal,
     AscendC::LocalTensor<float>& mmadL0CLocal, AscendC::LocalTensor<float>& oDeltaUBLocal,
     AscendC::GlobalTensor<bfloat16_t>& vGlobal, const FlashAttnLiteTilingData& data, uint32_t j, uint32_t batchIdx,
-    AscendC::TEventID slotEventId)
+    uint32_t slot)
 {
     using namespace AscendC;
 
     if ASCEND_IS_AIC {
         const uint32_t br = data.br, bc = data.bc;
         constexpr uint32_t d = HEAD_DIM;
-        // L1 保存 Pᵀ; LoadData 转置后执行 P x V.
+        const MutexID vMutexId = MUTEX_V_L1_BASE + static_cast<MutexID>(slot);
+        const MutexID l0abMutexId = MUTEX_L0AB_BASE + static_cast<MutexID>(slot);
+        const MutexID l0cMutexId = MUTEX_L0C_BASE + static_cast<MutexID>(slot);
+
+        // 先发射 P 的 MTE1, 再等待 P_READY_MTE2 并搬运 V, 让两条 Pipe 尽量重叠.
+        Mutex::Lock<PIPE_MTE1>(l0abMutexId);
         CopyL1ToL0A<bfloat16_t>(aL0ALocal, pL1Local, bc, br, br, bc, true);
 
-        // 上一代 LoadData 读完后, 才能再次写入同一 V slot.
-        WaitFlag<HardEvent::MTE1_MTE2>(slotEventId);
         // P_READY_MTE2 使 V 的 MTE2 等待两路 AIV 写完 P.
-        // 该事件不等待 P 的 LoadData, 因此 P MTE1 和 V MTE2 可以交叠.
-        WaitAivToAic<PIPE_MTE2>(SlotFlagId(FLAG_P_READY_MTE2_BASE, slotEventId));
+        WaitAivToAic<PIPE_MTE2>(SlotFlagId(FLAG_P_READY_MTE2_BASE, slot));
         const uint64_t vGMOffset =
             static_cast<uint64_t>(batchIdx) * data.seqLen * d + static_cast<uint64_t>(j) * bc * d;
+        Mutex::Lock<PIPE_MTE2>(vMutexId);
         CopyGmToL1<bfloat16_t>(vL1Local, vGlobal[vGMOffset], bc, d, d);
-        SetWaitFlag<HardEvent::MTE2_MTE1>(slotEventId); // 等待 V 写入 L1, 再由 LoadData 读取 vL1Local.
-        CopyL1ToL0B<bfloat16_t>(bL0BLocal, vL1Local, bc, d, bc, d, true);
-        // MTE1 读完本代 V 后, 将对应 L1 slot 归还给下一代 MTE2.
-        SetFlag<HardEvent::MTE1_MTE2>(slotEventId);
+        Mutex::Unlock<PIPE_MTE2>(vMutexId);
 
-        SetWaitFlag<HardEvent::MTE1_M>(slotEventId); // 等待 P/V 写入 L0A/L0B, 再由 Mmad 读取.
+        Mutex::Lock<PIPE_MTE1>(vMutexId);
+        CopyL1ToL0B<bfloat16_t>(bL0BLocal, vL1Local, bc, d, bc, d, true);
+        Mutex::Unlock<PIPE_MTE1>(vMutexId);
+        Mutex::Unlock<PIPE_MTE1>(l0abMutexId);
+
+        Mutex::Lock<PIPE_M>(l0abMutexId);
+        Mutex::Lock<PIPE_M>(l0cMutexId);
         CubeMmad<float, bfloat16_t, bfloat16_t>(mmadL0CLocal, aL0ALocal, bL0BLocal, br, d, bc, true);
-        // Mmad 读完 L0A/L0B 后, 将同一 slot 归还给下一组 C1 的 MTE1.
-        SetFlag<HardEvent::M_MTE1>(slotEventId);
-        SetWaitFlag<HardEvent::M_FIX>(slotEventId); // 等待 DeltaO 写入 L0C, 再由 Fixpipe 读取.
+        Mutex::Unlock<PIPE_M>(l0abMutexId);
+        Mutex::Unlock<PIPE_M>(l0cMutexId);
+
+        Mutex::Lock<PIPE_FIX>(l0cMutexId);
         FixpipeToVecUB<float, float>(oDeltaUBLocal, mmadL0CLocal, br, d);
-        // Fix 读完 L0C 后, 将同一 slot 归还给下一组 C1 的 Mmad.
-        SetFlag<HardEvent::FIX_M>(slotEventId);
+        Mutex::Unlock<PIPE_FIX>(l0cMutexId);
     }
 }
 
+template <bool CAUSAL_MASK>
 __aicore__ inline void KernelProcessForAIC(
     __gm__ bfloat16_t* qGMAddr, __gm__ bfloat16_t* kGMAddr, __gm__ bfloat16_t* vGMAddr, FlashAttnLiteTilingData data)
 {
@@ -207,7 +235,6 @@ __aicore__ inline void KernelProcessForAIC(
         const uint32_t aL0ATileElements = aic.aL0AElems / PIPELINE_SLOT_NUM;
         const uint32_t bL0BTileElements = aic.bL0BElems / PIPELINE_SLOT_NUM;
         const uint32_t cL0CTileElements = aic.cL0CElems / PIPELINE_SLOT_NUM;
-        // L1 地址由 host tiling 规划.
         LocalTensor<bfloat16_t> pL1Local(TPosition::A1, aic.pL1Addr, aic.pL1Elems);
         LocalTensor<bfloat16_t> qL1Local(TPosition::A1, aic.qL1Addr, aic.qL1Elems);
         LocalTensor<bfloat16_t> kL1Local(TPosition::A1, aic.kL1Addr, aic.kL1Elems);
@@ -220,30 +247,24 @@ __aicore__ inline void KernelProcessForAIC(
         LocalTensor<float> sUBLocal(TPosition::VECCALC, aiv.sUBAddr, aiv.sUBElems);
         LocalTensor<float> oDeltaUBLocal(TPosition::VECCALC, aiv.oDeltaUBAddr, aiv.oDeltaUBElems);
 
-        // 三类 token 分别表示 L0A/B、L0C 和 V L1 slot 可复用; 初始时两槽均空闲.
-        for (TEventID eventId = 0; eventId < PIPELINE_SLOT_NUM; ++eventId) {
-            SetFlag<HardEvent::M_MTE1>(eventId);
-            SetFlag<HardEvent::FIX_M>(eventId);
-            SetFlag<HardEvent::MTE1_MTE2>(eventId);
-        }
-
         for (uint32_t taskId = GetBlockIdx(); taskId < data.numTasks; taskId += GetBlockNum()) {
             const uint32_t batchIdx = taskId / data.tr;
             const uint32_t tileIdx = taskId % data.tr;
+            const uint32_t kvTileCount = GetKvTileCount<CAUSAL_MASK>(data, tileIdx);
             const uint64_t qGMOffset =
                 static_cast<uint64_t>(batchIdx) * data.seqLen * d + static_cast<uint64_t>(tileIdx) * qTileElements;
 
+            Mutex::Lock<PIPE_MTE2>(MUTEX_Q_L1);
             CopyGmToL1<bfloat16_t>(qL1Local, qGlobal[qGMOffset], br, d, d);
-            SetWaitFlag<HardEvent::MTE2_MTE1>(EVENT_MTE2_MTE1_Q_READY); // Q 写入 L1 后在 j 循环中常驻.
+            Mutex::Unlock<PIPE_MTE2>(MUTEX_Q_L1);
 
-            for (uint32_t groupStart = 0; groupStart < data.tc; groupStart += PIPELINE_SLOT_NUM) {
+            for (uint32_t groupStart = 0; groupStart < kvTileCount; groupStart += PIPELINE_SLOT_NUM) {
                 const uint32_t groupEnd =
-                    groupStart + PIPELINE_SLOT_NUM < data.tc ? groupStart + PIPELINE_SLOT_NUM : data.tc;
+                    groupStart + PIPELINE_SLOT_NUM < kvTileCount ? groupStart + PIPELINE_SLOT_NUM : kvTileCount;
 
                 // 先连续发射本组 C1, 将各 S slot 依次交给 AIV.
                 for (uint32_t j = groupStart; j < groupEnd; ++j) {
                     const uint32_t slot = j % PIPELINE_SLOT_NUM;
-                    const TEventID slotEventId = static_cast<TEventID>(slot);
                     auto kSlotL1Local = kL1Local[static_cast<uint64_t>(slot) * kTileElements];
                     auto aSlotL0ALocal = aL0ALocal[static_cast<uint64_t>(slot) * aL0ATileElements];
                     auto bSlotL0BLocal = bL0BLocal[static_cast<uint64_t>(slot) * bL0BTileElements];
@@ -251,14 +272,13 @@ __aicore__ inline void KernelProcessForAIC(
                     auto sSlotUBLocal = sUBLocal[static_cast<uint64_t>(slot) * sHalfTileElements];
                     CubeStage1(
                         qL1Local, kSlotL1Local, aSlotL0ALocal, bSlotL0BLocal, cSlotL0CLocal, sSlotUBLocal, kGlobal,
-                        data, j, batchIdx, slotEventId);
+                        data, j, batchIdx, slot, kvTileCount);
                     SetAicToAiv<PIPE_FIX>(SlotFlagId(FLAG_S_READY_BASE, slot));
                 }
 
                 // P_READY 到达后连续发射本组 C2, 将各 DeltaO slot 依次交给 AIV.
                 for (uint32_t j = groupStart; j < groupEnd; ++j) {
                     const uint32_t slot = j % PIPELINE_SLOT_NUM;
-                    const TEventID slotEventId = static_cast<TEventID>(slot);
                     WaitAivToAic<PIPE_MTE1>(SlotFlagId(FLAG_P_READY_BASE, slot));
                     auto pSlotL1Local = pL1Local[static_cast<uint64_t>(slot) * pTileElements];
                     auto vSlotL1Local = vL1Local[static_cast<uint64_t>(slot) * vTileElements];
@@ -268,18 +288,12 @@ __aicore__ inline void KernelProcessForAIC(
                     auto oDeltaSlotUBLocal = oDeltaUBLocal[static_cast<uint64_t>(slot) * oDeltaHalfTileElements];
                     CubeStage2(
                         pSlotL1Local, vSlotL1Local, aSlotL0ALocal, bSlotL0BLocal, cSlotL0CLocal, oDeltaSlotUBLocal,
-                        vGlobal, data, j, batchIdx, slotEventId);
+                        vGlobal, data, j, batchIdx, slot);
                     SetAicToAiv<PIPE_FIX>(SlotFlagId(FLAG_O_READY_BASE, slot));
                 }
             }
         }
 
-        // Kernel 退出前消费两槽的空闲 token, 使 Set/Wait 数量闭合.
-        for (TEventID eventId = 0; eventId < PIPELINE_SLOT_NUM; ++eventId) {
-            WaitFlag<HardEvent::M_MTE1>(eventId);
-            WaitFlag<HardEvent::FIX_M>(eventId);
-            WaitFlag<HardEvent::MTE1_MTE2>(eventId);
-        }
     } // ASCEND_IS_AIC
 }
 

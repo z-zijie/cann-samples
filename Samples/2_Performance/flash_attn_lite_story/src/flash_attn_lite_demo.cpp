@@ -278,10 +278,18 @@ int main(int argc, char** argv)
         return 0;
     }
 
-    // _verify.py 生成 golden_o.bin 并比对; 非 0 退出码表示失败.
+    // 每个 target 在编译期声明 Kernel 语义，避免共享 Demo 继承外部环境后
+    // 为非 causal 实验版本误选 causal Golden，或反之。
+#if FALITE_CAUSAL_MASK
+    constexpr const char* VERIFY_CAUSAL_ENV = "FA_CAUSAL_MASK=1 ";
+#else
+    constexpr const char* VERIFY_CAUSAL_ENV = "FA_CAUSAL_MASK=0 ";
+#endif
+    // _verify.py 生成 FP32 golden_o.bin 并比对; 非 0 退出码表示失败.
     const std::string verifyArgs =
         "'" + dataDir + "' " + std::to_string(B) + " " + std::to_string(S) + " " + std::to_string(D);
-    const int verifyStatus = RunCmd("python3 '" + exeDir + "/flash_attn_lite_verify.py' " + verifyArgs);
+    const int verifyStatus =
+        RunCmd(std::string(VERIFY_CAUSAL_ENV) + "python3 '" + exeDir + "/flash_attn_lite_verify.py' " + verifyArgs);
     if (verifyStatus != 0) {
         std::fprintf(stderr, "比对失败（_verify.py 退出码 %d）。详见上方报告。\n", verifyStatus);
         return 1;

@@ -43,7 +43,7 @@ const char* ComputeFlashAttnLiteTilingData(
         return "可用 AIC 核数必须大于 0";
     }
     if (seqLen % data.br != 0 || seqLen % data.bc != 0) {
-        return "当前无尾块实现，S 必须是 128 的整数倍";
+        return "S 必须是 128 的整数倍（不支持尾块）";
     }
 
     data.batchSize = batchSize;
@@ -53,7 +53,7 @@ const char* ComputeFlashAttnLiteTilingData(
     data.tc = seqLen / data.bc;
     const uint64_t numTasks = static_cast<uint64_t>(batchSize) * data.tr;
     if (numTasks > std::numeric_limits<uint32_t>::max()) {
-        return "B*tr 超出 uint32_t 表示范围";
+        return "任务数 B*(S/128) 超出 uint32_t 表示范围";
     }
     data.numTasks = static_cast<uint32_t>(numTasks);
     data.useAicNum = data.numTasks < aicoreNum ? data.numTasks : aicoreNum;
@@ -89,7 +89,7 @@ const char* ComputeFlashAttnLiteTilingData(
     aiv.oAccUBElems = FALite::IO_SLOT_NUM * halfBr * FALite::HEAD_DIM;
     aiv.pWorkUBAddr = aiv.oAccUBAddr + aiv.oAccUBElems * sizeof(float);
     // 每个 16 列 NZ 分组含 Bc 个有效 DataBlock 和 1 个 padding block;
-    // 每个 slot 的 PWork 共占 hBr * (Bc + 1) 个 BF16 元素.
+    // 每个 PWork 槽占 halfBr * (Bc + 1) 个 BF16 元素。
     aiv.pWorkUBElems = FALite::PIPELINE_SLOT_NUM * halfBr * (data.bc + 1);
     aiv.mUBAddr = aiv.pWorkUBAddr + aiv.pWorkUBElems * sizeof(uint16_t);
     aiv.rowStatsUBElems = halfBr;
@@ -119,7 +119,7 @@ bool FlashAttnLiteNPU(
     const uint32_t deviceAicCoreNum = ascendcPlatform->GetCoreNumAic();
     if (requestedAicCoreNum > deviceAicCoreNum) {
         std::fprintf(
-            stderr, "请求 AIC 核数 %u 超过本卡 AIC 核数 %u，kernel 未启动\n", requestedAicCoreNum, deviceAicCoreNum);
+            stderr, "请求 AIC 核数 %u 超过设备 AIC 核数 %u，kernel 未启动\n", requestedAicCoreNum, deviceAicCoreNum);
         return false;
     }
     const uint32_t aicCoreNum = requestedAicCoreNum == 0 ? deviceAicCoreNum : requestedAicCoreNum;
@@ -127,7 +127,7 @@ bool FlashAttnLiteNPU(
     FALite::FlashAttnLiteTilingData data{};
     const char* error = ComputeFlashAttnLiteTilingData(batchSize, seqLen, softmaxScale, aicCoreNum, data);
     if (error != nullptr) {
-        std::fprintf(stderr, "不支持当前 DN→NZ 特化：%s\n", error);
+        std::fprintf(stderr, "FALite 参数不受支持：%s\n", error);
         return false;
     }
     if (dQ == nullptr || dK == nullptr || dV == nullptr || dOut == nullptr) {

@@ -14,38 +14,11 @@
 
 namespace FALite {
 
-// Mutex IDs for intra-core pipeline synchronization (AIC side)
-constexpr AscendC::MutexID MUTEX_Q_L1_IO0 = 0;
-constexpr AscendC::MutexID MUTEX_Q_L1_IO1 = 1;
-
-constexpr AscendC::MutexID MUTEX_KV_L1_SLOT0 = 2;
-constexpr AscendC::MutexID MUTEX_KV_L1_SLOT1 = 3;
-
-constexpr AscendC::MutexID MUTEX_L0AB_SLOT0 = 4;
-constexpr AscendC::MutexID MUTEX_L0AB_SLOT1 = 5;
-
-constexpr AscendC::MutexID MUTEX_L0C_SLOT0 = 6;
-constexpr AscendC::MutexID MUTEX_L0C_SLOT1 = 7;
-
-__aicore__ inline AscendC::MutexID QIOMutex(uint32_t ioSlot)
-{
-    return ioSlot == 0 ? MUTEX_Q_L1_IO0 : MUTEX_Q_L1_IO1;
-}
-
-__aicore__ inline AscendC::MutexID KVSlotMutex(uint32_t slot)
-{
-    return slot == 0 ? MUTEX_KV_L1_SLOT0 : MUTEX_KV_L1_SLOT1;
-}
-
-__aicore__ inline AscendC::MutexID L0ABSlotMutex(uint32_t slot)
-{
-    return slot == 0 ? MUTEX_L0AB_SLOT0 : MUTEX_L0AB_SLOT1;
-}
-
-__aicore__ inline AscendC::MutexID L0CSlotMutex(uint32_t slot)
-{
-    return slot == 0 ? MUTEX_L0C_SLOT0 : MUTEX_L0C_SLOT1;
-}
+// 每个物理槽对应一个 MutexID. K/V 的 MTE1 所有权从 C1 持续到同槽 C2.
+constexpr MutexID MUTEX_KV_L1_BASE = 0;
+constexpr MutexID MUTEX_Q_L1_BASE = MUTEX_KV_L1_BASE + PIPELINE_SLOT_NUM;
+constexpr MutexID MUTEX_L0AB_BASE = MUTEX_Q_L1_BASE + IO_SLOT_NUM;
+constexpr MutexID MUTEX_L0C_BASE = MUTEX_L0AB_BASE + PIPELINE_SLOT_NUM;
 
 template <typename T>
 __aicore__ inline uint32_t C0ElemNum()
@@ -141,14 +114,14 @@ __aicore__ inline void FixpipeToVecUB(
     Fixpipe<dstT, srcT, PFA_CFG_UB>(dstUBLocal, srcL0CLocal, p);
 }
 
-// C1: K x Qᵀ -> Sᵀ. Fixpipe 将 Br 列均分到两路 AIV UB.
+// C1：K × Qᵀ -> Sᵀ；Fixpipe 将 Br 个 Query 行均分到两路 AIV UB。
 __aicore__ inline void CubeStage1(
     AscendC::LocalTensor<bfloat16_t>& qL1Local, AscendC::LocalTensor<bfloat16_t>& kL1Local,
     AscendC::LocalTensor<bfloat16_t>& vL1Local, AscendC::LocalTensor<bfloat16_t>& aL0ALocal,
     AscendC::LocalTensor<bfloat16_t>& bL0BLocal, AscendC::LocalTensor<float>& mmadL0CLocal,
     AscendC::LocalTensor<float>& sUBLocal, AscendC::GlobalTensor<bfloat16_t>& kGlobal,
     AscendC::GlobalTensor<bfloat16_t>& vGlobal, const FlashAttnLiteTilingData& data, uint32_t j, uint32_t batchIdx,
-    uint32_t slot, uint32_t ioSlot)
+    uint32_t slot, uint32_t ioSlot, uint32_t kvTileCount)
 {
     using namespace AscendC;
 
@@ -157,41 +130,43 @@ __aicore__ inline void CubeStage1(
         constexpr uint32_t d = HEAD_DIM;
         const uint64_t kvGMOffset =
             static_cast<uint64_t>(batchIdx) * data.seqLen * d + static_cast<uint64_t>(j) * bc * d;
-        const auto qMutex = QIOMutex(ioSlot);
-        const auto kvMutex = KVSlotMutex(slot);
-        const auto l0abMutex = L0ABSlotMutex(slot);
-        const auto l0cMutex = L0CSlotMutex(slot);
+        const MutexID kvMutexId = MUTEX_KV_L1_BASE + static_cast<MutexID>(slot);
+        const MutexID qMutexId = MUTEX_Q_L1_BASE + static_cast<MutexID>(ioSlot);
+        const MutexID l0abMutexId = MUTEX_L0AB_BASE + static_cast<MutexID>(slot);
+        const MutexID l0cMutexId = MUTEX_L0C_BASE + static_cast<MutexID>(slot);
 
-        Mutex::Lock<PIPE_MTE1>(l0abMutex);
-
-        Mutex::Lock<PIPE_MTE1>(qMutex);
-        CopyL1ToL0B<bfloat16_t>(bL0BLocal, qL1Local, br, d, d, br, false);
-        Mutex::Unlock<PIPE_MTE1>(qMutex);
-
-        Mutex::Lock<PIPE_MTE2>(kvMutex);
+        Mutex::Lock<PIPE_MTE2>(kvMutexId);
         CopyGmToL1<bfloat16_t>(kL1Local, kGlobal[kvGMOffset], bc, d, d);
         CopyGmToL1<bfloat16_t>(vL1Local, vGlobal[kvGMOffset], bc, d, d);
-        Mutex::Unlock<PIPE_MTE2>(kvMutex);
+        Mutex::Unlock<PIPE_MTE2>(kvMutexId);
 
-        Mutex::Lock<PIPE_MTE1>(kvMutex);
+        if (j == 0) {
+            Mutex::Lock<PIPE_MTE1>(qMutexId);
+        }
+        Mutex::Lock<PIPE_MTE1>(l0abMutexId);
+        CopyL1ToL0B<bfloat16_t>(bL0BLocal, qL1Local, br, d, d, br, false);
+        // C1 读 K 后继续持有该 K/V slot, 直到同槽 C2 读完 V.
+        Mutex::Lock<PIPE_MTE1>(kvMutexId);
+        // Sᵀ 使用 DN [Bc, Br] 布局; 两路 AIV 各接收 Br/2 列.
         CopyL1ToL0A<bfloat16_t>(aL0ALocal, kL1Local, bc, d, bc, d);
-        Mutex::Unlock<PIPE_MTE1>(kvMutex);
+        Mutex::Unlock<PIPE_MTE1>(l0abMutexId);
+        if (j + 1 == kvTileCount) {
+            Mutex::Unlock<PIPE_MTE1>(qMutexId);
+        }
 
-        Mutex::Unlock<PIPE_MTE1>(l0abMutex);
-
-        Mutex::Lock<PIPE_M>(l0abMutex);
-        Mutex::Lock<PIPE_M>(l0cMutex);
+        Mutex::Lock<PIPE_M>(l0abMutexId);
+        Mutex::Lock<PIPE_M>(l0cMutexId);
         CubeMmad<float, bfloat16_t, bfloat16_t>(mmadL0CLocal, aL0ALocal, bL0BLocal, bc, br, d, true);
-        Mutex::Unlock<PIPE_M>(l0cMutex);
-        Mutex::Unlock<PIPE_M>(l0abMutex);
+        Mutex::Unlock<PIPE_M>(l0abMutexId);
+        Mutex::Unlock<PIPE_M>(l0cMutexId);
 
-        Mutex::Lock<PIPE_FIX>(l0cMutex);
+        Mutex::Lock<PIPE_FIX>(l0cMutexId);
         FixpipeToVecUB<float, float>(sUBLocal, mmadL0CLocal, bc, br, 2);
-        Mutex::Unlock<PIPE_FIX>(l0cMutex);
+        Mutex::Unlock<PIPE_FIX>(l0cMutexId);
     }
 }
 
-// C2: P x V -> DeltaO. Fixpipe 将 Br 行均分到两路 AIV UB.
+// C2：P × V -> ΔO；Fixpipe 将 Br 行均分到两路 AIV UB。
 __aicore__ inline void CubeStage2(
     AscendC::LocalTensor<bfloat16_t>& pL1Local, AscendC::LocalTensor<bfloat16_t>& vL1Local,
     AscendC::LocalTensor<bfloat16_t>& aL0ALocal, AscendC::LocalTensor<bfloat16_t>& bL0BLocal,
@@ -203,32 +178,30 @@ __aicore__ inline void CubeStage2(
     if ASCEND_IS_AIC {
         const uint32_t br = data.br, bc = data.bc;
         constexpr uint32_t d = HEAD_DIM;
-        const auto kvMutex = KVSlotMutex(slot);
-        const auto l0abMutex = L0ABSlotMutex(slot);
-        const auto l0cMutex = L0CSlotMutex(slot);
+        const MutexID kvMutexId = MUTEX_KV_L1_BASE + static_cast<MutexID>(slot);
+        const MutexID l0abMutexId = MUTEX_L0AB_BASE + static_cast<MutexID>(slot);
+        const MutexID l0cMutexId = MUTEX_L0C_BASE + static_cast<MutexID>(slot);
 
-        Mutex::Lock<PIPE_MTE1>(l0abMutex);
-        // L1 保存 Pᵀ; LoadData 转置后执行 P x V.
+        Mutex::Lock<PIPE_MTE1>(l0abMutexId);
         CopyL1ToL0A<bfloat16_t>(aL0ALocal, pL1Local, bc, br, br, bc, true);
-
-        Mutex::Lock<PIPE_MTE1>(kvMutex);
         CopyL1ToL0B<bfloat16_t>(bL0BLocal, vL1Local, bc, d, bc, d, true);
-        Mutex::Unlock<PIPE_MTE1>(kvMutex);
+        // 归还从 C1 持有至今的 K/V L1 slot.
+        Mutex::Unlock<PIPE_MTE1>(kvMutexId);
+        Mutex::Unlock<PIPE_MTE1>(l0abMutexId);
 
-        Mutex::Unlock<PIPE_MTE1>(l0abMutex);
-
-        Mutex::Lock<PIPE_M>(l0abMutex);
-        Mutex::Lock<PIPE_M>(l0cMutex);
+        Mutex::Lock<PIPE_M>(l0abMutexId);
+        Mutex::Lock<PIPE_M>(l0cMutexId);
         CubeMmad<float, bfloat16_t, bfloat16_t>(mmadL0CLocal, aL0ALocal, bL0BLocal, br, d, bc, true);
-        Mutex::Unlock<PIPE_M>(l0abMutex);
-        Mutex::Unlock<PIPE_M>(l0cMutex);
+        Mutex::Unlock<PIPE_M>(l0abMutexId);
+        Mutex::Unlock<PIPE_M>(l0cMutexId);
 
-        Mutex::Lock<PIPE_FIX>(l0cMutex);
+        Mutex::Lock<PIPE_FIX>(l0cMutexId);
         FixpipeToVecUB<float, float>(oDeltaUBLocal, mmadL0CLocal, br, d);
-        Mutex::Unlock<PIPE_FIX>(l0cMutex);
+        Mutex::Unlock<PIPE_FIX>(l0cMutexId);
     }
 }
 
+template <bool CAUSAL_MASK>
 __aicore__ inline void KernelProcessForAIC(
     __gm__ bfloat16_t* qGMAddr, __gm__ bfloat16_t* kGMAddr, __gm__ bfloat16_t* vGMAddr, FlashAttnLiteTilingData data)
 {
@@ -253,7 +226,6 @@ __aicore__ inline void KernelProcessForAIC(
         const uint32_t aL0ATileElements = aic.aL0AElems / PIPELINE_SLOT_NUM;
         const uint32_t bL0BTileElements = aic.bL0BElems / PIPELINE_SLOT_NUM;
         const uint32_t cL0CTileElements = aic.cL0CElems / PIPELINE_SLOT_NUM;
-        // L1 地址由 host tiling 规划.
         LocalTensor<bfloat16_t> pL1Local(TPosition::A1, aic.pL1Addr, aic.pL1Elems);
         LocalTensor<bfloat16_t> qL1Local(TPosition::A1, aic.qL1Addr, aic.qL1Elems);
         LocalTensor<bfloat16_t> kL1Local(TPosition::A1, aic.kL1Addr, aic.kL1Elems);
@@ -270,18 +242,19 @@ __aicore__ inline void KernelProcessForAIC(
         for (uint32_t taskId = GetBlockIdx(); taskId < data.numTasks; taskId += GetBlockNum()) {
             const uint32_t batchIdx = taskId / data.tr;
             const uint32_t tileIdx = taskId % data.tr;
+            const uint32_t kvTileCount = GetKvTileCount<CAUSAL_MASK>(data, tileIdx);
             const uint64_t qGMOffset =
                 static_cast<uint64_t>(batchIdx) * data.seqLen * d + static_cast<uint64_t>(tileIdx) * qTileElements;
 
             auto qSlotL1Local = qL1Local[static_cast<uint64_t>(ioSlot) * qTileElements];
-            const auto qMutex = QIOMutex(ioSlot);
-            Mutex::Lock<PIPE_MTE2>(qMutex);
+            const MutexID qMutexId = MUTEX_Q_L1_BASE + static_cast<MutexID>(ioSlot);
+            Mutex::Lock<PIPE_MTE2>(qMutexId);
             CopyGmToL1<bfloat16_t>(qSlotL1Local, qGlobal[qGMOffset], br, d, d);
-            Mutex::Unlock<PIPE_MTE2>(qMutex);
+            Mutex::Unlock<PIPE_MTE2>(qMutexId);
 
-            for (uint32_t groupStart = 0; groupStart < data.tc; groupStart += PIPELINE_SLOT_NUM) {
+            for (uint32_t groupStart = 0; groupStart < kvTileCount; groupStart += PIPELINE_SLOT_NUM) {
                 const uint32_t groupEnd =
-                    groupStart + PIPELINE_SLOT_NUM < data.tc ? groupStart + PIPELINE_SLOT_NUM : data.tc;
+                    groupStart + PIPELINE_SLOT_NUM < kvTileCount ? groupStart + PIPELINE_SLOT_NUM : kvTileCount;
 
                 // 先连续发射本组 C1, 将各 S slot 依次交给 AIV.
                 for (uint32_t j = groupStart; j < groupEnd; ++j) {
@@ -294,7 +267,7 @@ __aicore__ inline void KernelProcessForAIC(
                     auto sSlotUBLocal = sUBLocal[static_cast<uint64_t>(slot) * sHalfTileElements];
                     CubeStage1(
                         qSlotL1Local, kSlotL1Local, vSlotL1Local, aSlotL0ALocal, bSlotL0BLocal, cSlotL0CLocal,
-                        sSlotUBLocal, kGlobal, vGlobal, data, j, batchIdx, slot, ioSlot);
+                        sSlotUBLocal, kGlobal, vGlobal, data, j, batchIdx, slot, ioSlot, kvTileCount);
                     SetAicToAiv<PIPE_FIX>(SlotFlagId(FLAG_S_READY_BASE, slot));
                 }
 
@@ -316,6 +289,7 @@ __aicore__ inline void KernelProcessForAIC(
             }
             ioSlot ^= 1;
         }
+
     } // ASCEND_IS_AIC
 }
 

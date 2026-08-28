@@ -13,19 +13,23 @@
 
 """flash_attn_lite Golden 计算与比对.
 
-默认使用 torch CPU 计算, torch 不可用时回退到 numpy. BF16 读写优先使用
-ml_dtypes, 否则使用 round-to-nearest-even 位运算.
+默认使用 torch CPU 计算, torch 不可用时回退到 numpy. BF16 读取优先使用
+ml_dtypes, 否则使用位运算转换为 FP32.
 
 处理流程:
   1. 读取 q.bin, k.bin, v.bin 和 npuout_o.bin, 并将 BF16 转为 FP32.
-  2. 以 FP32 计算 softmax(scale * Q @ Kᵀ) @ V, 转为 BF16 后写入 golden_o.bin.
-  3. 按 |npu-golden| <= atol + rtol * |golden| 逐元素比对.
+  2. 以 FP32 计算 softmax(scale * Q @ Kᵀ) @ V, 并以 FP32 写入 golden_o.bin.
+  3. 将 NPU BF16 输出转为 FP32, 直接与 FP32 Golden 逐元素比对.
+  4. 可选计算 Torch BF16 低精度基线，检查 NPU 最大绝对误差不超过
+     低精度基线最大绝对误差的 2 倍.
 
 环境变量:
   FA_VERIFY_BACKEND = auto|torch|numpy
   FA_VERIFY_THREADS = N
   FA_VERIFY_QUERY_BLOCK = N
   FA_VERIFY_FORCE_NUMPY = 1
+  FA_VERIFY_LOW_PRECISION_BASELINE = 1
+  FA_CAUSAL_MASK = 1
 
 用法:
     python3 flash_attn_lite_verify.py <data_dir> <B> <S> <D>
@@ -40,6 +44,15 @@ import time
 from thread_limit import configure_python_threads
 
 _VERIFY_THREADS = configure_python_threads()
+
+
+def _env_enabled(name: str) -> bool:
+    """读取 1/true/yes/on 形式的布尔环境变量。"""
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+_CAUSAL_MASK = _env_enabled("FA_CAUSAL_MASK")
+_USE_LOW_PRECISION_BASELINE = _env_enabled("FA_VERIFY_LOW_PRECISION_BASELINE")
 
 import numpy as np
 
@@ -81,12 +94,12 @@ def _resolve_backend() -> str:
 # 模块加载时确定 Golden 后端.
 _BACKEND = _resolve_backend()
 
-if _BACKEND == "torch":
+if _HAS_TORCH and (_BACKEND == "torch" or _USE_LOW_PRECISION_BASELINE):
     torch.set_num_threads(_VERIFY_THREADS)
     torch.set_num_interop_threads(1)
 
 
-# ml_dtypes 和位运算路径均使用 round-to-nearest-even.
+# BF16 读取优先使用 ml_dtypes, 未安装时用位运算转为 FP32.
 try:
     import ml_dtypes
 
@@ -105,25 +118,11 @@ def bf16_to_fp32(arr: np.ndarray) -> np.ndarray:
     return u32.view(np.float32)
 
 
-def fp32_to_bf16_bytes(x: np.ndarray) -> bytes:
-    """FP32 ndarray -> 小端 BF16 字节流, 使用 round-to-nearest-even.
-
-    位运算路径按下式舍入:
-        rounded = (u32 + 0x7FFF + (lsb_of_truncated & 1)) >> 16
-    """
-    x = np.ascontiguousarray(x, dtype=np.float32)
-    if _HAS_ML_DTYPES:
-        return x.astype(ml_dtypes.bfloat16).tobytes()
-    u32 = x.view(np.uint32).copy()
-    # 取保留部分的最低位, 用于 round-half-to-even tie-break.
-    lsb = (u32 >> np.uint32(16)) & np.uint32(1)
-    rounded = (u32 + np.uint32(0x7FFF) + lsb) >> np.uint32(16)
-    return rounded.astype(np.uint16).tobytes()
-
-
-# 采用 CANN BF16 混合容差, 并要求全部元素通过.
-COMPARE_RTOL = 2.0 ** -6
-COMPARE_ATOL = 2.0 ** -6
+# BF16 混合容差要求全部元素通过.
+COMPARE_RTOL = 0.004
+COMPARE_ATOL = 0.004
+# FlashAttention 风格：Kernel 的最大绝对误差不超过普通 BF16 基线的 2 倍.
+LOW_PRECISION_BASELINE_MULTIPLIER = 2.0
 # 报告显示前 4 x 4 个元素.
 PRINT_ROWS = 4
 PRINT_COLS = 4
@@ -146,6 +145,20 @@ def read_bf16(path: str, shape, msg_ctx: str = "") -> np.ndarray:
     return bf16_to_fp32(bf16)
 
 
+def _query_block_size(seq_len: int) -> int:
+    """解析 Query 分块大小；未设置时使用完整序列。"""
+    query_block_env = os.environ.get("FA_VERIFY_QUERY_BLOCK", "").strip()
+    if not query_block_env:
+        return seq_len
+    try:
+        query_block = int(query_block_env)
+    except ValueError as e:
+        raise ValueError("FA_VERIFY_QUERY_BLOCK 必须是正整数") from e
+    if query_block <= 0:
+        raise ValueError("FA_VERIFY_QUERY_BLOCK 必须是正整数")
+    return query_block
+
+
 def compute_golden_torch(qf: np.ndarray, kf: np.ndarray, vf: np.ndarray,
                          scale: float) -> np.ndarray:
     """使用 torch FP32 计算 O = softmax(scale * Q @ Kᵀ) @ V."""
@@ -154,38 +167,73 @@ def compute_golden_torch(qf: np.ndarray, kf: np.ndarray, vf: np.ndarray,
     k = torch.from_numpy(kf)
     v = torch.from_numpy(vf)
 
-    query_block_env = os.environ.get("FA_VERIFY_QUERY_BLOCK", "").strip()
-    if query_block_env:
-        try:
-            query_block = int(query_block_env)
-        except ValueError:
-            query_block = 0
-        if query_block <= 0:
-            raise ValueError("FA_VERIFY_QUERY_BLOCK 必须是正整数")
-    else:
-        query_block = q.shape[1]
+    query_block = _query_block_size(q.shape[1])
 
     # 仅分块 Q 行, 每块仍使用完整 K/V, 避免一次性分配 B*S*S scores.
     o = torch.empty_like(q)
-    kt = k.transpose(-2, -1)
     for row_begin in range(0, q.shape[1], query_block):
         row_end = min(row_begin + query_block, q.shape[1])
-        scores = (q[:, row_begin:row_end] @ kt).mul_(scale)
+        key_end = row_end if _CAUSAL_MASK else q.shape[1]
+        scores = (q[:, row_begin:row_end] @ k[:, :key_end].transpose(-2, -1)).mul_(scale)
+        if _CAUSAL_MASK:
+            query_index = torch.arange(row_begin, row_end).unsqueeze(1)
+            key_index = torch.arange(key_end).unsqueeze(0)
+            scores.masked_fill_(key_index > query_index, float("-inf"))
         scores.sub_(scores.amax(dim=-1, keepdim=True))
         scores.exp_()
         scores.div_(scores.sum(dim=-1, keepdim=True))
-        o[:, row_begin:row_end] = scores @ v
+        o[:, row_begin:row_end] = scores @ v[:, :key_end]
     return o.contiguous().numpy()
+
+
+def compute_low_precision_baseline_torch(qf: np.ndarray, kf: np.ndarray,
+                                         vf: np.ndarray,
+                                         scale: float) -> np.ndarray:
+    """使用 Torch BF16 计算低精度 Attention 基线.
+
+    参考 FlashAttention 的低精度基线：保留 BF16 输入和中间结果，
+    并在矩阵乘前对 K 缩放，使求值顺序与 FP32 Golden 略有不同.
+    """
+    if not _HAS_TORCH:  # 调用者应先校验，这里保留防御性检查.
+        raise RuntimeError("Torch 不可用，无法计算 BF16 低精度基线")
+
+    q = torch.from_numpy(qf).to(torch.bfloat16)
+    k = torch.from_numpy(kf).to(torch.bfloat16)
+    v = torch.from_numpy(vf).to(torch.bfloat16)
+    k_scaled = k.mul(scale)
+    query_block = _query_block_size(q.shape[1])
+
+    o = torch.empty_like(q)
+    for row_begin in range(0, q.shape[1], query_block):
+        row_end = min(row_begin + query_block, q.shape[1])
+        key_end = row_end if _CAUSAL_MASK else q.shape[1]
+        scores = q[:, row_begin:row_end] @ k_scaled[:, :key_end].transpose(-2, -1)
+        if _CAUSAL_MASK:
+            query_index = torch.arange(row_begin, row_end).unsqueeze(1)
+            key_index = torch.arange(key_end).unsqueeze(0)
+            scores.masked_fill_(key_index > query_index, float("-inf"))
+        probability = torch.softmax(scores, dim=-1)
+        o[:, row_begin:row_end] = probability @ v[:, :key_end]
+    return o.float().contiguous().numpy()
 
 
 def compute_golden_numpy(qf: np.ndarray, kf: np.ndarray, vf: np.ndarray,
                          scale: float) -> np.ndarray:
     """使用 numpy FP32 计算 O = softmax(scale * Q @ Kᵀ) @ V."""
-    s = scale * (qf @ kf.transpose(0, 2, 1))          # (B,S,S) FP32
-    s = s - s.max(axis=2, keepdims=True)               # 减去 rowmax, 保持数值稳定.
-    e = np.exp(s)                                      # (B,S,S)
-    sm = e / e.sum(axis=2, keepdims=True)              # 归一化后的 P.
-    o = sm @ vf                                        # (B,S,D) fp32
+    query_block = _query_block_size(qf.shape[1])
+    o = np.empty_like(qf)
+    for row_begin in range(0, qf.shape[1], query_block):
+        row_end = min(row_begin + query_block, qf.shape[1])
+        key_end = row_end if _CAUSAL_MASK else qf.shape[1]
+        scores = scale * (qf[:, row_begin:row_end] @ kf[:, :key_end].transpose(0, 2, 1))
+        if _CAUSAL_MASK:
+            query_index = np.arange(row_begin, row_end)[:, None]
+            key_index = np.arange(key_end)[None, :]
+            scores[:, key_index > query_index] = -np.inf
+        scores -= scores.max(axis=2, keepdims=True)
+        np.exp(scores, out=scores)
+        scores /= scores.sum(axis=2, keepdims=True)
+        o[:, row_begin:row_end] = scores @ vf[:, :key_end]
     return np.ascontiguousarray(o)
 
 
@@ -196,7 +244,7 @@ def compute_golden(qf: np.ndarray, kf: np.ndarray, vf: np.ndarray, scale: float)
     return compute_golden_numpy(qf, kf, vf, scale)
 
 
-def compare(npu_fp32: np.ndarray, golden_fp32: np.ndarray):
+def compare_mixed_precision(npu_fp32: np.ndarray, golden_fp32: np.ndarray):
     """逐元素执行 |npu-golden| <= atol + rtol * |golden| 比对."""
     tot = int(npu_fp32.size)
     abs_err = np.abs(npu_fp32 - golden_fp32)
@@ -241,6 +289,43 @@ def compare(npu_fp32: np.ndarray, golden_fp32: np.ndarray):
     return passed, lines
 
 
+def compare_low_precision_baseline(npu_fp32: np.ndarray,
+                                   golden_fp32: np.ndarray,
+                                   baseline_fp32: np.ndarray):
+    """比较 NPU 与 BF16 基线相对 FP32 Golden 的最大绝对误差."""
+    finite = (
+        np.isfinite(npu_fp32).all()
+        and np.isfinite(golden_fp32).all()
+        and np.isfinite(baseline_fp32).all()
+    )
+    if not finite:
+        return False, ["比对：NPU、FP32 Golden 或 BF16 低精度基线中存在 NaN/Inf"]
+
+    npu_abs_err = np.abs(npu_fp32 - golden_fp32)
+    baseline_abs_err = np.abs(baseline_fp32 - golden_fp32)
+    npu_max_idx = int(np.argmax(npu_abs_err.reshape(-1)))
+    baseline_max_idx = int(np.argmax(baseline_abs_err.reshape(-1)))
+    npu_max = float(npu_abs_err.reshape(-1)[npu_max_idx])
+    baseline_max = float(baseline_abs_err.reshape(-1)[baseline_max_idx])
+    limit = LOW_PRECISION_BASELINE_MULTIPLIER * baseline_max
+    ratio = npu_max / baseline_max if baseline_max > 0.0 else (
+        0.0 if npu_max == 0.0 else float("inf"))
+    npu_max_pos = np.unravel_index(npu_max_idx, npu_fp32.shape)
+    baseline_max_pos = np.unravel_index(baseline_max_idx, baseline_fp32.shape)
+
+    lines = [
+        f"低精度基线倍率比对：总元素={npu_fp32.size} ",
+        f"  NPU 最大绝对误差={npu_max:.6e} @idx={npu_max_idx}"
+        f"(b={npu_max_pos[0]}, row={npu_max_pos[1]}, col={npu_max_pos[2]})",
+        f"  BF16 基线最大绝对误差={baseline_max:.6e} "
+        f"@idx={baseline_max_idx}"
+        f"(b={baseline_max_pos[0]}, row={baseline_max_pos[1]}, col={baseline_max_pos[2]})",
+        f"  误差倍率={ratio:.6e}，上限={LOW_PRECISION_BASELINE_MULTIPLIER:g} "
+        f"(NPU 误差上限={limit:.6e})",
+    ]
+    return npu_max <= limit, lines
+
+
 def main() -> int:
     if len(sys.argv) != 5:
         print(f"用法: {sys.argv[0]} <data_dir> <B> <S> <D>", file=sys.stderr)
@@ -252,6 +337,13 @@ def main() -> int:
     d = int(sys.argv[4])
     if b <= 0 or s <= 0 or d <= 0:
         print(f"错误: B/S/D 必须为正整数，得到 B={b} S={s} D={d}", file=sys.stderr)
+        return 1
+    if _USE_LOW_PRECISION_BASELINE and not _HAS_TORCH:
+        print(
+            "错误: FA_VERIFY_LOW_PRECISION_BASELINE=1 需要可用的 Torch 环境"
+            f"（Torch 导入失败：{_TORCH_IMPORT_ERR}）",
+            file=sys.stderr,
+        )
         return 1
 
     # 记录实际 Golden 后端及 BF16 路径.
@@ -266,6 +358,17 @@ def main() -> int:
         print(f"verify: backend=torch({torch.get_num_threads()} threads)")
     else:
         print("verify: backend=numpy")
+    print(f"verify: causal_mask={'true' if _CAUSAL_MASK else 'false'}")
+    if _USE_LOW_PRECISION_BASELINE:
+        print(
+            "verify: compare=low_precision_baseline "
+            f"(max_abs_npu <= {LOW_PRECISION_BASELINE_MULTIPLIER:g} * max_abs_bf16_baseline)"
+        )
+    else:
+        print(
+            "verify: compare=mixed_fp32_golden "
+            f"(rtol={COMPARE_RTOL} atol={COMPARE_ATOL})"
+        )
     if passive_np:
         print(
             f"verify: 警告 torch 不可用（{_TORCH_IMPORT_ERR}），用 numpy 回退",
@@ -291,26 +394,36 @@ def main() -> int:
     o_golden_fp32 = compute_golden(qf, kf, vf, scale)
     t_golden = time.perf_counter() - t0
 
-    # 以 round-to-nearest-even BF16 写入 golden_o.bin.
+    # Golden 保持 FP32 落盘，验收时不再引入一次 BF16 量化。
     golden_path = os.path.join(data_dir, "golden_o.bin")
-    with open(golden_path, "wb") as f:
-        f.write(fp32_to_bf16_bytes(o_golden_fp32))
+    np.ascontiguousarray(o_golden_fp32, dtype="<f4").tofile(golden_path)
 
     backend_tag = (
         f"torch×{torch.get_num_threads()}线程" if _BACKEND == "torch" else "numpy"
     )
     print(
-        f"verify: 读入 {t_read:.3f}s，Golden(Q@Kᵀ→softmax→P@V, fp32/{backend_tag}) "
-        f"{t_golden:.3f}s -> golden_o.bin ({b*s*d*2} bytes)"
+        f"verify: 读入 {t_read:.3f}s，Golden(Q@Kᵀ→softmax→P@V, "
+        f"causal={'true' if _CAUSAL_MASK else 'false'}, fp32/{backend_tag}) "
+        f"{t_golden:.3f}s -> golden_o.bin(FP32, {b*s*d*4} bytes)"
     )
 
-    # 重新读取落盘的 BF16 Golden, 确保比对精度口径一致.
-    golden_fp32_disk = read_bf16(golden_path, shape, "Golden(disk)")
-    passed, report_lines = compare(npu_fp32, golden_fp32_disk)
+    if _USE_LOW_PRECISION_BASELINE:
+        t0 = time.perf_counter()
+        try:
+            baseline_fp32 = compute_low_precision_baseline_torch(qf, kf, vf, scale)
+        except (RuntimeError, TypeError) as e:
+            print(f"低精度基线计算失败：{e}", file=sys.stderr)
+            return 1
+        t_baseline = time.perf_counter() - t0
+        print(f"verify: Torch BF16 低精度基线 {t_baseline:.3f}s")
+        passed, report_lines = compare_low_precision_baseline(
+            npu_fp32, o_golden_fp32, baseline_fp32)
+    else:
+        passed, report_lines = compare_mixed_precision(npu_fp32, o_golden_fp32)
     print("\n".join(report_lines))
 
     if passed:
-        print("比对成功 ✓（npuout 与 golden 在容差内）")
+        print("比对成功 ✓（npuout 与 golden 在当前标准内）")
         return 0
     # 失败信息使用 stdout, 保持报告顺序稳定.
     print("比对失败 ✗（npuout 超出容差）")

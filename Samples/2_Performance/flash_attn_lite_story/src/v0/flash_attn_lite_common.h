@@ -14,45 +14,60 @@
 
 namespace FALite {
 
+// 样例固定 D=128；Br 和 Bc 由 Host 侧 TilingData 指定。
 constexpr uint32_t HEAD_DIM = 128;
-constexpr uint32_t BLOCK_K = 64;
-constexpr uint32_t BR = 128;
-constexpr uint32_t BC = 128;
 
+// 字段名中的 Addr 以字节为单位，Elems 表示 LocalTensor 的元素数。
 struct SRAMLayoutAIC {
-    uint32_t qL1Addr, qL1Elems;
-    uint32_t kL1Addr, kL1Elems;
-    uint32_t vL1Addr, vL1Elems;
-    uint32_t pL1Addr, pL1Elems;
-    uint32_t aL0AAddr, aL0AElems;
-    uint32_t bL0BAddr, bL0BElems;
-    uint32_t cL0CAddr, cL0CElems;
+    uint32_t pL1Addr;
+    uint32_t pL1Elems;
+    uint32_t qL1Addr;
+    uint32_t qL1Elems;
+    uint32_t kL1Addr;
+    uint32_t kL1Elems;
+    uint32_t vL1Addr;
+    uint32_t vL1Elems;
+    uint32_t aL0AAddr;
+    uint32_t aL0AElems;
+    uint32_t bL0BAddr;
+    uint32_t bL0BElems;
+    uint32_t cL0CAddr;
+    uint32_t cL0CElems;
 };
 
 struct SRAMLayoutAIV {
-    uint32_t sUBAddr, sUBElems;
-    uint32_t oDeltaUBAddr, oDeltaUBElems;
-    uint32_t oAccUBAddr, oAccUBElems;
-    uint32_t pUBAddr, pUBElems;
-    uint32_t mUBAddr, lUBAddr, alphaUBAddr;
+    uint32_t sUBAddr;
+    uint32_t sUBElems;
+    uint32_t oDeltaUBAddr;
+    uint32_t oDeltaUBElems;
+    uint32_t oAccUBAddr;
+    uint32_t oAccUBElems;
+    uint32_t pUBAddr;
+    uint32_t pUBElems;
+    uint32_t mUBAddr;
+    uint32_t lUBAddr;
+    uint32_t alphaUBAddr;
     uint32_t rowStatsUBElems;
 };
 
+// TilingData 仅保存 Host 与 Kernel 共用的参数。
 struct FlashAttnLiteTilingData {
     uint32_t batchSize;
     uint32_t seqLen;
-    uint32_t headDim;
     float scale;
-    uint32_t br, bc, tr, tc;
+    uint32_t br;
+    uint32_t bc;
+    uint32_t tr;
+    uint32_t tc;
     uint32_t useAicNum;
     uint32_t numTasks;
+
     SRAMLayoutAIC layoutAIC;
     SRAMLayoutAIV layoutAIV;
 };
 
-// internal: 7-GM-buffer kernel launch, S/P/ΔO 由 host 内部分配
 void LaunchFlashAttnLiteKernel(
-    uint8_t* dQ, uint8_t* dK, uint8_t* dV, uint8_t* dS, uint8_t* dP, uint8_t* dDO, uint8_t* dOut,
+    uint8_t* dQ, uint8_t* dK, uint8_t* dV, uint8_t* dS, uint8_t* dP, uint8_t* dDeltaO, uint8_t* dOut,
     const FlashAttnLiteTilingData& data, void* stream);
 
 } // namespace FALite

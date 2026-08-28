@@ -17,8 +17,11 @@
 
 namespace FALite {
 
-// 正式执行使用 mode2 同步同组的 1 个 AIC 和 2 个 AIV.
-// SIM_COMPATIBLE 改用 mode4 分别同步两路 AIV, 规避 CANNsim 的多轮 mode2 异常.
+// 使用 uint8_t 作为 Mutex ID 类型，以兼容未声明 AscendC::MutexID 的 CANN 9.0。
+using MutexID = uint8_t;
+
+// 真机使用 CrossCore mode2 同步一个 Mix 组（1 AIC + 2 AIV）。
+// CANNsim 使用 mode4 分别同步 AIV0 和 AIV1，以兼容多轮仿真。
 constexpr uint8_t GROUP_CROSS_MODE = 2;
 #ifdef SIM_COMPATIBLE
 constexpr uint8_t PAIR_CROSS_MODE = 4;
@@ -36,16 +39,8 @@ constexpr uint32_t VL_B32 = VECTOR_REG_WIDTH / sizeof(float);
 constexpr uint32_t VL_B16 = VECTOR_REG_WIDTH / sizeof(bfloat16_t);
 constexpr uint32_t C0_BYTES = 32;
 constexpr uint32_t B16_PER_DATABLOCK = C0_BYTES / sizeof(bfloat16_t);
-// float 的最低有限值, 即 -FLT_MAX; FLT_MIN 是最小正正规数.
+// -FLT_MAX 是 float 的最低有限值；FLT_MIN 表示最小正正规数。
 constexpr float FLOAT_LOWEST = -3.402823466e+38F;
-
-template <AscendC::HardEvent E>
-__aicore__ inline void SetWaitFlag(const AscendC::TEventID eventId)
-{
-    using namespace AscendC;
-    SetFlag<E>(eventId);
-    WaitFlag<E>(eventId);
-}
 
 __aicore__ inline uint16_t SlotFlagId(uint16_t baseFlagId, uint32_t slot)
 {
@@ -111,6 +106,16 @@ template <typename R, typename T1, typename T2>
 __aicore__ inline R CeilAlign(T1 x, T2 base)
 {
     return static_cast<R>(CeilDiv<R, T1, T2>(x, base) * base);
+}
+
+// 非因果模式遍历全部 K/V 块；因果模式只遍历该 Q 块及之前的 K/V 块。
+template <bool CAUSAL_MASK>
+__aicore__ inline uint32_t GetKvTileCount(const FlashAttnLiteTilingData& data, uint32_t qTileIdx)
+{
+    if constexpr (CAUSAL_MASK) {
+        return qTileIdx + 1;
+    }
+    return data.tc;
 }
 
 } // namespace FALite

@@ -14,25 +14,54 @@
 
 namespace FALite {
 
+// 样例固定 D=128；Br 和 Bc 由 Host 侧 TilingData 指定。
 constexpr uint32_t HEAD_DIM = 128;
-constexpr uint32_t BLOCK_K = 64;
-constexpr uint32_t BR = 128;
-constexpr uint32_t BC = 128;
 
+// 字段名中的 Addr 以字节为单位，Elems 表示 LocalTensor 的元素数。
 struct SRAMLayoutAIC {
-    uint32_t qL1Addr, qL1Elems, kL1Addr, kL1Elems, vL1Addr, vL1Elems, pL1Addr, pL1Elems;
-    uint32_t aL0AAddr, aL0AElems, bL0BAddr, bL0BElems, cL0CAddr, cL0CElems;
+    uint32_t pL1Addr;
+    uint32_t pL1Elems;
+    uint32_t qL1Addr;
+    uint32_t qL1Elems;
+    uint32_t kL1Addr;
+    uint32_t kL1Elems;
+    uint32_t vL1Addr;
+    uint32_t vL1Elems;
+    uint32_t aL0AAddr;
+    uint32_t aL0AElems;
+    uint32_t bL0BAddr;
+    uint32_t bL0BElems;
+    uint32_t cL0CAddr;
+    uint32_t cL0CElems;
 };
 
 struct SRAMLayoutAIV {
-    uint32_t sUBAddr, sUBElems, oDeltaUBAddr, oDeltaUBElems, oAccUBAddr, oAccUBElems;
-    uint32_t pUBAddr, pUBElems, mUBAddr, lUBAddr, alphaUBAddr, rowStatsUBElems;
+    uint32_t sUBAddr;
+    uint32_t sUBElems;
+    uint32_t oDeltaUBAddr;
+    uint32_t oDeltaUBElems;
+    uint32_t oAccUBAddr;
+    uint32_t oAccUBElems;
+    uint32_t pUBAddr;
+    uint32_t pUBElems;
+    uint32_t mUBAddr;
+    uint32_t lUBAddr;
+    uint32_t alphaUBAddr;
+    uint32_t rowStatsUBElems;
 };
 
+// TilingData 仅保存 Host 与 Kernel 共用的参数。
 struct FlashAttnLiteTilingData {
-    uint32_t batchSize, seqLen, headDim;
+    uint32_t batchSize;
+    uint32_t seqLen;
     float scale;
-    uint32_t br, bc, tr, tc, useAicNum, numTasks;
+    uint32_t br;
+    uint32_t bc;
+    uint32_t tr;
+    uint32_t tc;
+    uint32_t useAicNum;
+    uint32_t numTasks;
+
     SRAMLayoutAIC layoutAIC;
     SRAMLayoutAIV layoutAIV;
 };

@@ -30,6 +30,9 @@ foreach(SCRIPT_FILE ${FALITE_SCRIPTS})
     configure_file(${SCRIPT_FILE} ${SCRIPT_NAME} COPYONLY)
 endforeach()
 
+set(FALITE_FORMAL_VERSIONS
+    v0 v1 v2 v3 v4 v5 v6 v7 v8 v9 v10 v11
+)
 set(FALITE_VERSION_TARGETS "")
 
 function(add_falite_version VERSION_NAME)
@@ -47,6 +50,9 @@ function(add_falite_version VERSION_NAME)
         endif()
     endforeach()
 
+    if(NOT VERSION_NAME IN_LIST FALITE_FORMAL_VERSIONS)
+        message(FATAL_ERROR "falite 未登记版本: ${VERSION_NAME}")
+    endif()
     add_executable(${TARGET_NAME} ${VERSION_SOURCES})
     target_include_directories(${TARGET_NAME} PRIVATE
         ${ASCEND_DIR}/${SYSTEM_PREFIX}/include
@@ -58,6 +64,10 @@ function(add_falite_version VERSION_NAME)
         "$<$<COMPILE_LANGUAGE:ASC>:-O3>"
         "$<$<COMPILE_LANGUAGE:ASC>:-DENABLE_CV_COMM_VIA_SSBUF=true>"
         "$<$<COMPILE_LANGUAGE:ASC>:--cce-auto-sync=off>"
+    )
+    # 全部正式版固定计算 causal Attention；共享 Demo 使用相同语义生成 Golden。
+    target_compile_definitions(${TARGET_NAME} PRIVATE
+        "$<$<COMPILE_LANGUAGE:CXX>:FALITE_CAUSAL_MASK=1>"
     )
     if(SIM_COMPATIBLE)
         target_compile_definitions(${TARGET_NAME} PRIVATE
@@ -80,7 +90,13 @@ function(add_falite_version VERSION_NAME)
     )
 endfunction()
 
-# 新增 src/vN 目录并重新配置后, CMake 会自动生成 falite_vN.
+# 版本必须先登记，避免新目录被默认归入正式版。
+foreach(VERSION_NAME ${FALITE_FORMAL_VERSIONS})
+    if(NOT IS_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/src/${VERSION_NAME})
+        message(FATAL_ERROR "falite 已登记版本缺少目录: src/${VERSION_NAME}")
+    endif()
+endforeach()
+
 file(GLOB VERSION_DIRS CONFIGURE_DEPENDS LIST_DIRECTORIES true
     ${CMAKE_CURRENT_SOURCE_DIR}/src/v*
 )
@@ -88,13 +104,16 @@ foreach(VERSION_DIR ${VERSION_DIRS})
     if(IS_DIRECTORY ${VERSION_DIR})
         get_filename_component(VERSION_NAME ${VERSION_DIR} NAME)
         if(VERSION_NAME MATCHES "^v[0-9]+$")
+            if(NOT VERSION_NAME IN_LIST FALITE_FORMAL_VERSIONS)
+                message(FATAL_ERROR "falite 存在未登记版本目录: src/${VERSION_NAME}")
+            endif()
             add_falite_version(${VERSION_NAME})
         endif()
     endif()
 endforeach()
 
 if(NOT FALITE_VERSION_TARGETS)
-    message(FATAL_ERROR "${_cann_sample_path} 未发现 src/vN 版本目录")
+    message(FATAL_ERROR "${_cann_sample_path} 未发现正式 src/vN 版本目录")
 endif()
 
 add_custom_target(falite DEPENDS ${FALITE_VERSION_TARGETS})
