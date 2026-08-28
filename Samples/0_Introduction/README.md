@@ -2,6 +2,8 @@
 
 面向昇腾 NPU 算子开发的入门指引，帮助开发者建立基本概念，补全从入门到精通的知识空缺。
 
+更多 API 分类、基础概念和完整介绍材料，请参考 [asc-devkit examples](https://gitcode.com/cann/asc-devkit/tree/master/examples)。
+
 ### [npu_execution](./npu_execution)
 纯概念文档，无代码。拆解一个 NPU 算子从 PyTorch 调用到芯片执行所经历的完整链路。
 

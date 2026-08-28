@@ -1,0 +1,12 @@
+# RegBase样例介绍
+
+## 概述
+
+样例介绍RegBase编程的Vector计算功能。
+
+## 样例列表
+
+| 目录名称 | 功能描述 | 支持的产品 |
+| ------------------------------------------------------------ | ---------------------------------------------------- | --- |
+| [add](./add) |  基于RegBase编程接口的Add样例 | Ascend 950PR/Ascend 950DT |
+| [gelu](./gelu) | 基于 LocalMemAllocator 和 RegBase/VF 融合的 GELU 计算实现 | Ascend 950PR/Ascend 950DT |
