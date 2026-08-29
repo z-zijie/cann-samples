@@ -54,6 +54,7 @@ constexpr uint64_t L1_TWO_BUFFER = 2UL;
 constexpr uint32_t KERNEL_QUANT_DEFAULT = 0U;
 constexpr uint32_t KERNEL_QUANT_PERCHANNEL = 1U;
 constexpr uint32_t KERNEL_QUANT_PERTENSOR = 2U;
+constexpr uint32_t KERNEL_QUANT_PERTOKEN = 3U;
 
 } // namespace hifp8
 
@@ -61,6 +62,7 @@ struct QuantMatmulHifp8Config {
     uint64_t scaleDtypeSize{sizeof(uint64_t)};
     uint32_t x1QuantMode{hifp8::KERNEL_QUANT_DEFAULT};
     uint32_t x2QuantMode{hifp8::KERNEL_QUANT_PERTENSOR};
+    bool isMixArchitecture{false};  // MIX: scale in AIV UB, not L1; tt/tc keep false
 };
 
 class QuantMatmulHifp8TilingSwat {
@@ -353,7 +355,11 @@ private:
 
     uint64_t GetPerChannelScaleReservation() const
     {
-        // Scalars stay in FB; only x2 PERCHANNEL reserves a baseN-sized slot in L1.
+        // MIX: scale handled in AIV UB, not moved to L1
+        if (config_.isMixArchitecture) {
+            return 0UL;
+        }
+        // cube-only(tt/tc): perchannel scale moved to L1, needs reservation
         if (config_.x2QuantMode != hifp8::KERNEL_QUANT_PERCHANNEL) {
             return 0UL;
         }

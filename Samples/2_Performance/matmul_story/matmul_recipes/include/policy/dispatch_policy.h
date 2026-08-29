@@ -54,6 +54,11 @@ struct MatmulWithScale {
 
 struct KernelMixMmadWithScaleMx {};
 
+template <uint64_t FULL_LOAD_MODE_>
+struct MatmulWithScaleMix {
+    static constexpr uint64_t fullLoadMode = FULL_LOAD_MODE_;
+};
+
 template <uint64_t L1_BUF_NUM_>
 struct WeightQuantMatmulMxfp8Fp4DispatchPolicy {
     using ScheduleType = KernelMixMmadWithScaleMx;

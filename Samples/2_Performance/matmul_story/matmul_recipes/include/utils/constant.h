@@ -115,5 +115,6 @@ enum class QuantMode : uint32_t
     DEFAULT = 0U,
     PERCHANNEL_MODE = 1U,
     PERTENSOR_MODE = 2U,
+    PERTOKEN_MODE = 3U,
 };
 }

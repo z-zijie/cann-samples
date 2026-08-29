@@ -42,7 +42,7 @@ struct alignas(8) QuantMatmulHifp8TilingData {
     uint32_t mTailMain{0};
     uint32_t nTailMain{0};
     // x1/x2: QuantBatchMatmul::QuantMode。0=DEFAULT 表示该侧无独立 scale GM 张量（scale 为空）。
-    // 1=PERCHANNEL，2=PERTENSOR。
+    // 1=PERCHANNEL，2=PERTENSOR，3=PERTOKEN。
     uint32_t x1QuantMode{0};
     uint32_t x2QuantMode{0};
 };

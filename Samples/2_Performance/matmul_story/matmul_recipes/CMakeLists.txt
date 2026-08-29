@@ -61,7 +61,8 @@ add_matmul_recipe(quant_matmul_hifp8_tt
     quant_matmul_hifp8/quant_matmul_hifp8_tt.asc quant_matmul_hifp8)
 add_matmul_recipe(quant_matmul_hifp8_tc
     quant_matmul_hifp8/quant_matmul_hifp8_tc.asc quant_matmul_hifp8)
-
+add_matmul_recipe(quant_matmul_hifp8_kc
+    quant_matmul_hifp8/quant_matmul_hifp8_kc.asc quant_matmul_hifp8)
 add_matmul_recipe(weight_quant_matmul_mxfp8fp4
     weight_quant_matmul_mxfp8fp4/weight_quant_matmul_mxfp8fp4.asc weight_quant_matmul_mxfp8fp4)
 add_matmul_recipe(weight_quant_matmul_mxfp8fp4_swat_4_buffer

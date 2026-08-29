@@ -46,18 +46,19 @@ usage() {
 Usage: bash run.sh [OPTIONS] m k n [transA transB]
 
 Options:
-  --mode tt|tc       TT: pertensor scales (gen_data_tt.py, quant_matmul_hifp8_tt).
-                     TC: per-channel scale (gen_data_tc.py, quant_matmul_hifp8_tc).
-                     Default: tt when --target is omitted.
-  --target <name>    Specify executable name (quant_matmul_hifp8_tt or quant_matmul_hifp8_tc). Overrides --mode.
-  --skip-build       Skip build/install stage.
-  -h, --help         Show this help.
+  --mode tt|tc|kc     TT: pertensor scales (gen_data_tt.py, quant_matmul_hifp8_tt).
+                      TC: per-channel scale (gen_data_tc.py, quant_matmul_hifp8_tc).
+                      KC: per-token + per-channel scale (gen_data_kc.py, quant_matmul_hifp8_kc).
+                      Default: tt when --target is omitted.
+  --target <name>     Specify executable name (quant_matmul_hifp8_tt/tc/kc). Overrides --mode.
+  --skip-build        Skip build/install stage.
+  -h, --help          Show help.
 
 Defaults:
   transA=false (0), transB=true (1)
   Python gen_data_*.py expects literal true/false; this script converts from 0/1|true/false flags.
 
-Install dir contains quant_matmul_hifp8_tt and quant_matmul_hifp8_tc.
+Install dir contains quant_matmul_hifp8_tt, quant_matmul_hifp8_tc and quant_matmul_hifp8_kc.
 EOF
 }
 
@@ -96,7 +97,7 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --mode)
-            [[ -z "${2:-}" ]] && { echo "ERROR: --mode needs a value (tt or tc)"; exit 1; }
+            [[ -z "${2:-}" ]] && { echo "ERROR: --mode needs a value (tt, tc or kc)"; exit 1; }
             MODE="${2,,}"
             shift 2
             ;;
@@ -177,8 +178,11 @@ if [[ -z "$TARGET" ]]; then
         tc)
             TARGET="quant_matmul_hifp8_tc"
             ;;
+        kc)
+            TARGET="quant_matmul_hifp8_kc"
+            ;;
         *)
-            echo "ERROR: --mode must be tt or tc (got: ${MODE})"
+            echo "ERROR: --mode must be tt, tc or kc (got: ${MODE})"
             usage
             exit 1
             ;;
@@ -194,8 +198,12 @@ case "$TARGET" in
         GEN_DATA_SCRIPT="gen_data_tc.py"
         VARIANT_LABEL="TC (per-channel scale)"
         ;;
+    quant_matmul_hifp8_kc)
+        GEN_DATA_SCRIPT="gen_data_kc.py"
+        VARIANT_LABEL="KC (per-token + per-channel scales)"
+        ;;
     *)
-        echo "ERROR: unsupported target: ${TARGET} (expected quant_matmul_hifp8_tt or quant_matmul_hifp8_tc)"
+        echo "ERROR: unsupported target: ${TARGET} (expected quant_matmul_hifp8_tt/tc/kc)"
         exit 1
         ;;
 esac
