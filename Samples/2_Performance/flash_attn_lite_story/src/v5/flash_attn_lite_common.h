@@ -62,7 +62,7 @@ struct SRAMLayoutAIV {
 struct FlashAttnLiteTilingData {
     PLayoutMode pLayoutMode;
 
-    uint32_t batchSize;
+    uint32_t batchHeadNum;
     uint32_t seqLen;
     float scale;
     uint32_t br;

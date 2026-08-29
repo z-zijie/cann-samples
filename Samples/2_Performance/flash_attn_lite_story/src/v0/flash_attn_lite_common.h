@@ -52,7 +52,7 @@ struct SRAMLayoutAIV {
 
 // TilingData 仅保存 Host 与 Kernel 共用的参数。
 struct FlashAttnLiteTilingData {
-    uint32_t batchSize;
+    uint32_t batchHeadNum;
     uint32_t seqLen;
     float scale;
     uint32_t br;

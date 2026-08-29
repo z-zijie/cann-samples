@@ -16,6 +16,10 @@
 默认使用 torch CPU 计算, torch 不可用时回退到 numpy. BF16 读取优先使用
 ml_dtypes, 否则使用位运算转换为 FP32.
 
+Q/K/V/O 文件的逻辑 shape 均为 (B,N,S,D)。Golden 计算时将 B、N 展平为
+一条独立序列轴，内部 shape 为 (B*N,S,D)，不在不同 Batch 或 Head 之间交换数据。
+S 可为任意正整数；输入输出文件都按逻辑长度紧凑保存，不包含尾块填充行。
+
 处理流程:
   1. 读取 q.bin, k.bin, v.bin 和 npuout_o.bin, 并将 BF16 转为 FP32.
   2. 以 FP32 计算 softmax(scale * Q @ Kᵀ) @ V, 并以 FP32 写入 golden_o.bin.
@@ -32,7 +36,7 @@ ml_dtypes, 否则使用位运算转换为 FP32.
   FA_CAUSAL_MASK = 1
 
 用法:
-    python3 flash_attn_lite_verify.py <data_dir> <B> <S> <D>
+    python3 flash_attn_lite_verify.py <data_dir> <B> <N> <S> <D>
 退出码:
     0 = 比对通过; 1 = 比对失败或执行出错.
 """
@@ -161,7 +165,7 @@ def _query_block_size(seq_len: int) -> int:
 
 def compute_golden_torch(qf: np.ndarray, kf: np.ndarray, vf: np.ndarray,
                          scale: float) -> np.ndarray:
-    """使用 torch FP32 计算 O = softmax(scale * Q @ Kᵀ) @ V."""
+    """按展平 shape=(B*N,S,D) 使用 torch FP32 计算 Attention Golden."""
     # from_numpy 与 tensor 共享内存, 后续仅读取输入.
     q = torch.from_numpy(qf)
     k = torch.from_numpy(kf)
@@ -169,7 +173,7 @@ def compute_golden_torch(qf: np.ndarray, kf: np.ndarray, vf: np.ndarray,
 
     query_block = _query_block_size(q.shape[1])
 
-    # 仅分块 Q 行, 每块仍使用完整 K/V, 避免一次性分配 B*S*S scores.
+    # 仅分块 Q 行，每块仍使用完整 K/V，避免一次性分配 (B*N)*S*S 个 scores。
     o = torch.empty_like(q)
     for row_begin in range(0, q.shape[1], query_block):
         row_end = min(row_begin + query_block, q.shape[1])
@@ -189,7 +193,7 @@ def compute_golden_torch(qf: np.ndarray, kf: np.ndarray, vf: np.ndarray,
 def compute_low_precision_baseline_torch(qf: np.ndarray, kf: np.ndarray,
                                          vf: np.ndarray,
                                          scale: float) -> np.ndarray:
-    """使用 Torch BF16 计算低精度 Attention 基线.
+    """按展平 shape=(B*N,S,D) 使用 Torch BF16 计算低精度 Attention 基线.
 
     参考 FlashAttention 的低精度基线：保留 BF16 输入和中间结果，
     并在矩阵乘前对 K 缩放，使求值顺序与 FP32 Golden 略有不同.
@@ -219,7 +223,7 @@ def compute_low_precision_baseline_torch(qf: np.ndarray, kf: np.ndarray,
 
 def compute_golden_numpy(qf: np.ndarray, kf: np.ndarray, vf: np.ndarray,
                          scale: float) -> np.ndarray:
-    """使用 numpy FP32 计算 O = softmax(scale * Q @ Kᵀ) @ V."""
+    """按展平 shape=(B*N,S,D) 使用 numpy FP32 计算 Attention Golden."""
     query_block = _query_block_size(qf.shape[1])
     o = np.empty_like(qf)
     for row_begin in range(0, qf.shape[1], query_block):
@@ -244,7 +248,8 @@ def compute_golden(qf: np.ndarray, kf: np.ndarray, vf: np.ndarray, scale: float)
     return compute_golden_numpy(qf, kf, vf, scale)
 
 
-def compare_mixed_precision(npu_fp32: np.ndarray, golden_fp32: np.ndarray):
+def compare_mixed_precision(npu_fp32: np.ndarray, golden_fp32: np.ndarray,
+                            head_num: int):
     """逐元素执行 |npu-golden| <= atol + rtol * |golden| 比对."""
     tot = int(npu_fp32.size)
     abs_err = np.abs(npu_fp32 - golden_fp32)
@@ -260,21 +265,23 @@ def compare_mixed_precision(npu_fp32: np.ndarray, golden_fp32: np.ndarray):
     max_abs_idx = int(np.argmax(abs_err.reshape(-1)))
     max_abs_err = float(abs_err.reshape(-1)[max_abs_idx])
     max_rel_err = float(np.max(rel_err))
-    max_abs_pos = np.unravel_index(max_abs_idx, npu_fp32.shape)  # (b, i, d)
+    max_abs_pos = np.unravel_index(max_abs_idx, npu_fp32.shape)  # (bn, i, d)
+    max_abs_b = max_abs_pos[0] // head_num
+    max_abs_n = max_abs_pos[0] % head_num
 
     lines = []
     lines.append(
         f"比对：总元素={tot} 失败={fail_count} "
         f"最大绝对误差={max_abs_err:.6e} @idx={max_abs_idx}"
-        f"(b={max_abs_pos[0]}, row={max_abs_pos[1]}, col={max_abs_pos[2]}) "
+        f"(b={max_abs_b}, n={max_abs_n}, row={max_abs_pos[1]}, col={max_abs_pos[2]}) "
         f"最大相对误差={max_rel_err:.6e}（rtol={COMPARE_RTOL} atol={COMPARE_ATOL}）"
     )
 
-    # 显示 batch 0 的前 PRINT_ROWS x PRINT_COLS 个元素.
-    B, S, D = npu_fp32.shape
-    r = min(PRINT_ROWS, S)
-    c = min(PRINT_COLS, D)
-    lines.append(f"前 {r}x{c} O 元素（batch 0）：")
+    # 展平维的第 0 项对应 (b=0,n=0).
+    _, seq_len, head_dim = npu_fp32.shape
+    r = min(PRINT_ROWS, seq_len)
+    c = min(PRINT_COLS, head_dim)
+    lines.append(f"前 {r}x{c} O 元素（b=0, n=0）：")
     for i in range(r):
         for j in range(c):
             a = float(npu_fp32[0, i, j])
@@ -291,7 +298,8 @@ def compare_mixed_precision(npu_fp32: np.ndarray, golden_fp32: np.ndarray):
 
 def compare_low_precision_baseline(npu_fp32: np.ndarray,
                                    golden_fp32: np.ndarray,
-                                   baseline_fp32: np.ndarray):
+                                   baseline_fp32: np.ndarray,
+                                   head_num: int):
     """比较 NPU 与 BF16 基线相对 FP32 Golden 的最大绝对误差."""
     finite = (
         np.isfinite(npu_fp32).all()
@@ -312,14 +320,16 @@ def compare_low_precision_baseline(npu_fp32: np.ndarray,
         0.0 if npu_max == 0.0 else float("inf"))
     npu_max_pos = np.unravel_index(npu_max_idx, npu_fp32.shape)
     baseline_max_pos = np.unravel_index(baseline_max_idx, baseline_fp32.shape)
+    npu_max_b, npu_max_n = divmod(npu_max_pos[0], head_num)
+    baseline_max_b, baseline_max_n = divmod(baseline_max_pos[0], head_num)
 
     lines = [
         f"低精度基线倍率比对：总元素={npu_fp32.size} ",
         f"  NPU 最大绝对误差={npu_max:.6e} @idx={npu_max_idx}"
-        f"(b={npu_max_pos[0]}, row={npu_max_pos[1]}, col={npu_max_pos[2]})",
+        f"(b={npu_max_b}, n={npu_max_n}, row={npu_max_pos[1]}, col={npu_max_pos[2]})",
         f"  BF16 基线最大绝对误差={baseline_max:.6e} "
         f"@idx={baseline_max_idx}"
-        f"(b={baseline_max_pos[0]}, row={baseline_max_pos[1]}, col={baseline_max_pos[2]})",
+        f"(b={baseline_max_b}, n={baseline_max_n}, row={baseline_max_pos[1]}, col={baseline_max_pos[2]})",
         f"  误差倍率={ratio:.6e}，上限={LOW_PRECISION_BASELINE_MULTIPLIER:g} "
         f"(NPU 误差上限={limit:.6e})",
     ]
@@ -327,16 +337,17 @@ def compare_low_precision_baseline(npu_fp32: np.ndarray,
 
 
 def main() -> int:
-    if len(sys.argv) != 5:
-        print(f"用法: {sys.argv[0]} <data_dir> <B> <S> <D>", file=sys.stderr)
+    if len(sys.argv) != 6:
+        print(f"用法: {sys.argv[0]} <data_dir> <B> <N> <S> <D>", file=sys.stderr)
         return 1
 
     data_dir = sys.argv[1]
     b = int(sys.argv[2])
-    s = int(sys.argv[3])
-    d = int(sys.argv[4])
-    if b <= 0 or s <= 0 or d <= 0:
-        print(f"错误: B/S/D 必须为正整数，得到 B={b} S={s} D={d}", file=sys.stderr)
+    n = int(sys.argv[3])
+    s = int(sys.argv[4])
+    d = int(sys.argv[5])
+    if b <= 0 or n <= 0 or s <= 0 or d <= 0:
+        print(f"错误: B/N/S/D 必须为正整数，得到 B={b} N={n} S={s} D={d}", file=sys.stderr)
         return 1
     if _USE_LOW_PRECISION_BASELINE and not _HAS_TORCH:
         print(
@@ -377,13 +388,14 @@ def main() -> int:
     if not _HAS_ML_DTYPES:
         print("verify: bf16 走位运算回退（未装 ml_dtypes）", file=sys.stderr)
 
-    shape = (b, s, d)
+    # Kernel 将 B 和 N 合并为独立序列维；原始文件仍按 [B,N,S,D] 连续存放。
+    flat_shape = (b * n, s, d)
     try:
         t0 = time.perf_counter()
-        qf = read_bf16(os.path.join(data_dir, "q.bin"), shape, "Q")
-        kf = read_bf16(os.path.join(data_dir, "k.bin"), shape, "K")
-        vf = read_bf16(os.path.join(data_dir, "v.bin"), shape, "V")
-        npu_fp32 = read_bf16(os.path.join(data_dir, "npuout_o.bin"), shape, "NPU O")
+        qf = read_bf16(os.path.join(data_dir, "q.bin"), flat_shape, "Q")
+        kf = read_bf16(os.path.join(data_dir, "k.bin"), flat_shape, "K")
+        vf = read_bf16(os.path.join(data_dir, "v.bin"), flat_shape, "V")
+        npu_fp32 = read_bf16(os.path.join(data_dir, "npuout_o.bin"), flat_shape, "NPU O")
         t_read = time.perf_counter() - t0
     except (OSError, ValueError) as e:
         print(f"读取输入失败：{e}", file=sys.stderr)
@@ -404,7 +416,7 @@ def main() -> int:
     print(
         f"verify: 读入 {t_read:.3f}s，Golden(Q@Kᵀ→softmax→P@V, "
         f"causal={'true' if _CAUSAL_MASK else 'false'}, fp32/{backend_tag}) "
-        f"{t_golden:.3f}s -> golden_o.bin(FP32, {b*s*d*4} bytes)"
+        f"{t_golden:.3f}s -> golden_o.bin(FP32, {b*n*s*d*4} bytes，B={b} N={n})"
     )
 
     if _USE_LOW_PRECISION_BASELINE:
@@ -417,9 +429,9 @@ def main() -> int:
         t_baseline = time.perf_counter() - t0
         print(f"verify: Torch BF16 低精度基线 {t_baseline:.3f}s")
         passed, report_lines = compare_low_precision_baseline(
-            npu_fp32, o_golden_fp32, baseline_fp32)
+            npu_fp32, o_golden_fp32, baseline_fp32, n)
     else:
-        passed, report_lines = compare_mixed_precision(npu_fp32, o_golden_fp32)
+        passed, report_lines = compare_mixed_precision(npu_fp32, o_golden_fp32, n)
     print("\n".join(report_lines))
 
     if passed:

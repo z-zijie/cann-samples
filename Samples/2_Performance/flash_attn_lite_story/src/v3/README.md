@@ -1,4 +1,4 @@
-# FALite v3：CV 双槽让 AIC 与 AIV 错位执行
+# FALite v3：用两套 CV 槽错位处理两个 item
 
 v3 为相邻两个 item 准备两套 CV 工作槽。AIC 可以先连续发射两次 C1，AIV 随后连续执行两次 V1；AIC 与两路 AIV 在组内错位处理不同 item，从单槽串行推进变为双槽流水。
 
@@ -11,21 +11,25 @@ P 继续留在片上，Online Softmax（分块 Softmax 递推）、causal 语义
 公共 Host 接口为：
 
 ```cpp
-FlashAttnLiteNPU(Q, K, V, O, B, S, scale, coreNum, stream)
+FlashAttnLiteNPU(Q, K, V, O, B, N, S, scale, coreNum, stream)
 ```
 
 本版规格如下：
 
-- `Q`、`K`、`V`、`O` 为 BF16，逻辑形状为 `(B, 1, S, 128)`。
-- `Br=Bc=D=128`，要求 `B>0`、`S>0` 且 `S%128==0`。
+- `Q`、`K`、`V`、`O` 为 BF16，逻辑形状为 `(B, N, S, 128)`。
+- `Br=Bc=D=128`，要求 `B>0`、`N>0`、`S>0`；`S` 无需按 128 对齐。
 - `--core-num` 表示 Mix 组数；每组包含 1 个 AIC 和 2 个 AIV。
 - Kernel 固定计算同起点、等长度的方阵因果（causal）self-attention。
 - Cube 输入为 BF16，并以 FP32 累加；分数、Online Softmax 状态、`DeltaO` 和 `OAcc` 使用 FP32；`P` 与最终输出使用 BF16。
-- 不支持尾块、不同的 Q/KV 长度、causal offset、滑动窗口、多头、变长序列、dropout 和反向计算。
+- 不支持不同的 Q/KV 长度、causal offset、滑动窗口、Q/K/V 的 Head 数不一致（GQA/MQA）、同一批次中每条序列长度不同的 varlen 输入、dropout 和反向计算。
+
+Host 按 `ceil(S/128)` 建立 task。尾块的 `Q/K/V` 只读取有效行并在 L1 补 0；Softmax 不统计补齐的 Key 行，两路 AIV 只写回有效 Query 行。`P` 在 UB/L1 中仍使用固定物理 tile，双槽的编号和归还关系不随有效行数改变。
 
 ## 先认识 task、item、group、slot 和四个阶段
 
-一个 **task** 完成一个 128 行 Q tile 的全部计算，Q tile 编号记为 `i`。该 task 每访问一个编号为 `j` 的 128 行 K/V tile，就产生一个 **item**，记为 `(i,j)`。
+一个 **task** 完成某个 `(b,n)` 下一个 128 行 Q tile 的全部计算，Q tile 编号记为 `i`。该 task 每访问一个编号为 `j` 的 128 行 K/V tile，就产生一个 **item**，记为 `(i,j)`。
+
+不同 `(b,n)` 之间没有数据依赖。Host 将 `B×N` 展平为独立序列维，再按 Q tile 分配 task。
 
 v3 把同一 task 内至多两个连续 item 称为一个 **group**。组内 item 使用 slot 0 和 slot 1；最后一组只有一个 item 时，只使用实际存在的 slot。
 
@@ -229,11 +233,11 @@ for task in assigned_tasks:
 
 ![v3 的上板 PipeTimeline](../../images/pipe_trace/falite_v3_pipe.png)
 
-截图直接取自完整 PipeTimeline trace 的 `[88.796, 128.796]` μs。AIC 的 MTE2、MTE1、CUBE、FIXP 与两路 AIV 的 VECTOR、MTE3 同时展开，可用于观察双 item 分组后明显增多的跨 Pipe 重叠。
+截图直接取自完整 PipeTimeline trace 的 `[88.796, 128.796]` μs。AIC 的 MTE2、MTE1、CUBE、FIXP 与两路 AIV 的 VECTOR、MTE3 同时展开；与 v2 相比，跨 Pipe 重叠明显增多。
 
-## 本版边界与 v4 的方向
+## 流水问题与下一步
 
-v3 的 CV 数据已有两套槽，但所有 C1/C2 仍共用一套 L0A/L0B/L0C。下一次矩阵乘必须等待上一阶段释放相应 L0 资源，AIC 核内的 MTE1、Mmad 和 Fixpipe 难以充分交叠。
+v3 的 CV 数据已有两套槽，但所有 C1/C2 仍共用一套 L0A/L0B/L0C。下一次加载、矩阵乘和写回仍被同一套 L0 槽串住，MTE1、CUBE 和 FIXP 不能充分交叠。
 
 v4 保留 CV 双槽分组，将 L0A/L0B/L0C 也改为双槽，并拆开 C2 中 P 的 MTE1 与 V 的 MTE2 等待。
 
@@ -242,7 +246,7 @@ v4 保留 CV 双槽分组，将 L0A/L0B/L0C 也改为双槽，并拆开 C2 中 P
 ```bash
 cmake -S . -B build -DNPU_ARCH=dav-3510
 cmake --build build --target falite_v3 -j
-./build/Samples/2_Performance/flash_attn_lite_story/falite_v3 --core-num 1 --size 1 384
+./build/Samples/2_Performance/flash_attn_lite_story/falite_v3 --core-num 1 --size 1 1 385
 ```
 
 公共验证脚本以 FP32 计算 causal Golden。NPU 的 BF16 输出转为 FP32 后，直接与 FP32 Golden 逐元素检查：
@@ -260,7 +264,7 @@ abs(float(npu_bf16) - golden_fp32) <= 0.004 + 0.004 * abs(golden_fp32)
 表中的模型算力利用率（MFU）按因果有效 Cube 工作量计算。
 
 ```bash
-msopprof --warm-up=5 --launch-count=1 --aic-metrics=BasicInfo --output=<profiling-output> ./build/Samples/2_Performance/flash_attn_lite_story/falite_v3 --dry-run --size 1 131072
+msopprof --warm-up=5 --launch-count=1 --aic-metrics=BasicInfo --output=<profiling-output> ./build/Samples/2_Performance/flash_attn_lite_story/falite_v3 --dry-run --size 1 1 131072
 ```
 
 | 版本 | Task Duration（μs） | 因果有效 Cube MFU | 相对上一版 |

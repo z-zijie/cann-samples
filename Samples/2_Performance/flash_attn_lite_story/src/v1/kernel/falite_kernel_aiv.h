@@ -30,7 +30,7 @@ static constexpr AscendC::Reg::CastTrait castTraitOne = {
 template <bool IS_FIRST_ITER, bool APPLY_CAUSAL_MASK>
 __simd_vf__ inline void OnlineColwiseSoftmaxVF(
     __ubuf__ float* sUBAddr, __ubuf__ float* mUBAddr, __ubuf__ float* lUBAddr, __ubuf__ float* alphaUBAddr,
-    const uint16_t halfBr, const uint16_t bc, const float scale, const uint16_t queryColBegin)
+    const uint16_t halfBr, const uint16_t bc, const uint16_t validBc, const float scale, const uint16_t queryColBegin)
 {
     using namespace AscendC;
     Reg::RegTensor<float> s, maxReg, mOld, alpha, expReg, sumReg, lOld;
@@ -43,7 +43,7 @@ __simd_vf__ inline void OnlineColwiseSoftmaxVF(
         Reg::Duplicate(maskedScore, FLOAT_LOWEST, all);
     }
     Reg::Duplicate(maxReg, FLOAT_LOWEST, all);
-    for (uint16_t r = 0; r < bc; ++r) {
+    for (uint16_t r = 0; r < validBc; ++r) {
         Reg::LoadAlign(s, sUBAddr + r * halfBr);
         Reg::Muls(s, s, scale, all);
         if constexpr (APPLY_CAUSAL_MASK) {
@@ -62,7 +62,7 @@ __simd_vf__ inline void OnlineColwiseSoftmaxVF(
     Reg::StoreAlign<float, Reg::StoreDist::DIST_NORM_B32>(mUBAddr, maxReg, all);
 
     Reg::Duplicate(sumReg, 0.0f, all);
-    for (uint16_t r = 0; r < bc; ++r) {
+    for (uint16_t r = 0; r < validBc; ++r) {
         Reg::LoadAlign(s, sUBAddr + r * halfBr);
         Reg::Muls(s, s, scale, all);
         if constexpr (APPLY_CAUSAL_MASK) {
@@ -71,6 +71,11 @@ __simd_vf__ inline void OnlineColwiseSoftmaxVF(
         }
         Reg::FusedExpSub(expReg, s, maxReg, all);
         Reg::Add(sumReg, sumReg, expReg, all);
+        Reg::StoreAlign<float, Reg::StoreDist::DIST_NORM_B32>(sUBAddr + r * halfBr, expReg, all);
+    }
+    // C2 仍按完整 Bc 计算；不存在的 K/V 行对应权重必须为 0。
+    Reg::Duplicate(expReg, 0.0f, all);
+    for (uint16_t r = validBc; r < bc; ++r) {
         Reg::StoreAlign<float, Reg::StoreDist::DIST_NORM_B32>(sUBAddr + r * halfBr, expReg, all);
     }
     if constexpr (IS_FIRST_ITER) {
@@ -155,6 +160,7 @@ __aicore__ inline void VectorStage1(
         __ubuf__ float* alphaUBAddr = reinterpret_cast<__ubuf__ float*>(alphaUBLocal.GetPhyAddr());
         const uint16_t halfBr = static_cast<uint16_t>(data.br / 2);
         const uint16_t bc = static_cast<uint16_t>(data.bc);
+        const uint16_t validBc = static_cast<uint16_t>(GetTileValidRows(data.seqLen, j, data.bc));
         const uint16_t queryColBegin = static_cast<uint16_t>(subAivIdx * halfBr);
         if constexpr (CAUSAL_MASK) {
             // 未来 K/V 整块已被裁掉；这里只屏蔽对角块内的上三角。
@@ -162,24 +168,24 @@ __aicore__ inline void VectorStage1(
             if (j == 0) {
                 if (isDiagonalTile) {
                     asc_vf_call<OnlineColwiseSoftmaxVF<true, true>>(
-                        sUBAddr, mUBAddr, lUBAddr, alphaUBAddr, halfBr, bc, data.scale, queryColBegin);
+                        sUBAddr, mUBAddr, lUBAddr, alphaUBAddr, halfBr, bc, validBc, data.scale, queryColBegin);
                 } else {
                     asc_vf_call<OnlineColwiseSoftmaxVF<true, false>>(
-                        sUBAddr, mUBAddr, lUBAddr, alphaUBAddr, halfBr, bc, data.scale, queryColBegin);
+                        sUBAddr, mUBAddr, lUBAddr, alphaUBAddr, halfBr, bc, validBc, data.scale, queryColBegin);
                 }
             } else if (isDiagonalTile) {
                 asc_vf_call<OnlineColwiseSoftmaxVF<false, true>>(
-                    sUBAddr, mUBAddr, lUBAddr, alphaUBAddr, halfBr, bc, data.scale, queryColBegin);
+                    sUBAddr, mUBAddr, lUBAddr, alphaUBAddr, halfBr, bc, validBc, data.scale, queryColBegin);
             } else {
                 asc_vf_call<OnlineColwiseSoftmaxVF<false, false>>(
-                    sUBAddr, mUBAddr, lUBAddr, alphaUBAddr, halfBr, bc, data.scale, queryColBegin);
+                    sUBAddr, mUBAddr, lUBAddr, alphaUBAddr, halfBr, bc, validBc, data.scale, queryColBegin);
             }
         } else if (j == 0) {
             asc_vf_call<OnlineColwiseSoftmaxVF<true, false>>(
-                sUBAddr, mUBAddr, lUBAddr, alphaUBAddr, halfBr, bc, data.scale, queryColBegin);
+                sUBAddr, mUBAddr, lUBAddr, alphaUBAddr, halfBr, bc, validBc, data.scale, queryColBegin);
         } else {
             asc_vf_call<OnlineColwiseSoftmaxVF<false, false>>(
-                sUBAddr, mUBAddr, lUBAddr, alphaUBAddr, halfBr, bc, data.scale, queryColBegin);
+                sUBAddr, mUBAddr, lUBAddr, alphaUBAddr, halfBr, bc, validBc, data.scale, queryColBegin);
         }
         Mutex::Lock<PIPE_V>(MUTEX_P_UB);
         Cast<bfloat16_t, float>(pUBLocal, sUBLocal, RoundMode::CAST_RINT, halfBr * bc);
@@ -234,12 +240,16 @@ __aicore__ inline void KernelProcessForAIV(
         const uint16_t pDstStride = static_cast<uint16_t>((br - halfBr) * sizeof(bfloat16_t) / C0_BYTES);
 
         for (uint32_t taskId = aicIdx; taskId < data.numTasks; taskId += data.useAicNum) {
-            const uint32_t batchIdx = taskId / data.tr;
+            const uint32_t batchHeadIdx = taskId / data.tr;
             const uint32_t qTileIdx = taskId % data.tr;
             const uint32_t kvTileCount = GetKvTileCount<CAUSAL_MASK>(data, qTileIdx);
-            const uint64_t pOffset = static_cast<uint64_t>(taskId) * bc * br +
-                                     static_cast<uint64_t>(subAivIdx) * halfBr;
-            const uint64_t outOffset = static_cast<uint64_t>(batchIdx) * data.seqLen * d +
+            const uint32_t qValidRows = GetTileValidRows(data.seqLen, qTileIdx, br);
+            const uint32_t subRowBegin = subAivIdx * halfBr;
+            const uint32_t outputRows =
+                qValidRows > subRowBegin ? (qValidRows - subRowBegin < halfBr ? qValidRows - subRowBegin : halfBr) : 0;
+            const uint64_t pOffset =
+                static_cast<uint64_t>(taskId) * bc * br + static_cast<uint64_t>(subAivIdx) * halfBr;
+            const uint64_t outOffset = static_cast<uint64_t>(batchHeadIdx) * data.seqLen * d +
                                        static_cast<uint64_t>(qTileIdx) * br * d +
                                        static_cast<uint64_t>(subAivIdx) * outputHalfElements;
 
@@ -254,8 +264,7 @@ __aicore__ inline void KernelProcessForAIV(
 
                 Mutex::Lock<PIPE_MTE3>(MUTEX_P_UB);
                 DataCopy(
-                    pGlobal[pOffset], pUBLocal,
-                    DataCopyParams(static_cast<uint16_t>(bc), pBlockLen, 0, pDstStride));
+                    pGlobal[pOffset], pUBLocal, DataCopyParams(static_cast<uint16_t>(bc), pBlockLen, 0, pDstStride));
                 Mutex::Unlock<PIPE_MTE3>(MUTEX_P_UB);
                 SetAivToAic<PIPE_MTE3>(FLAG_P_READY);
 
@@ -264,16 +273,18 @@ __aicore__ inline void KernelProcessForAIV(
                 SetAivToAic<PIPE_V>(FLAG_DONE);
             }
 
-            Mutex::Lock<PIPE_V>(MUTEX_P_UB);
-            asc_vf_call<FusedDivCastVF>(
-                reinterpret_cast<__ubuf__ bfloat16_t*>(pUBLocal.GetPhyAddr()),
-                reinterpret_cast<__ubuf__ float*>(oAccUBLocal.GetPhyAddr()),
-                reinterpret_cast<__ubuf__ float*>(lUBLocal.GetPhyAddr()), static_cast<uint16_t>(halfBr),
-                static_cast<uint16_t>(d));
-            Mutex::Unlock<PIPE_V>(MUTEX_P_UB);
-            Mutex::Lock<PIPE_MTE3>(MUTEX_P_UB);
-            DataCopy(outGlobal[outOffset], pUBLocal, outputHalfElements);
-            Mutex::Unlock<PIPE_MTE3>(MUTEX_P_UB);
+            if (outputRows > 0) {
+                Mutex::Lock<PIPE_V>(MUTEX_P_UB);
+                asc_vf_call<FusedDivCastVF>(
+                    reinterpret_cast<__ubuf__ bfloat16_t*>(pUBLocal.GetPhyAddr()),
+                    reinterpret_cast<__ubuf__ float*>(oAccUBLocal.GetPhyAddr()),
+                    reinterpret_cast<__ubuf__ float*>(lUBLocal.GetPhyAddr()), static_cast<uint16_t>(outputRows),
+                    static_cast<uint16_t>(d));
+                Mutex::Unlock<PIPE_V>(MUTEX_P_UB);
+                Mutex::Lock<PIPE_MTE3>(MUTEX_P_UB);
+                DataCopy(outGlobal[outOffset], pUBLocal, outputRows * d);
+                Mutex::Unlock<PIPE_MTE3>(MUTEX_P_UB);
+            }
         }
     }
 }

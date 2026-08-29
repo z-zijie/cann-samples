@@ -1,25 +1,29 @@
-# FALite v7：把滚动距离增至三代
+# FALite v7：首个 C2 前先发射三个 C1
 
 ## 本版内容
 
-FALite v7 把 v6 连续滚动流水中预先保留的 `item` 从两代增加到三代。AIC 在等待较早 `item` 的 `P` 之前可以再发射一次 C1，AIV 在处理较早 `item` 的输出增量之前也可以再发射一次 V1，从而给 Cube 与 Vector 留出更长的错位距离。
+FALite v7 把 `R` 从 2 增至 3。AIC 在首个 C2 前可以多发射一次 C1，AIV 在首个 V2 前也可以多发射一次 V1，让 Cube 与 Vector 有更多独立工作可以交叠。
 
 本版固定计算因果 Flash Attention 前向，规格如下。
 
 | 项目 | 实现 |
 | --- | --- |
-| 输入与输出 | BF16 `Q/K/V/O`，物理形状 `[B,S,128]`，逻辑形状 `[B,1,S,128]` |
-| 分块 | `Br=Bc=D=128`，`B>0`、`S>0` 且 `S%128==0` |
+| 输入与输出 | BF16 `Q/K/V/O`，形状 `[B,N,S,128]` |
+| 分块 | `Br=Bc=D=128`，`B>0`、`N>0`、`S>0`；`S` 无需按 128 对齐 |
 | 内部精度 | Cube 使用 BF16 输入、FP32 累加；Softmax 状态和输出累加使用 FP32；`P` 为 BF16 |
 | 并行方式 | 一个 Mix 组包含 `1 AIC + 2 AIV`；一个 `task` 处理一个 128 行 Query 分块，两路 AIV 各处理 64 行 |
 | 因果模式 | Q 与 K/V 等长且同起点，只保留包含对角线的下三角 |
-| 未覆盖能力 | 尾块、非方形 Q/KV、多 Head、多种 HeadDim、滑动窗口、KV Cache、dropout 和反向计算 |
+| 未覆盖能力 | 非方形 Q/KV、Q/K/V 的 Head 数不一致（GQA/MQA）、同一批次中每条序列长度不同的 varlen 输入、多种 HeadDim、滑动窗口、KV Cache、dropout 和反向计算 |
 
 v7 的中间结果全部在片上交接，不需要 GM workspace。
 
+Host 按 `ceil(S/128)` 建立 task。尾块的 `Q/K/V` 只读取有效行并在 L1 补 0；Softmax 不统计补齐的 Key 行，两路 AIV 只写回有效 Query 行。所有轮换槽仍保存完整物理 tile，因此 `R=3` 的 epoch 和槽位归还规则不变。
+
 ## task、item、阶段与 epoch
 
-一个 `task` 表示一个 Query 分块（Q tile）的完整计算。
+一个 `task` 表示某个 `(b,n)` 下一个 Query 分块（Q tile）的完整计算。
+
+不同 `(b,n)` 之间没有数据依赖。Host 将 `B×N` 展平为独立序列维，再按 Q tile 分配 task。
 
 这个 `task` 每发射一个 Key/Value 分块，就形成一个 `item=(i,j)`。其中 `i` 是 Query 分块编号，`j` 是 Key/Value 分块编号；每个 `item` 依次经过 C1、V1、C2 和 V2。
 
@@ -53,7 +57,7 @@ OAcc_new = alpha_j × OAcc + P_j × V_j
 
 `epoch` 表示滚动调度循环的一次推进，只描述每颗核心的发射顺序。AIC 与 AIV 独立运行，在真正消费共享数据时通过 CrossCore 信号对齐。
 
-## R=3 的滚动调度
+## R=3：首个 C2 前发射三个 C1
 
 `R` 表示同一个 `item` 的 `C1` 与 `V2` 相隔的 `epoch` 数。对有效 `item` 数不少于 `R` 的 task，它也等于首个 C2 之前已发射的 C1 数量；较短 task 只发射实际存在的 C1。v7 取 `R=3`：
 
@@ -228,11 +232,11 @@ AIC.drain_final_s_and_odelta_free_flags()
 
 ![v7 真机核内流水](../../images/pipe_trace/falite_v7_pipe.png)
 
-截图直接取自完整 PipeTimeline trace 的 `[45.915, 85.915]` μs。真实时间线用于观察三代滚动下 AIC 的 MTE1、CUBE、FIXP 与 AIV VECTOR 如何在不同 `item` 上重叠；示意图中的色块只表示顺序，不表示真实时长。
+截图直接取自完整 PipeTimeline trace 的 `[45.915, 85.915]` μs。与 v6 相比，CUBE、FIXP 和 VECTOR 连续有任务的区间更长，统一长序列耗时下降 22.19%；示意图中的色块只表示顺序，不表示真实时长。
 
-## 局限与下一方向
+## 流水问题与下一步
 
-三代滚动为等待 P 的 AIC 再增加了一代独立 C1，但它没有减少 V1/V2 的 Vector 指令。若三代已经足以覆盖主要等待，继续增加 R 只会增加 V/P/alpha 和 L0C 的片上占用。[v8](../v8/README.md) 把 `R/L0C` 增至 `4/4`，用于判断第四代滚动是否仍能改善端到端耗时。
+第三轮提前发射填补了 v6 的一部分等待，但每个 V1/V2 的 Vector 工作量没有改变。继续增大 `R` 会增加 `V/P/alpha` 和 L0C 的片上占用。[v8](../v8/README.md) 把 `R/L0C` 增至 `4/4`，检查第四轮提前发射能否继续缩短耗时。
 
 ## 精度与性能
 
@@ -253,12 +257,12 @@ v7 相对 v6 耗时下降 22.19%。该数字表示三代滚动和三槽 L0C 的�
 abs(float(npu_bf16) - golden_fp32) <= 0.004 + 0.004 * abs(golden_fp32)
 ```
 
-v7 已通过 `--size 1 131072` 回归。构建和小规格验证命令如下：
+v7 已通过 `--size 1 1 131072` 和非整块 `--size 1 1 705` 回归。构建和小规格验证命令如下：
 
 ```bash
 cmake -S . -B build -DNPU_ARCH=dav-3510
 cmake --build build --target falite_v7 -j
-./build/Samples/2_Performance/flash_attn_lite_story/falite_v7 --core-num 1 --size 1 512
+./build/Samples/2_Performance/flash_attn_lite_story/falite_v7 --core-num 1 --size 1 1 385
 ```
 
-`S=512` 包含 4 个 Query tile，能够覆盖 R=3 的填充、排空和首次代际槽回卷。
+`S=385` 包含 4 个 Query tile，最后一个 tile 只有 1 行，能够覆盖 R=3 的填充、排空、首次代际槽回卷和序列尾块。

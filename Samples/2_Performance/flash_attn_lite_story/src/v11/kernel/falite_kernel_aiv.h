@@ -31,7 +31,7 @@ static constexpr AscendC::Reg::CastTrait castTraitOne = {
 template <bool IS_FIRST_ITER, bool APPLY_CAUSAL_MASK>
 __simd_vf__ inline void OnlineSoftmaxCastPackVF(
     __ubuf__ bfloat16_t* pWorkUBAddr, __ubuf__ float* sUBAddr, __ubuf__ float* mUBAddr, __ubuf__ float* lUBAddr,
-    __ubuf__ float* alphaUBAddr, const uint16_t halfBr, const uint16_t bc, const float scale,
+    __ubuf__ float* alphaUBAddr, const uint16_t halfBr, const uint16_t bc, const uint16_t validBc, const float scale,
     const uint16_t queryColBegin)
 {
     using namespace AscendC;
@@ -52,7 +52,8 @@ __simd_vf__ inline void OnlineSoftmaxCastPackVF(
     Reg::Duplicate(max1, FLOAT_LOWEST, all);
     Reg::Duplicate(max2, FLOAT_LOWEST, all);
     Reg::Duplicate(max3, FLOAT_LOWEST, all);
-    for (uint16_t r = 0; r < bc; r += 4) {
+    uint16_t r = 0;
+    for (; r + 3 < validBc; r += 4) {
         Reg::LoadAlign(s0, sUBAddr + r * halfBr);
         Reg::LoadAlign(s1, sUBAddr + (r + 1) * halfBr);
         Reg::LoadAlign(s2, sUBAddr + (r + 2) * halfBr);
@@ -75,6 +76,15 @@ __simd_vf__ inline void OnlineSoftmaxCastPackVF(
         Reg::Max(max1, max1, s1, all);
         Reg::Max(max2, max2, s2, all);
         Reg::Max(max3, max3, s3, all);
+    }
+    for (; r < validBc; ++r) {
+        Reg::LoadAlign(s0, sUBAddr + r * halfBr);
+        Reg::Muls(s0, s0, scale, all);
+        if constexpr (APPLY_CAUSAL_MASK) {
+            Reg::CompareScalar<int32_t, CMPMODE::LT>(invalid0, queryIndex, static_cast<int32_t>(r), all);
+            Reg::Select(s0, maskedScore, s0, invalid0);
+        }
+        Reg::Max(max0, max0, s0, all);
     }
     Reg::Max(max0, max0, max1, all);
     Reg::Max(max2, max2, max3, all);
@@ -101,7 +111,8 @@ __simd_vf__ inline void OnlineSoftmaxCastPackVF(
     // 4 个 16 列 NZ 分组各保存 bc 个 DataBlock, 末尾保留 1 个 padding block.
     const uint32_t groupStrideBlocks = bc + 1;
     __ubuf__ bfloat16_t* pDstAddr = pWorkUBAddr;
-    for (uint16_t r = 0; r < bc; r += 4) {
+    r = 0;
+    for (; r + 3 < validBc; r += 4) {
         Reg::LoadAlign(s0, sUBAddr + r * halfBr);
         Reg::LoadAlign(s1, sUBAddr + (r + 1) * halfBr);
         Reg::LoadAlign(s2, sUBAddr + (r + 2) * halfBr);
@@ -149,6 +160,31 @@ __simd_vf__ inline void OnlineSoftmaxCastPackVF(
             pDstAddr, packed2, groupStrideBlocks, 1, b16HalfMask);
         Reg::StoreAlign<bfloat16_t, Reg::DataCopyMode::DATA_BLOCK_COPY, Reg::PostLiteral::POST_MODE_UPDATE>(
             pDstAddr, packed3, groupStrideBlocks, 1, b16HalfMask);
+    }
+    for (; r < validBc; ++r) {
+        Reg::LoadAlign(s0, sUBAddr + r * halfBr);
+        Reg::Muls(s0, s0, scale, all);
+        if constexpr (APPLY_CAUSAL_MASK) {
+            Reg::CompareScalar<int32_t, CMPMODE::LT>(invalid0, queryIndex, static_cast<int32_t>(r), all);
+            Reg::Select(s0, maskedScore, s0, invalid0);
+        }
+        Reg::FusedExpSub(exp0, s0, max0, all);
+        Reg::Add(sum0, sum0, exp0, all);
+        Reg::Cast<bfloat16_t, float, castTraitZero>(bf16_0, exp0, all);
+        Reg::Pack(
+            reinterpret_cast<Reg::RegTensor<uint16_t>&>(packed0), reinterpret_cast<Reg::RegTensor<uint32_t>&>(bf16_0));
+        Reg::StoreAlign<bfloat16_t, Reg::DataCopyMode::DATA_BLOCK_COPY, Reg::PostLiteral::POST_MODE_UPDATE>(
+            pDstAddr, packed0, groupStrideBlocks, 1, b16HalfMask);
+    }
+
+    // C2 仍按完整 Bc 计算；将不存在的 K/V 行对应权重写成 0。
+    Reg::Duplicate(exp0, 0.0f, all);
+    Reg::Cast<bfloat16_t, float, castTraitZero>(bf16_0, exp0, all);
+    Reg::Pack(
+        reinterpret_cast<Reg::RegTensor<uint16_t>&>(packed0), reinterpret_cast<Reg::RegTensor<uint32_t>&>(bf16_0));
+    for (; r < bc; ++r) {
+        Reg::StoreAlign<bfloat16_t, Reg::DataCopyMode::DATA_BLOCK_COPY, Reg::PostLiteral::POST_MODE_UPDATE>(
+            pDstAddr, packed0, groupStrideBlocks, 1, b16HalfMask);
     }
 
     Reg::Add(sum0, sum0, sum1, all);
@@ -252,6 +288,7 @@ __aicore__ inline void VectorStage1(
         __ubuf__ float* alphaUBAddr = reinterpret_cast<__ubuf__ float*>(alphaUBLocal.GetPhyAddr());
         const uint16_t halfBr = static_cast<uint16_t>(data.br / 2);
         const uint16_t bc = static_cast<uint16_t>(data.bc);
+        const uint16_t validBc = static_cast<uint16_t>(GetTileValidRows(data.seqLen, j, data.bc));
         const uint16_t queryColBegin = static_cast<uint16_t>(subAivIdx * halfBr);
         if constexpr (CAUSAL_MASK) {
             // 未来 K/V 整块已被裁掉；这里只屏蔽对角块内的上三角。
@@ -260,29 +297,29 @@ __aicore__ inline void VectorStage1(
                 if (isDiagonalTile) {
                     asc_vf_call<OnlineSoftmaxCastPackVF<true, true>>(
                         reinterpret_cast<__ubuf__ bfloat16_t*>(pWorkUBLocal.GetPhyAddr()), sUBAddr, mUBAddr, lUBAddr,
-                        alphaUBAddr, halfBr, bc, data.scale, queryColBegin);
+                        alphaUBAddr, halfBr, bc, validBc, data.scale, queryColBegin);
                 } else {
                     asc_vf_call<OnlineSoftmaxCastPackVF<true, false>>(
                         reinterpret_cast<__ubuf__ bfloat16_t*>(pWorkUBLocal.GetPhyAddr()), sUBAddr, mUBAddr, lUBAddr,
-                        alphaUBAddr, halfBr, bc, data.scale, queryColBegin);
+                        alphaUBAddr, halfBr, bc, validBc, data.scale, queryColBegin);
                 }
             } else if (isDiagonalTile) {
                 asc_vf_call<OnlineSoftmaxCastPackVF<false, true>>(
                     reinterpret_cast<__ubuf__ bfloat16_t*>(pWorkUBLocal.GetPhyAddr()), sUBAddr, mUBAddr, lUBAddr,
-                    alphaUBAddr, halfBr, bc, data.scale, queryColBegin);
+                    alphaUBAddr, halfBr, bc, validBc, data.scale, queryColBegin);
             } else {
                 asc_vf_call<OnlineSoftmaxCastPackVF<false, false>>(
                     reinterpret_cast<__ubuf__ bfloat16_t*>(pWorkUBLocal.GetPhyAddr()), sUBAddr, mUBAddr, lUBAddr,
-                    alphaUBAddr, halfBr, bc, data.scale, queryColBegin);
+                    alphaUBAddr, halfBr, bc, validBc, data.scale, queryColBegin);
             }
         } else if (j == 0) {
             asc_vf_call<OnlineSoftmaxCastPackVF<true, false>>(
                 reinterpret_cast<__ubuf__ bfloat16_t*>(pWorkUBLocal.GetPhyAddr()), sUBAddr, mUBAddr, lUBAddr,
-                alphaUBAddr, halfBr, bc, data.scale, queryColBegin);
+                alphaUBAddr, halfBr, bc, validBc, data.scale, queryColBegin);
         } else {
             asc_vf_call<OnlineSoftmaxCastPackVF<false, false>>(
                 reinterpret_cast<__ubuf__ bfloat16_t*>(pWorkUBLocal.GetPhyAddr()), sUBAddr, mUBAddr, lUBAddr,
-                alphaUBAddr, halfBr, bc, data.scale, queryColBegin);
+                alphaUBAddr, halfBr, bc, validBc, data.scale, queryColBegin);
         }
     }
 }
@@ -374,10 +411,14 @@ __aicore__ inline void KernelProcessForAIV(__gm__ bfloat16_t* outGMAddr, FlashAt
 
         uint32_t ioSlot = 0;
         for (uint32_t taskId = aicIdx; taskId < data.numTasks; taskId += data.useAicNum) {
-            const uint32_t batchIdx = taskId / data.tr;
+            const uint32_t batchHeadIdx = taskId / data.tr;
             const uint32_t tileIdx = taskId % data.tr;
             const uint32_t kvTileCount = GetKvTileCount<CAUSAL_MASK>(data, tileIdx);
-            const uint64_t outGMOffset = static_cast<uint64_t>(batchIdx) * data.seqLen * d +
+            const uint32_t qValidRows = GetTileValidRows(data.seqLen, tileIdx, br);
+            const uint32_t subRowBegin = subAivIdx * halfBr;
+            const uint32_t outputRows =
+                qValidRows > subRowBegin ? (qValidRows - subRowBegin < halfBr ? qValidRows - subRowBegin : halfBr) : 0;
+            const uint64_t outGMOffset = static_cast<uint64_t>(batchHeadIdx) * data.seqLen * d +
                                          static_cast<uint64_t>(tileIdx) * qTileElements +
                                          static_cast<uint64_t>(subAivIdx) * outputHalfElements;
 
@@ -432,14 +473,18 @@ __aicore__ inline void KernelProcessForAIV(__gm__ bfloat16_t* outGMAddr, FlashAt
                     }
                 }
             }
-            asc_vf_call<FusedDivCastInplaceVF>(
-                reinterpret_cast<__ubuf__ float*>(oAccSlotUBLocal.GetPhyAddr()),
-                reinterpret_cast<__ubuf__ float*>(lUBLocal.GetPhyAddr()), static_cast<uint16_t>(halfBr),
-                static_cast<uint16_t>(d));
+            if (outputRows > 0) {
+                asc_vf_call<FusedDivCastInplaceVF>(
+                    reinterpret_cast<__ubuf__ float*>(oAccSlotUBLocal.GetPhyAddr()),
+                    reinterpret_cast<__ubuf__ float*>(lUBLocal.GetPhyAddr()), static_cast<uint16_t>(outputRows),
+                    static_cast<uint16_t>(d));
+            }
             Mutex::Unlock<PIPE_V>(outputMutexId);
-            Mutex::Lock<PIPE_MTE3>(outputMutexId);
-            DataCopy(outGlobal[outGMOffset], outputSlotUBLocal, outputHalfElements);
-            Mutex::Unlock<PIPE_MTE3>(outputMutexId);
+            if (outputRows > 0) {
+                Mutex::Lock<PIPE_MTE3>(outputMutexId);
+                DataCopy(outGlobal[outGMOffset], outputSlotUBLocal, outputRows * d);
+                Mutex::Unlock<PIPE_MTE3>(outputMutexId);
+            }
             ioSlot ^= 1;
         }
     }

@@ -14,8 +14,10 @@
 
 #include <cstdint>
 
+// Q/K/V/O 的逻辑形状均为 [B, N, S, 128]，S 可为任意正整数。Host 将 B×N 展平为独立
+// 序列维并分配 task；末尾不足 128 行的分块由 Kernel 在片上补零，并只写回有效输出行。
 // 返回 true 表示 Host 侧调用成功。v0/v1 会在返回前同步 stream，v2～v11 可在 Kernel 提交后返回；
 // 调用方在读取输出或释放输入输出前仍应同步 stream。requestedAicCoreNum 为 0 时使用设备全部 AIC 核。
 bool FlashAttnLiteNPU(
-    uint8_t* dQ, uint8_t* dK, uint8_t* dV, uint8_t* dOut, uint32_t batchSize, uint32_t seqLen, float softmaxScale,
-    uint32_t requestedAicCoreNum, aclrtStream stream);
+    uint8_t* dQ, uint8_t* dK, uint8_t* dV, uint8_t* dOut, uint32_t batchSize, uint32_t headNum,
+    uint32_t seqLen, float softmaxScale, uint32_t requestedAicCoreNum, aclrtStream stream);

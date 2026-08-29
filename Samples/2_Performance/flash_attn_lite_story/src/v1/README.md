@@ -1,4 +1,4 @@
-# FALite v1：S 和 DeltaO 通过 CV 通路直接交接
+# FALite v1：S 和 DeltaO 不再绕行 GM
 
 v1 保留 v0 的单槽四阶段计算，只缩短两条数据路径：AIC 的 Fixpipe 将 `S` 和 `DeltaO` 直接写入同组 AIV 的 UB，不再经过 GM（全局内存）。`P` 仍从 AIV 写入 GM，再由 AIC 读回。
 
@@ -11,23 +11,27 @@ v1 保留 v0 的单槽四阶段计算，只缩短两条数据路径：AIC 的 Fi
 公共 Host 接口为：
 
 ```cpp
-FlashAttnLiteNPU(Q, K, V, O, B, S, scale, coreNum, stream)
+FlashAttnLiteNPU(Q, K, V, O, B, N, S, scale, coreNum, stream)
 ```
 
 本版规格如下：
 
-- `Q`、`K`、`V`、`O` 为 BF16，逻辑形状为 `(B, 1, S, 128)`。
-- `Br=Bc=D=128`，要求 `B>0`、`S>0` 且 `S%128==0`。
+- `Q`、`K`、`V`、`O` 为 BF16，逻辑形状为 `(B, N, S, 128)`。
+- `Br=Bc=D=128`，要求 `B>0`、`N>0`、`S>0`；`S` 无需按 128 对齐。
 - `--core-num` 表示 Mix 组数；每组包含 1 个 AIC 和 2 个 AIV。
 - Kernel 固定计算同起点、等长度的方阵因果（causal）self-attention。
 - Cube 使用 BF16 输入和 FP32 累加；分数、Online Softmax（分块 Softmax 递推）状态、`DeltaO` 和 `OAcc` 使用 FP32；`P` 与最终输出使用 BF16。
-- 不支持尾块、不同的 Q/KV 长度、causal offset、滑动窗口、多头、变长序列、dropout 和反向计算。
+- 不支持不同的 Q/KV 长度、causal offset、滑动窗口、Q/K/V 的 Head 数不一致（GQA/MQA）、同一批次中每条序列长度不同的 varlen 输入、dropout 和反向计算。
 
 Host 只为 `P` 申请 GM 中间缓冲，每个 task 占 32 KiB。该缓冲不属于对外接口。
 
+Host 按 `ceil(S/128)` 建立 task。尾块的 `Q/K/V` 只读取有效行，并在 L1 中把其余行补 0；Softmax 不统计补齐的 Key 行，两路 AIV 最终只写回有效 Query 行。`P` 的 GM 中间缓冲仍保留完整物理 tile，因而不改变本版的单槽交接方式。
+
 ## 先认识 task、item 和四个阶段
 
-一个 **task** 完成一个 128 行 Q tile 的全部计算，Q tile 编号记为 `i`。该 task 每访问一个编号为 `j` 的 128 行 K/V tile，就产生一个 **item**，记为 `(i,j)`。
+一个 **task** 完成某个 `(b,n)` 下一个 128 行 Q tile 的全部计算，Q tile 编号记为 `i`。该 task 每访问一个编号为 `j` 的 128 行 K/V tile，就产生一个 **item**，记为 `(i,j)`。
+
+不同 `(b,n)` 之间没有数据依赖。Host 将 `B×N` 展平为独立序列维，再按 Q tile 分配 task。
 
 | 阶段 | 执行核心 | 计算内容 |
 | --- | --- | --- |
@@ -117,7 +121,7 @@ Final: OAcc / l -> BF16 P/Output UB -> MTE3 -> O GM
 
 对角 mask 同时用于 softmax 求最大值和求指数和的两次扫描。AIC 与 AIV 都用 `GetKvTileCount<true>(i)=i+1` 缩短循环，保证 CrossCore flag 逐轮配对。
 
-整块裁剪依赖同起点方阵和 `Br=Bc`。不同 Q/KV 长度、不同起点或尾块需要单独计算 causal 边界。
+整块裁剪依赖同起点方阵和 `Br=Bc`。不同 Q/KV 长度或不同起点需要单独计算 causal 边界。
 
 ## CV 调度与 CrossCore 同步
 
@@ -189,9 +193,9 @@ for task in assigned_tasks:
 
 ![v1 的上板 PipeTimeline](../../images/pipe_trace/falite_v1_pipe.png)
 
-截图直接取自完整 PipeTimeline trace 的 `[152.785, 192.785]` μs，泳道与 v0 保持一致。对照 v0 可以观察 CV 直连减少中间搬运后的流水变化；AIV MTE3 和 AIC MTE2 中仍包含 `P` 经 GM 交接的工作。
+截图直接取自完整 PipeTimeline trace 的 `[152.785, 192.785]` μs，泳道与 v0 保持一致。相较 v0，`S` 和 `DeltaO` 不再由 AIV MTE2 从 GM 读入；`P` 对应的 AIV MTE3 和 AIC MTE2 搬运仍然存在。
 
-## 本版边界与 v2 的方向
+## 流水问题与下一步
 
 v1 已消除 `S` 和 `DeltaO` 的 GM 往返，但 P 仍需执行 `AIV UB -> GM -> AIC L1`。这条路径带来 AIV MTE3、AIC MTE2 和 32 KiB/task 的 Host workspace，Host 也必须在释放 workspace 前同步 stream。
 
@@ -202,7 +206,7 @@ v2 将 P 改为 AIV 直接写入共享 L1，并在片上完成 AIC 所需的 NZ 
 ```bash
 cmake -S . -B build -DNPU_ARCH=dav-3510
 cmake --build build --target falite_v1 -j
-./build/Samples/2_Performance/flash_attn_lite_story/falite_v1 --core-num 1 --size 2 384
+./build/Samples/2_Performance/flash_attn_lite_story/falite_v1 --core-num 1 --size 2 1 385
 ```
 
 公共验证脚本以 FP32 计算 causal Golden。NPU 的 BF16 输出转为 FP32 后，直接与 FP32 Golden 逐元素检查：
@@ -220,7 +224,7 @@ abs(float(npu_bf16) - golden_fp32) <= 0.004 + 0.004 * abs(golden_fp32)
 表中的模型算力利用率（MFU）按因果有效 Cube 工作量计算。
 
 ```bash
-msopprof --warm-up=5 --launch-count=1 --aic-metrics=BasicInfo --output=<profiling-output> ./build/Samples/2_Performance/flash_attn_lite_story/falite_v1 --dry-run --size 1 131072
+msopprof --warm-up=5 --launch-count=1 --aic-metrics=BasicInfo --output=<profiling-output> ./build/Samples/2_Performance/flash_attn_lite_story/falite_v1 --dry-run --size 1 1 131072
 ```
 
 | 版本 | Task Duration（μs） | 因果有效 Cube MFU | 相对上一版 |

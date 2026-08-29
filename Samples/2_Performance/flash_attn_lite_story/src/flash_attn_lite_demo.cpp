@@ -33,7 +33,8 @@
 namespace {
 
 constexpr uint32_t DEFAULT_B = 1;
-constexpr uint32_t DEFAULT_S = 256; // S 必须是 128 的整数倍.
+constexpr uint32_t DEFAULT_N = 1;
+constexpr uint32_t DEFAULT_S = 4096;
 
 struct AclrtFreeDeleter {
     void operator()(void* ptr) const
@@ -99,8 +100,11 @@ void PrintUsage(const char* prog)
 {
     std::fprintf(
         stderr,
-        "用法：%s [--size <B> <S>] [--core-num <n>] [--dry-run]  "
+        "用法：%s [--size <S> | --size <N> <S> | --size <B> <N> <S>] "
+        "[--core-num <n>] [--dry-run]  "
         "(D 固定 128)\n"
+        "  --size：一个值表示 S，两个值表示 N/S，三个值表示 B/N/S；"
+        "各值均须为正整数，S 无需按 128 对齐；默认 B=1、N=1、S=4096。\n"
         "  --core-num：指定正整数个 AIC，不能超过本卡 AIC 核数。\n"
         "  --dry-run：真实执行 kernel 并落盘输出，仅跳过 Golden "
         "与比对。\n",
@@ -122,9 +126,11 @@ bool ParseU32(const char* text, uint32_t& value)
     }
 }
 
-bool ParseArgs(int argc, char** argv, uint32_t& B, uint32_t& S, uint32_t& requestedAicCoreNum, bool& dryRun)
+bool ParseArgs(
+    int argc, char** argv, uint32_t& B, uint32_t& N, uint32_t& S, uint32_t& requestedAicCoreNum, bool& dryRun)
 {
     B = DEFAULT_B;
+    N = DEFAULT_N;
     S = DEFAULT_S;
     requestedAicCoreNum = 0;
     dryRun = false;
@@ -140,10 +146,37 @@ bool ParseArgs(int argc, char** argv, uint32_t& B, uint32_t& S, uint32_t& reques
             ++i;
             continue;
         }
-        if (arg == "--size" && !hasSize && i + 2 < argc && ParseU32(argv[i + 1], B) && ParseU32(argv[i + 2], S) &&
-            B > 0 && S > 0) {
+        if (arg == "--size" && !hasSize) {
+            std::vector<uint32_t> sizes;
+            int next = i + 1;
+            while (next < argc && sizes.size() < 3) {
+                uint32_t value = 0;
+                if (!ParseU32(argv[next], value)) {
+                    break;
+                }
+                if (value == 0) {
+                    PrintUsage(argv[0]);
+                    return false;
+                }
+                sizes.push_back(value);
+                ++next;
+            }
+            if (sizes.empty()) {
+                PrintUsage(argv[0]);
+                return false;
+            }
+            if (sizes.size() == 1) {
+                S = sizes[0];
+            } else if (sizes.size() == 2) {
+                N = sizes[0];
+                S = sizes[1];
+            } else {
+                B = sizes[0];
+                N = sizes[1];
+                S = sizes[2];
+            }
             hasSize = true;
-            i += 3;
+            i = next;
             continue;
         }
         if (arg == "--core-num" && requestedAicCoreNum == 0 && i + 1 < argc &&
@@ -162,10 +195,11 @@ bool ParseArgs(int argc, char** argv, uint32_t& B, uint32_t& S, uint32_t& reques
 int main(int argc, char** argv)
 {
     uint32_t B = 0;
+    uint32_t N = 0;
     uint32_t S = 0;
     uint32_t requestedAicCoreNum = 0;
     bool dryRun = false;
-    if (!ParseArgs(argc, argv, B, S, requestedAicCoreNum, dryRun)) {
+    if (!ParseArgs(argc, argv, B, N, S, requestedAicCoreNum, dryRun)) {
         return 1;
     }
     constexpr uint32_t D = 128; // 输入固定为 BF16, D=128.
@@ -180,8 +214,8 @@ int main(int argc, char** argv)
     RunCmd("mkdir -p '" + dataDir + "'");
 
     std::printf("falite: 生成输入数据\n");
-    const std::string gendataArgs =
-        "'" + dataDir + "' " + std::to_string(B) + " " + std::to_string(S) + " " + std::to_string(D);
+    const std::string gendataArgs = "'" + dataDir + "' " + std::to_string(B) + " " + std::to_string(N) + " " +
+                                    std::to_string(S) + " " + std::to_string(D);
     if (RunCmd("python3 '" + exeDir + "/flash_attn_lite_gendata.py' " + gendataArgs) != 0) {
         std::fprintf(stderr, "生成数据失败，请确认 python3+numpy 可用且脚本已随构建拷贝到 %s\n", exeDir.c_str());
         return 1;
@@ -195,7 +229,7 @@ int main(int argc, char** argv)
         !ReadBin(dataDir + "/k.bin", hostK)) {
         return 1;
     }
-    const uint64_t expectedElements = static_cast<uint64_t>(B) * S * D;
+    const uint64_t expectedElements = static_cast<uint64_t>(B) * N * S * D;
     if (hostQ.size() != expectedElements || hostK.size() != expectedElements || hostV.size() != expectedElements) {
         std::fprintf(
             stderr,
@@ -244,7 +278,7 @@ int main(int argc, char** argv)
 
     const bool launched = FlashAttnLiteNPU(
         reinterpret_cast<uint8_t*>(devQ), reinterpret_cast<uint8_t*>(devK), reinterpret_cast<uint8_t*>(devV),
-        reinterpret_cast<uint8_t*>(devO), B, S, softmaxScale, requestedAicCoreNum, stream);
+        reinterpret_cast<uint8_t*>(devO), B, N, S, softmaxScale, requestedAicCoreNum, stream);
     if (!launched) {
         releaseDeviceMemory();
         CHECK_ACL(aclrtDestroyStream(stream));
@@ -278,16 +312,15 @@ int main(int argc, char** argv)
         return 0;
     }
 
-    // 每个 target 在编译期声明 Kernel 语义，避免共享 Demo 继承外部环境后
-    // 为非 causal 实验版本误选 causal Golden，或反之。
+    // 每个 target 在编译期声明 Kernel 语义，避免共享 Demo 继承外部环境后误选 Golden。
 #if FALITE_CAUSAL_MASK
     constexpr const char* VERIFY_CAUSAL_ENV = "FA_CAUSAL_MASK=1 ";
 #else
     constexpr const char* VERIFY_CAUSAL_ENV = "FA_CAUSAL_MASK=0 ";
 #endif
     // _verify.py 生成 FP32 golden_o.bin 并比对; 非 0 退出码表示失败.
-    const std::string verifyArgs =
-        "'" + dataDir + "' " + std::to_string(B) + " " + std::to_string(S) + " " + std::to_string(D);
+    const std::string verifyArgs = "'" + dataDir + "' " + std::to_string(B) + " " + std::to_string(N) + " " +
+                                   std::to_string(S) + " " + std::to_string(D);
     const int verifyStatus =
         RunCmd(std::string(VERIFY_CAUSAL_ENV) + "python3 '" + exeDir + "/flash_attn_lite_verify.py' " + verifyArgs);
     if (verifyStatus != 0) {

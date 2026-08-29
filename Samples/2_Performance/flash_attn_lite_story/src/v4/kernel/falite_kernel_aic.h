@@ -29,20 +29,30 @@ __aicore__ inline uint32_t C0ElemNum()
 
 template <typename T>
 __aicore__ inline void CopyGmToL1(
-    const AscendC::LocalTensor<T>& dstL1Local, const AscendC::GlobalTensor<T>& srcGlobal, uint32_t tileRow,
-    uint32_t tileCol, uint32_t gmColStride)
+    const AscendC::LocalTensor<T>& dstL1Local, const AscendC::GlobalTensor<T>& srcGlobal, uint32_t validRows,
+    uint32_t tileRows, uint32_t tileCols, uint32_t gmColStride)
 {
     using namespace AscendC;
     Nd2NzParams p;
     p.ndNum = 1;
-    p.nValue = tileRow;
-    p.dValue = tileCol;
+    p.nValue = validRows;
+    p.dValue = tileCols;
     p.srcNdMatrixStride = 1;
     p.srcDValue = gmColStride;
-    p.dstNzC0Stride = CeilAlign<uint16_t>(tileRow, BLOCK_CUBE);
+    p.dstNzC0Stride = CeilAlign<uint16_t>(tileRows, BLOCK_CUBE);
     p.dstNzNStride = 1;
     p.dstNzMatrixStride = 1;
     DataCopy(dstL1Local, srcGlobal, p);
+
+    if (validRows < tileRows) {
+        // ND->NZ 后，同一通道分块内的行连续；逐通道分块清零末尾行。
+        InitConstValueParams<T> zeroParams;
+        zeroParams.repeatTimes = CeilDiv<uint16_t>(tileCols, C0ElemNum<T>());
+        zeroParams.blockNum = static_cast<uint16_t>(tileRows - validRows);
+        zeroParams.dstGap = static_cast<uint16_t>(validRows);
+        zeroParams.initValue = 0;
+        Fill(dstL1Local[validRows * C0ElemNum<T>()], zeroParams);
+    }
 }
 
 template <typename T>
@@ -120,7 +130,7 @@ __aicore__ inline void CubeStage1(
     AscendC::LocalTensor<bfloat16_t>& qL1Local, AscendC::LocalTensor<bfloat16_t>& kL1Local,
     AscendC::LocalTensor<bfloat16_t>& aL0ALocal, AscendC::LocalTensor<bfloat16_t>& bL0BLocal,
     AscendC::LocalTensor<float>& mmadL0CLocal, AscendC::LocalTensor<float>& sUBLocal,
-    AscendC::GlobalTensor<bfloat16_t>& kGlobal, const FlashAttnLiteTilingData& data, uint32_t j, uint32_t batchIdx,
+    AscendC::GlobalTensor<bfloat16_t>& kGlobal, const FlashAttnLiteTilingData& data, uint32_t j, uint32_t batchHeadIdx,
     uint32_t slot, uint32_t kvTileCount)
 {
     using namespace AscendC;
@@ -128,14 +138,15 @@ __aicore__ inline void CubeStage1(
     if ASCEND_IS_AIC {
         const uint32_t br = data.br, bc = data.bc;
         constexpr uint32_t d = HEAD_DIM;
+        const uint32_t kvValidRows = GetTileValidRows(data.seqLen, j, bc);
         const uint64_t kGMOffset =
-            static_cast<uint64_t>(batchIdx) * data.seqLen * d + static_cast<uint64_t>(j) * bc * d;
+            static_cast<uint64_t>(batchHeadIdx) * data.seqLen * d + static_cast<uint64_t>(j) * bc * d;
         const MutexID kMutexId = MUTEX_K_L1_BASE + static_cast<MutexID>(slot);
         const MutexID l0abMutexId = MUTEX_L0AB_BASE + static_cast<MutexID>(slot);
         const MutexID l0cMutexId = MUTEX_L0C_BASE + static_cast<MutexID>(slot);
 
         Mutex::Lock<PIPE_MTE2>(kMutexId);
-        CopyGmToL1<bfloat16_t>(kL1Local, kGlobal[kGMOffset], bc, d, d);
+        CopyGmToL1<bfloat16_t>(kL1Local, kGlobal[kGMOffset], kvValidRows, bc, d, d);
         Mutex::Unlock<PIPE_MTE2>(kMutexId);
 
         if (j == 0) {
@@ -169,7 +180,7 @@ __aicore__ inline void CubeStage2(
     AscendC::LocalTensor<bfloat16_t>& pL1Local, AscendC::LocalTensor<bfloat16_t>& vL1Local,
     AscendC::LocalTensor<bfloat16_t>& aL0ALocal, AscendC::LocalTensor<bfloat16_t>& bL0BLocal,
     AscendC::LocalTensor<float>& mmadL0CLocal, AscendC::LocalTensor<float>& oDeltaUBLocal,
-    AscendC::GlobalTensor<bfloat16_t>& vGlobal, const FlashAttnLiteTilingData& data, uint32_t j, uint32_t batchIdx,
+    AscendC::GlobalTensor<bfloat16_t>& vGlobal, const FlashAttnLiteTilingData& data, uint32_t j, uint32_t batchHeadIdx,
     uint32_t slot)
 {
     using namespace AscendC;
@@ -188,9 +199,9 @@ __aicore__ inline void CubeStage2(
         // P_READY_MTE2 使 V 的 MTE2 等待两路 AIV 写完 P.
         WaitAivToAic<PIPE_MTE2>(SlotFlagId(FLAG_P_READY_MTE2_BASE, slot));
         const uint64_t vGMOffset =
-            static_cast<uint64_t>(batchIdx) * data.seqLen * d + static_cast<uint64_t>(j) * bc * d;
+            static_cast<uint64_t>(batchHeadIdx) * data.seqLen * d + static_cast<uint64_t>(j) * bc * d;
         Mutex::Lock<PIPE_MTE2>(vMutexId);
-        CopyGmToL1<bfloat16_t>(vL1Local, vGlobal[vGMOffset], bc, d, d);
+        CopyGmToL1<bfloat16_t>(vL1Local, vGlobal[vGMOffset], GetTileValidRows(data.seqLen, j, bc), bc, d, d);
         Mutex::Unlock<PIPE_MTE2>(vMutexId);
 
         Mutex::Lock<PIPE_MTE1>(vMutexId);
@@ -248,14 +259,14 @@ __aicore__ inline void KernelProcessForAIC(
         LocalTensor<float> oDeltaUBLocal(TPosition::VECCALC, aiv.oDeltaUBAddr, aiv.oDeltaUBElems);
 
         for (uint32_t taskId = GetBlockIdx(); taskId < data.numTasks; taskId += GetBlockNum()) {
-            const uint32_t batchIdx = taskId / data.tr;
+            const uint32_t batchHeadIdx = taskId / data.tr;
             const uint32_t tileIdx = taskId % data.tr;
             const uint32_t kvTileCount = GetKvTileCount<CAUSAL_MASK>(data, tileIdx);
             const uint64_t qGMOffset =
-                static_cast<uint64_t>(batchIdx) * data.seqLen * d + static_cast<uint64_t>(tileIdx) * qTileElements;
+                static_cast<uint64_t>(batchHeadIdx) * data.seqLen * d + static_cast<uint64_t>(tileIdx) * qTileElements;
 
             Mutex::Lock<PIPE_MTE2>(MUTEX_Q_L1);
-            CopyGmToL1<bfloat16_t>(qL1Local, qGlobal[qGMOffset], br, d, d);
+            CopyGmToL1<bfloat16_t>(qL1Local, qGlobal[qGMOffset], GetTileValidRows(data.seqLen, tileIdx, br), br, d, d);
             Mutex::Unlock<PIPE_MTE2>(MUTEX_Q_L1);
 
             for (uint32_t groupStart = 0; groupStart < kvTileCount; groupStart += PIPELINE_SLOT_NUM) {
@@ -272,7 +283,7 @@ __aicore__ inline void KernelProcessForAIC(
                     auto sSlotUBLocal = sUBLocal[static_cast<uint64_t>(slot) * sHalfTileElements];
                     CubeStage1(
                         qL1Local, kSlotL1Local, aSlotL0ALocal, bSlotL0BLocal, cSlotL0CLocal, sSlotUBLocal, kGlobal,
-                        data, j, batchIdx, slot, kvTileCount);
+                        data, j, batchHeadIdx, slot, kvTileCount);
                     SetAicToAiv<PIPE_FIX>(SlotFlagId(FLAG_S_READY_BASE, slot));
                 }
 
@@ -288,7 +299,7 @@ __aicore__ inline void KernelProcessForAIC(
                     auto oDeltaSlotUBLocal = oDeltaUBLocal[static_cast<uint64_t>(slot) * oDeltaHalfTileElements];
                     CubeStage2(
                         pSlotL1Local, vSlotL1Local, aSlotL0ALocal, bSlotL0BLocal, cSlotL0CLocal, oDeltaSlotUBLocal,
-                        vGlobal, data, j, batchIdx, slot);
+                        vGlobal, data, j, batchHeadIdx, slot);
                     SetAicToAiv<PIPE_FIX>(SlotFlagId(FLAG_O_READY_BASE, slot));
                 }
             }

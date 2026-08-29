@@ -1,4 +1,4 @@
-# FALite v6：用两代滚动流水越过固定分组
+# FALite v6：取消双 item 分组，连续发射后续工作
 
 ## 本版内容
 
@@ -8,18 +8,22 @@ FALite v6 是固定规格的因果 Flash Attention 前向样例。它把 v5 的�
 
 | 项目 | 实现 |
 | --- | --- |
-| 输入与输出 | BF16 `Q/K/V/O`，物理形状为 `[B,S,128]`，逻辑形状为 `[B,1,S,128]` |
-| 分块 | `Br=Bc=D=128`，要求 `B>0`、`S>0` 且 `S%128==0` |
+| 输入与输出 | BF16 `Q/K/V/O`，形状 `[B,N,S,128]` |
+| 分块 | `Br=Bc=D=128`，要求 `B>0`、`N>0`、`S>0`；`S` 无需按 128 对齐 |
 | 数值精度 | 两次 Cube 矩阵乘使用 BF16 输入和 FP32 累加；Softmax 状态与输出累加使用 FP32；`P` 转为 BF16 后送入第二次矩阵乘 |
 | 并行方式 | 一个 Mix 组包含 `1 AIC + 2 AIV`；一个 `task` 处理一个 128 行 Query 分块，两路 AIV 各处理 64 行 |
 | 因果模式 | 固定计算包含对角线的标准下三角注意力，Q 与 K/V 的长度、分块和起点相同 |
-| 未覆盖能力 | 尾块、非方形 Q/KV、多 Head、多种 HeadDim、滑动窗口、KV Cache、dropout 和反向计算 |
+| 未覆盖能力 | 非方形 Q/KV、Q/K/V 的 Head 数不一致（GQA/MQA）、同一批次中每条序列长度不同的 varlen 输入、多种 HeadDim、滑动窗口、KV Cache、dropout 和反向计算 |
 
 v6 不使用 GM workspace。`S`、`P` 和 `DeltaO` 都在片上完成 AIC 与 AIV 之间的交接。
 
+Host 按 `ceil(S/128)` 建立 task。尾块的 `Q/K/V` 只读取有效行并在 L1 补 0；Softmax 不统计补齐的 Key 行，两路 AIV 只写回有效 Query 行。所有轮换槽仍保存完整物理 tile，因此 `R=2` 的 epoch 和槽位归还规则不变。
+
 ## task、item、阶段与 epoch
 
-一个 `task` 表示一个 Query 分块（Q tile）的完整计算。
+一个 `task` 表示某个 `(b,n)` 下一个 Query 分块（Q tile）的完整计算。
+
+不同 `(b,n)` 之间没有数据依赖。Host 将 `B×N` 展平为独立序列维，再按 Q tile 分配 task。
 
 这个 `task` 每发射一个 Key/Value 分块，就形成一个 `item=(i,j)`。其中 `i` 是 Query 分块编号，`j` 是 Key/Value 分块编号；每个 `item` 依次经过 C1、V1、C2 和 V2。
 
@@ -55,7 +59,7 @@ OAcc_new = alpha_j × OAcc + P_j × V_j
 
 `epoch` 表示滚动调度循环的一次推进，只描述各核心的发射顺序，不表示 AIC 与 AIV 按相同时长锁步执行。
 
-## R=2 的滚动公式
+## R=2：首个 C2 前发射两个 C1
 
 `R` 表示同一个 `item` 的 `C1` 与 `V2` 相隔多少个 `epoch`。对有效 `item` 数不少于 `R` 的 task，它也等于首个 `C2` 发射前已经发射的 `C1` 数量；较短 task 只发射实际存在的 C1。v6 取 `R=2`。
 
@@ -238,11 +242,11 @@ v6 同时改变了调度、K/V 生命周期和 S/DeltaO 所有权协议。它的
 
 ![v6 真机核内流水](../../images/pipe_trace/falite_v6_pipe.png)
 
-截图直接取自完整 PipeTimeline trace 的 `[55.175, 95.175]` μs。AIC 关注 MTE2、MTE1、CUBE 和 FIXP，AIV 关注 VECTOR 与 MTE3。真实时间线中的色块长度代表硬件耗时，示意图只解释 `item` 和阶段之间的对应关系。
+截图直接取自完整 PipeTimeline trace 的 `[55.175, 95.175]` μs。新 C1/V1 已能越过原来的双 item 分组边界，但 AIC 等待 `P`、AIV 等待 `DeltaO` 时仍有空隙。真实时间线中的色块长度代表硬件耗时，示意图只解释 `item` 和阶段之间的对应关系。
 
-## 局限与下一方向
+## 流水问题与下一步
 
-两代滚动允许新的 C1/V1 越过固定组边界，但 AIC 在等待 `P(j)` 前只多准备到 `C1(j+1)`。分步 Vector 路径较长时，仍可能缺少足够的独立 Cube 工作覆盖等待。[v7](../v7/README.md) 把滚动距离和代际槽数增至 3，继续增加可重叠的 `item` 数量。
+`R=2` 允许新的 C1/V1 越过固定组边界，但 AIC 等待 `P(j)` 前只能先准备到 `C1(j+1)`。分步 Vector 计算较长，这一份额外工作还盖不住等待。[v7](../v7/README.md) 把首个 C2 前可准备的 item 数增至 3，检查第三份 C1/V1 能否填入这些空隙。
 
 ## 精度与性能
 
@@ -261,14 +265,14 @@ v6 相对 v5 耗时下降 19.83%，反映连续滚动及配套所有权协议的
 abs(float(npu_bf16) - golden_fp32) <= 0.004 + 0.004 * abs(golden_fp32)
 ```
 
-所有元素都必须通过，NaN 或 Inf 直接判失败。v6 已通过 `--size 1 131072` 回归。
+所有元素都必须通过，NaN 或 Inf 直接判失败。v6 已通过 `--size 1 1 131072` 和非整块 `--size 1 1 705` 回归。
 
 在 cann-samples 根目录构建并运行：
 
 ```bash
 cmake -S . -B build -DNPU_ARCH=dav-3510
 cmake --build build --target falite_v6 -j
-./build/Samples/2_Performance/flash_attn_lite_story/falite_v6 --core-num 1 --size 1 512
+./build/Samples/2_Performance/flash_attn_lite_story/falite_v6 --core-num 1 --size 1 1 385
 ```
 
-`S=512` 包含 4 个 Query tile，可覆盖流水填充、稳态、排空和代际槽回卷。
+`S=385` 包含 4 个 Query tile，最后一个 tile 只有 1 行，可覆盖流水填充、稳态、排空、代际槽回卷和序列尾块。

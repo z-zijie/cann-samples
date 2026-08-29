@@ -1,4 +1,4 @@
-# FALite v5：提前装入 V，并为 task 输入输出增加双槽
+# FALite v5：提前装入 V，交叠相邻 task
 
 v5 在 v4 的双 item 分组和 L0 双槽基础上继续整理数据搬运。C1 将同一 K/V tile 的 K 和 V 一起从 GM（全局内存）预取到 L1，C2 直接读取已经在片上的 V；Q 和最终输出则按 task 使用两套 I/O 槽，使相邻 task 的输入、计算和输出写回可以错位执行。
 
@@ -9,23 +9,27 @@ v5 在 v4 的双 item 分组和 L0 双槽基础上继续整理数据搬运。C1 
 公共 Host 接口为：
 
 ```cpp
-FlashAttnLiteNPU(Q, K, V, O, B, S, scale, coreNum, stream)
+FlashAttnLiteNPU(Q, K, V, O, B, N, S, scale, coreNum, stream)
 ```
 
 本版规格如下：
 
-- `Q`、`K`、`V`、`O` 为 BF16，逻辑形状为 `(B, 1, S, 128)`。
-- `Br=Bc=D=128`，要求 `B>0`、`S>0` 且 `S%128==0`。
+- `Q`、`K`、`V`、`O` 为 BF16，逻辑形状为 `(B, N, S, 128)`。
+- `Br=Bc=D=128`，要求 `B>0`、`N>0`、`S>0`；`S` 无需按 128 对齐。
 - `--core-num` 表示 Mix 组数；每组包含 1 个 AIC 和 2 个 AIV。
 - Kernel 固定计算同起点、等长度的方阵因果（causal）self-attention。
 - Cube 输入为 BF16，并以 FP32 累加；分数、Online Softmax（分块 Softmax 递推）状态、`DeltaO` 和 `OAcc` 使用 FP32；`P` 与最终输出使用 BF16。
-- 不支持尾块、不同的 Q/KV 长度、causal offset、滑动窗口、多头、变长序列、dropout 和反向计算。
+- 不支持不同的 Q/KV 长度、causal offset、滑动窗口、Q/K/V 的 Head 数不一致（GQA/MQA）、同一批次中每条序列长度不同的 varlen 输入、dropout 和反向计算。
 
 固定 tile 配置下，AIC L1 使用 256 KiB；单路 AIV UB 使用 225.25 KiB。
 
+Host 按 `ceil(S/128)` 建立 task。尾块的 `Q/K/V` 只读取有效行并在 L1 补 0；Softmax 不统计补齐的 Key 行，两路 AIV 只写回有效 Query 行。片上中间量仍占用完整物理 tile，I/O 双槽和 item 双槽继续按原有顺序轮换。
+
 ## 先认识 task、item、group、item slot、I/O slot 和四个阶段
 
-一个 **task** 完成一个 128 行 Q tile 的全部计算，Q tile 编号记为 `i`。该 task 每访问一个编号为 `j` 的 128 行 K/V tile，就产生一个 **item**，记为 `(i,j)`。同一 task 内最多两个连续 item 组成一个 **group**。
+一个 **task** 完成某个 `(b,n)` 下一个 128 行 Q tile 的全部计算，Q tile 编号记为 `i`。该 task 每访问一个编号为 `j` 的 128 行 K/V tile，就产生一个 **item**，记为 `(i,j)`。同一 task 内最多两个连续 item 组成一个 **group**。
+
+不同 `(b,n)` 之间没有数据依赖。Host 将 `B×N` 展平为独立序列维，再按 Q tile 分配 task。
 
 数据布局：DN 指普通二维布局，NZ 指供 Cube 使用的分块布局；NZ 转换中的临时填充会在写入共享 L1 时跳过。
 
@@ -142,7 +146,7 @@ task 结束时，最终 VF 把 `OAcc/l` 转为 BF16，并写到同一 FP32 槽�
 
 AIC 与 AIV 使用相同的 `kvTileCount=i+1` 和尾组长度，确保各类 item slot 和 CrossCore flag 都按真实 item 数回卷。
 
-该整块裁剪适用于同起点方阵和 `Br=Bc`。不同 Q/KV 长度、不同起点或尾块需要重新定义可见 KV 范围。
+该整块裁剪适用于同起点方阵和 `Br=Bc`。不同 Q/KV 长度或不同起点需要重新定义可见 KV 范围。
 
 ## CV 调度与 CrossCore 同步
 
@@ -225,13 +229,13 @@ for task in assigned_tasks:
 
 ![v5 的 KV 预取与两级双槽流水](../../images/pipeline/falite_v5_pipeline.png)
 
-图中分开表示 item 使用的 KV 槽和 task 使用的 I/O 槽；`V` 在 C1 预取后保留在 L1，直到同一 item 的 C2 消费完毕。
+图中主要画双 item 的阶段顺序；`C1+V` 表示 C1 同时预取 `V`。`V` 会留在 L1，直到同一 item 的 C2 消费完毕；task 级 I/O 双槽没有在图中展开。
 
 ![v5 的上板 PipeTimeline](../../images/pipe_trace/falite_v5_pipe.png)
 
 截图直接取自完整 PipeTimeline trace 的 `[68.998, 108.998]` μs。AIC MTE2 中同时包含 C1 对 `K`、`V` 的预取，C2 直接消费已经留在 L1 的 `V`；AIV MTE3 的输出写回也可与后续 task 的计算交叠。
 
-## 本版边界与 v6 的方向
+## 流水问题与下一步
 
 v5 仍以最多两个连续 item 为固定 group：
 
@@ -249,10 +253,10 @@ v6 保留两代片上数据，取消固定 group 边界，改为 `R=2` 的连续
 ```bash
 cmake -S . -B build -DNPU_ARCH=dav-3510
 cmake --build build --target falite_v5 -j
-./build/Samples/2_Performance/flash_attn_lite_story/falite_v5 --core-num 1 --size 1 640
+./build/Samples/2_Performance/flash_attn_lite_story/falite_v5 --core-num 1 --size 1 1 513
 ```
 
-`S=640` 含 5 个 Q/KV tile，能够覆盖满组、单 item 尾组、causal 对角 tile，以及相邻 task 在两个 I/O slot 间的切换。
+`S=513` 含 5 个 Q/KV tile，最后一个 tile 只有 1 行，可同时覆盖满组、单 item 尾组、causal 对角 tile、序列尾块和相邻 task 的 I/O slot 切换。
 
 公共验证脚本以 FP32 计算 causal Golden。NPU 的 BF16 输出转为 FP32 后，直接与 FP32 Golden 逐元素检查：
 
@@ -269,7 +273,7 @@ abs(float(npu_bf16) - golden_fp32) <= 0.004 + 0.004 * abs(golden_fp32)
 表中的模型算力利用率（MFU）按因果有效 Cube 工作量计算。
 
 ```bash
-msopprof --warm-up=5 --launch-count=1 --aic-metrics=BasicInfo --output=<profiling-output> ./build/Samples/2_Performance/flash_attn_lite_story/falite_v5 --dry-run --size 1 131072
+msopprof --warm-up=5 --launch-count=1 --aic-metrics=BasicInfo --output=<profiling-output> ./build/Samples/2_Performance/flash_attn_lite_story/falite_v5 --dry-run --size 1 1 131072
 ```
 
 | 版本 | Task Duration（μs） | 因果有效 Cube MFU | 相对上一版 |

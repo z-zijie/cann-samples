@@ -17,10 +17,10 @@
 ml_dtypes, 否则使用 round-to-nearest-even 位运算.
 
 用法:
-    python3 flash_attn_lite_gendata.py <data_dir> <B> <S> <D>
+    python3 flash_attn_lite_gendata.py <data_dir> <B> <N> <S> <D>
 产出:
-    <data_dir>/q.bin, k.bin, v.bin, 物理 shape=(B,S,D), dtype=BF16.
-    当前逻辑 shape 为 (B,1,S,D).
+    <data_dir>/q.bin, k.bin, v.bin, 逻辑 shape=(B,N,S,D), dtype=BF16。
+    S 可为任意正整数，文件按逻辑长度紧凑保存，不写入 tile 对齐数据。
 """
 
 import os
@@ -58,21 +58,19 @@ def fp32_to_bf16_bytes(x: np.ndarray) -> bytes:
 
 
 def main() -> int:
-    if len(sys.argv) != 5:
-        print(f"用法: {sys.argv[0]} <data_dir> <B> <S> <D>", file=sys.stderr)
+    if len(sys.argv) != 6:
+        print(f"用法: {sys.argv[0]} <data_dir> <B> <N> <S> <D>", file=sys.stderr)
         return 1
 
     data_dir = sys.argv[1]
     b = int(sys.argv[2])
-    s = int(sys.argv[3])
-    d = int(sys.argv[4])
+    n = int(sys.argv[3])
+    s = int(sys.argv[4])
+    d = int(sys.argv[5])
 
-    if b <= 0 or s <= 0 or d <= 0:
-        print(f"错误: B/S/D 必须为正整数，得到 B={b} S={s} D={d}", file=sys.stderr)
+    if b <= 0 or n <= 0 or s <= 0 or d <= 0:
+        print(f"错误: B/N/S/D 必须为正整数，得到 B={b} N={n} S={s} D={d}", file=sys.stderr)
         return 1
-    if s % 128 != 0:
-        print(f"警告: S={s} 不是 128 的整数倍（规格要求 S 为 128 倍数）", file=sys.stderr)
-
     os.makedirs(data_dir, exist_ok=True)
     rng = np.random.default_rng(20260709)
 
@@ -83,19 +81,19 @@ def main() -> int:
         print("gendata: 未装 ml_dtypes，bf16 走位运算回退", file=sys.stderr)
 
     t0 = time.perf_counter()
-    qf = rng.standard_normal((b, s, d)).astype("<f4")
-    kf = rng.standard_normal((b, s, d)).astype("<f4")
-    vf = rng.standard_normal((b, s, d)).astype("<f4")
+    qf = rng.standard_normal((b, n, s, d)).astype("<f4")
+    kf = rng.standard_normal((b, n, s, d)).astype("<f4")
+    vf = rng.standard_normal((b, n, s, d)).astype("<f4")
 
-    # q.bin, k.bin, v.bin 均为 shape=(B,S,D) 的行主序 BF16.
+    # q.bin, k.bin, v.bin 均为 shape=(B,N,S,D) 的行主序 BF16.
     for name, x in (("q", qf), ("k", kf), ("v", vf)):
         with open(os.path.join(data_dir, f"{name}.bin"), "wb") as f:
             f.write(fp32_to_bf16_bytes(np.ascontiguousarray(x)))
 
     dt = time.perf_counter() - t0
     print(
-        f"gendata: B={b} S={s} D={d} -> {{q,k,v}}.bin "
-        f"(bf16/{bf16_tag}, {b*s*d*2} bytes each) {dt:.3f}s"
+        f"gendata: B={b} N={n} S={s} D={d} -> {{q,k,v}}.bin "
+        f"(bf16/{bf16_tag}, {b*n*s*d*2} bytes each) {dt:.3f}s"
     )
     return 0
 

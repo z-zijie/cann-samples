@@ -25,13 +25,17 @@ constexpr uint32_t L0C_CAPACITY_BYTES = 256 * 1024;
 constexpr uint32_t UB_CAPACITY_BYTES = 248 * 1024;
 
 const char* ComputeFlashAttnLiteTilingData(
-    uint32_t batchSize, uint32_t seqLen, float scale, uint32_t aicoreNum, FALite::FlashAttnLiteTilingData& data)
+    uint32_t batchSize, uint32_t headNum, uint32_t seqLen, float scale, uint32_t aicoreNum,
+    FALite::FlashAttnLiteTilingData& data)
 {
     data = {};
     data.br = 128;
     data.bc = 128;
     if (batchSize == 0) {
         return "B 必须大于 0";
+    }
+    if (headNum == 0) {
+        return "N 必须大于 0";
     }
     if (seqLen == 0) {
         return "S 必须大于 0";
@@ -42,18 +46,18 @@ const char* ComputeFlashAttnLiteTilingData(
     if (aicoreNum == 0) {
         return "可用 AIC 核数必须大于 0";
     }
-    if (seqLen % data.br != 0 || seqLen % data.bc != 0) {
-        return "S 必须是 128 的整数倍（不支持尾块）";
+    const uint64_t batchHeadNum = static_cast<uint64_t>(batchSize) * headNum;
+    if (batchHeadNum > std::numeric_limits<uint32_t>::max()) {
+        return "B*N 超出 uint32_t 表示范围";
     }
-
-    data.batchSize = batchSize;
+    data.batchHeadNum = static_cast<uint32_t>(batchHeadNum);
     data.seqLen = seqLen;
     data.scale = scale;
-    data.tr = seqLen / data.br;
-    data.tc = seqLen / data.bc;
-    const uint64_t numTasks = static_cast<uint64_t>(batchSize) * data.tr;
+    data.tr = seqLen / data.br + static_cast<uint32_t>(seqLen % data.br != 0);
+    data.tc = seqLen / data.bc + static_cast<uint32_t>(seqLen % data.bc != 0);
+    const uint64_t numTasks = batchHeadNum * data.tr;
     if (numTasks > std::numeric_limits<uint32_t>::max()) {
-        return "任务数 B*(S/128) 超出 uint32_t 表示范围";
+        return "任务数 B*N*ceil(S/128) 超出 uint32_t 表示范围";
     }
     data.numTasks = static_cast<uint32_t>(numTasks);
     data.useAicNum = data.numTasks < aicoreNum ? data.numTasks : aicoreNum;
@@ -88,7 +92,7 @@ const char* ComputeFlashAttnLiteTilingData(
     aiv.oAccUBAddr = aiv.oDeltaUBAddr + aiv.oDeltaUBElems * sizeof(float);
     aiv.oAccUBElems = FALite::IO_SLOT_NUM * halfBr * FALite::HEAD_DIM;
     aiv.pWorkUBAddr = aiv.oAccUBAddr + aiv.oAccUBElems * sizeof(float);
-    // 每个 16 列 NZ 分组含 Bc 个有效 DataBlock 和 1 个 padding block;
+    // 每个 16 列 NZ 分组固定含 Bc 个数据 DataBlock 和 1 个布局 padding block；
     // 每个 PWork 槽占 halfBr * (Bc + 1) 个 BF16 元素。
     aiv.pWorkUBElems = FALite::PIPELINE_SLOT_NUM * halfBr * (data.bc + 1);
     aiv.mUBAddr = aiv.pWorkUBAddr + aiv.pWorkUBElems * sizeof(uint16_t);
@@ -108,8 +112,8 @@ const char* ComputeFlashAttnLiteTilingData(
 } // namespace
 
 bool FlashAttnLiteNPU(
-    uint8_t* dQ, uint8_t* dK, uint8_t* dV, uint8_t* dOut, uint32_t batchSize, uint32_t seqLen, float softmaxScale,
-    uint32_t requestedAicCoreNum, aclrtStream stream)
+    uint8_t* dQ, uint8_t* dK, uint8_t* dV, uint8_t* dOut, uint32_t batchSize, uint32_t headNum, uint32_t seqLen,
+    float softmaxScale, uint32_t requestedAicCoreNum, aclrtStream stream)
 {
     auto ascendcPlatform = platform_ascendc::PlatformAscendCManager::GetInstance();
     if (ascendcPlatform == nullptr) {
@@ -125,7 +129,7 @@ bool FlashAttnLiteNPU(
     const uint32_t aicCoreNum = requestedAicCoreNum == 0 ? deviceAicCoreNum : requestedAicCoreNum;
 
     FALite::FlashAttnLiteTilingData data{};
-    const char* error = ComputeFlashAttnLiteTilingData(batchSize, seqLen, softmaxScale, aicCoreNum, data);
+    const char* error = ComputeFlashAttnLiteTilingData(batchSize, headNum, seqLen, softmaxScale, aicCoreNum, data);
     if (error != nullptr) {
         std::fprintf(stderr, "FALite 参数不受支持：%s\n", error);
         return false;

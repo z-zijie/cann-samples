@@ -1,25 +1,29 @@
-# FALite v8：四代滚动的分步 Vector 版本
+# FALite v8：首个 C2 前先发射四个 C1，耗时基本不变
 
 ## 本版内容
 
-FALite v8 把连续滚动距离从 3 增至 4，使 AIC 在第一次等待 P 之前可以连续发射四个 C1，也使 AIV 在第一次 V2 之前可以连续发射四个 V1。v8 使用分步 Vector 路径；它与同为 `R=4,L0C=4` 的 v10 只在 Vector 写法上不同，可以直接比较两种写法。
+FALite v8 把 `R` 从 3 增至 4，使 AIC 在首个 C2 前可以连续发射四个 C1，AIV 在首个 V2 前也可以连续发射四个 V1。v8 使用分步 Vector 写法；它与同为 `R=4,L0C=4` 的 v10 只在 Vector 写法上不同，可以直接比较两种写法。
 
 本版固定计算因果 Flash Attention 前向。
 
 | 项目 | 实现 |
 | --- | --- |
-| 输入与输出 | BF16 `Q/K/V/O`，物理形状 `[B,S,128]`，逻辑形状 `[B,1,S,128]` |
-| 分块 | `Br=Bc=D=128`，要求 `B>0`、`S>0` 且 `S%128==0` |
+| 输入与输出 | BF16 `Q/K/V/O`，形状 `[B,N,S,128]` |
+| 分块 | `Br=Bc=D=128`，要求 `B>0`、`N>0`、`S>0`；`S` 无需按 128 对齐 |
 | 内部精度 | Cube 使用 BF16 输入和 FP32 累加；Softmax 状态、`alpha` 和 `OAcc` 使用 FP32；`P` 为 BF16 |
 | 并行方式 | 一个 Mix 组包含 `1 AIC + 2 AIV`；一个 `task` 处理一个 Query 分块，两路 AIV 各处理 64 行 |
 | 因果模式 | Q 与 K/V 等长、同起点，输出包含对角线的标准下三角注意力 |
-| 未覆盖能力 | 尾块、非方形 Q/KV、多 Head、多种 HeadDim、滑动窗口、KV Cache、dropout 和反向计算 |
+| 未覆盖能力 | 非方形 Q/KV、Q/K/V 的 Head 数不一致（GQA/MQA）、同一批次中每条序列长度不同的 varlen 输入、多种 HeadDim、滑动窗口、KV Cache、dropout 和反向计算 |
 
 所有中间结果都在片上交接，不使用 GM workspace。
 
+Host 按 `ceil(S/128)` 建立 task。尾块的 `Q/K/V` 只读取有效行并在 L1 补 0；Softmax 不统计补齐的 Key 行，两路 AIV 只写回有效 Query 行。所有轮换槽仍保存完整物理 tile，因此 `R=4` 的 epoch 和槽位归还规则不变。
+
 ## task、item、阶段与 epoch
 
-一个 `task` 表示一个 Query 分块（Q tile）的完整计算。
+一个 `task` 表示某个 `(b,n)` 下一个 Query 分块（Q tile）的完整计算。
+
+不同 `(b,n)` 之间没有数据依赖。Host 将 `B×N` 展平为独立序列维，再按 Q tile 分配 task。
 
 这个 `task` 每发射一个 Key/Value 分块，就形成一个 `item=(i,j)`。其中 `i` 是 Query 分块编号，`j` 是 Key/Value 分块编号；每个 `item` 依次经过 C1、V1、C2 和 V2。
 
@@ -64,7 +68,7 @@ OAcc_new = alpha_j × OAcc + P_j × V_j
 
 C1 输出转置布局 `S^T[Bc,Br]`，Vector 寄存器通道对应 Query 行，循环变量对应 Key 行。AIV0 的 Query 局部编号从 0 开始，AIV1 从 64 开始。块内掩码同时作用于求最大值和求指数和/P 的两遍扫描。
 
-## R=4 的滚动调度
+## R=4：首个 C2 前发射四个 C1
 
 `epoch` 表示滚动调度循环的一次推进。`R=4` 表示同一个 `item` 的 C1 与 V2 相隔 4 个 `epoch`；对至少有 4 个有效 `item` 的 task，首个 C2 之前会发射 4 个 C1，较短 task 只发射实际存在的 C1。
 
@@ -241,11 +245,11 @@ v8→v9 同时把 R 从 4 降到 3 并替换 Vector，不能用于单项归因�
 
 ![v8 真机核内流水](../../images/pipe_trace/falite_v8_pipe.png)
 
-截图直接取自完整 PipeTimeline trace 的 `[44.312, 84.312]` μs。四代滚动下 AIC 与 AIV 已形成较长的连续忙区；后文与 v10 的对照使用相同的 40 μs 窗口宽度和泳道集合。
+截图直接取自完整 PipeTimeline trace 的 `[44.312, 84.312]` μs。首个 C2 前发射四个 C1 后，AIC 与 AIV 已形成较长的连续忙区，但统一长序列耗时仅比 v7 下降 0.08%；后文与 v10 的对照使用相同的 40 μs 窗口宽度和泳道集合。
 
-## 局限与下一方向
+## 流水问题与下一步
 
-v8 比 v7 多保留一代 C1/V1，但分步 Vector 的计算量没有改变。长序列性能几乎不再随 R 增加，说明继续扩大窗口难以缩短这条 Vector 路径。[v9](../v9/README.md) 在 `R=3` 分支压缩 Vector，[v10](../v10/README.md) 则使用 `R=4` 的相同压缩写法；其中 v8 与 v10 可直接比较 Vector 路径的差别。
+v8 比 v7 多提前发射一轮 C1/V1，耗时却只下降 0.08%，说明单纯增大 `R` 已盖不住更多等待。下一步应减少 V1/V2 自身的工作。[v9](../v9/README.md) 在 `R=3` 下改写 Vector，[v10](../v10/README.md) 使用 `R=4` 的相同写法；其中 v8 与 v10 的 `R/L0C` 相同，可直接比较 Vector 改写的影响。
 
 ## 精度与性能
 
@@ -267,12 +271,12 @@ v7→v8 的完整配置耗时只下降 0.08%。v8→v10 保持滚动和槽位配
 abs(float(npu_bf16) - golden_fp32) <= 0.004 + 0.004 * abs(golden_fp32)
 ```
 
-v8 已通过 `--size 1 131072` 回归。构建和验证命令如下：
+v8 已通过 `--size 1 1 131072` 和非整块 `--size 1 1 705` 回归。构建和验证命令如下：
 
 ```bash
 cmake -S . -B build -DNPU_ARCH=dav-3510
 cmake --build build --target falite_v8 -j
-./build/Samples/2_Performance/flash_attn_lite_story/falite_v8 --core-num 1 --size 1 640
+./build/Samples/2_Performance/flash_attn_lite_story/falite_v8 --core-num 1 --size 1 1 513
 ```
 
-`S=640` 包含 5 个 Query tile，可覆盖 R=4 的完整填充、排空和首次代际槽回卷。
+`S=513` 包含 5 个 Query tile，最后一个 tile 只有 1 行，可覆盖 R=4 的完整填充、排空、首次代际槽回卷和序列尾块。

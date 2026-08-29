@@ -119,4 +119,12 @@ __aicore__ inline uint32_t GetKvTileCount(const FlashAttnLiteTilingData& data, u
     return data.tc;
 }
 
+// 返回序列 Tile 中真实存在的行数；除末块外均为 tileRows。
+__aicore__ inline uint32_t GetTileValidRows(uint32_t seqLen, uint32_t tileIdx, uint32_t tileRows)
+{
+    const uint32_t tileBegin = tileIdx * tileRows;
+    const uint32_t remaining = seqLen - tileBegin;
+    return remaining < tileRows ? remaining : tileRows;
+}
+
 } // namespace FALite

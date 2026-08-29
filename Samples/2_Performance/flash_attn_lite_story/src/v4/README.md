@@ -1,4 +1,4 @@
-# FALite v4：L0 双槽放开 AIC 核内流水
+# FALite v4：L0 双缓冲让 AIC 各阶段重叠
 
 v4 保留 v3 的 CV 双槽分组，再为 L0A/L0B/L0C 增加第二套物理槽。相邻 Cube 阶段可以交替使用两套 L0，AIC 的 MTE1、Mmad 和 Fixpipe 不必反复争用同一个槽。
 
@@ -11,21 +11,25 @@ v4 保留 v3 的 CV 双槽分组，再为 L0A/L0B/L0C 增加第二套物理槽�
 公共 Host 接口为：
 
 ```cpp
-FlashAttnLiteNPU(Q, K, V, O, B, S, scale, coreNum, stream)
+FlashAttnLiteNPU(Q, K, V, O, B, N, S, scale, coreNum, stream)
 ```
 
 本版规格如下：
 
-- `Q`、`K`、`V`、`O` 为 BF16，逻辑形状为 `(B, 1, S, 128)`。
-- `Br=Bc=D=128`，要求 `B>0`、`S>0` 且 `S%128==0`。
+- `Q`、`K`、`V`、`O` 为 BF16，逻辑形状为 `(B, N, S, 128)`。
+- `Br=Bc=D=128`，要求 `B>0`、`N>0`、`S>0`；`S` 无需按 128 对齐。
 - `--core-num` 表示 Mix 组数；每组包含 1 个 AIC 和 2 个 AIV。
 - Kernel 固定计算同起点、等长度的方阵因果（causal）self-attention。
 - Cube 输入为 BF16，并以 FP32 累加；分数、Online Softmax（分块 Softmax 递推）状态、`DeltaO` 和 `OAcc` 使用 FP32；`P` 与最终输出使用 BF16。
-- 不支持尾块、不同的 Q/KV 长度、causal offset、滑动窗口、多头、变长序列、dropout 和反向计算。
+- 不支持不同的 Q/KV 长度、causal offset、滑动窗口、Q/K/V 的 Head 数不一致（GQA/MQA）、同一批次中每条序列长度不同的 varlen 输入、dropout 和反向计算。
+
+Host 按 `ceil(S/128)` 建立 task。尾块的 `Q/K/V` 只读取有效行并在 L1 补 0；Softmax 不统计补齐的 Key 行，两路 AIV 只写回有效 Query 行。片上中间量仍占用完整物理 tile，因此双槽流水和 Mutex 关系保持不变。
 
 ## 先认识 task、item、group、slot 和四个阶段
 
-一个 **task** 完成一个 128 行 Q tile 的全部计算，Q tile 编号记为 `i`。该 task 每访问一个编号为 `j` 的 128 行 K/V tile，就产生一个 **item**，记为 `(i,j)`。
+一个 **task** 完成某个 `(b,n)` 下一个 128 行 Q tile 的全部计算，Q tile 编号记为 `i`。该 task 每访问一个编号为 `j` 的 128 行 K/V tile，就产生一个 **item**，记为 `(i,j)`。
+
+不同 `(b,n)` 之间没有数据依赖。Host 将 `B×N` 展平为独立序列维，再按 Q tile 分配 task。
 
 同一 task 内最多两个连续 item 组成一个 **group**。组内 item 使用 CV slot 0/1；v4 的 L0A/L0B/L0C 也各有 slot 0/1，并随 item 一起切换。
 
@@ -140,7 +144,7 @@ Final: OAcc / l -> BF16 PWork[0] -> MTE3 -> O GM
 
 AIC 和 AIV 使用相同的 `kvTileCount=i+1`。例如三个有效 item 会组成一个满组和一个单 item 尾组，三颗核心都只遍历真实存在的 slot。
 
-整块裁剪适用于同起点方阵和 `Br=Bc`。不同长度、不同起点或尾块需要重新计算 tile 边界。
+整块裁剪适用于同起点方阵和 `Br=Bc`。不同长度或不同起点需要重新计算 tile 边界。
 
 ## CV 调度与 CrossCore 同步
 
@@ -217,13 +221,13 @@ for task in assigned_tasks:
 
 ![v4 的 CV 与 L0 双槽流水](../../images/pipeline/falite_v4_pipeline.png)
 
-图中把 CV 槽和 L0 槽分层表示，并画出 `P` 就绪后供 AIC 两条加载路径消费的同步关系。
+图中沿用双 item 的阶段顺序，副标题标明 CV 和 L0 都采用双槽。L0A/L0B/L0C 的具体交接以及 `P` 就绪后的两条加载路径见前文。
 
 ![v4 的上板 PipeTimeline](../../images/pipe_trace/falite_v4_pipe.png)
 
-截图直接取自完整 PipeTimeline trace 的 `[77.589, 117.589]` μs。与 v3 相同的泳道和 40 μs 时间宽度，便于比较 L0 双槽引入后 AIC MTE1、CUBE 与 FIXP 的交叠变化。
+截图直接取自完整 PipeTimeline trace 的 `[77.589, 117.589]` μs。与 v3 相比，AIC 的 MTE1、CUBE 和 FIXP 间隔缩短；两张图使用相同泳道和 40 μs 时间宽度。
 
-## 本版边界与 v5 的方向
+## 流水问题与下一步
 
 v4 已放开 L0 双槽，但 V 仍在 C2 中从 GM 搬到 L1，并且要等待 P 写入完成后才开始。Q L1 和最终输出也各只有一个 task 级槽，前一个 task 的输出写回可能影响下一个 task 的起步。
 
@@ -234,7 +238,7 @@ v5 将 V 的 GM→L1 前移到 C1，与 K 一起预取；同时为 Q 和 OAcc/�
 ```bash
 cmake -S . -B build -DNPU_ARCH=dav-3510
 cmake --build build --target falite_v4 -j
-./build/Samples/2_Performance/flash_attn_lite_story/falite_v4 --core-num 1 --size 1 384
+./build/Samples/2_Performance/flash_attn_lite_story/falite_v4 --core-num 1 --size 1 1 385
 ```
 
 公共验证脚本以 FP32 计算 causal Golden。NPU 的 BF16 输出转为 FP32 后，直接与 FP32 Golden 逐元素检查：
@@ -252,7 +256,7 @@ abs(float(npu_bf16) - golden_fp32) <= 0.004 + 0.004 * abs(golden_fp32)
 表中的模型算力利用率（MFU）按因果有效 Cube 工作量计算。
 
 ```bash
-msopprof --warm-up=5 --launch-count=1 --aic-metrics=BasicInfo --output=<profiling-output> ./build/Samples/2_Performance/flash_attn_lite_story/falite_v4 --dry-run --size 1 131072
+msopprof --warm-up=5 --launch-count=1 --aic-metrics=BasicInfo --output=<profiling-output> ./build/Samples/2_Performance/flash_attn_lite_story/falite_v4 --dry-run --size 1 1 131072
 ```
 
 | 版本 | Task Duration（μs） | 因果有效 Cube MFU | 相对上一版 |

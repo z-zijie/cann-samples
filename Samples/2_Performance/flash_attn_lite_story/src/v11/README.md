@@ -1,25 +1,29 @@
-# FALite v11：把压缩 Vector 的滚动距离增至五代
+# FALite v11：首个 C2 前先发射五个 C1，收益很小
 
 ## 本版内容
 
-FALite v11 沿用 v10 的压缩 Vector，把滚动距离从四代增至五代。V、P 和 alpha 使用五个代际槽，L0C 使用四个结果槽并按矩阵乘发射序号回卷。
+FALite v11 沿用 v10 的 Vector 写法，把 `R` 从 4 增至 5。`V/P/alpha` 使用五套轮换槽，L0C 仍使用四个结果槽，并按矩阵乘发射序号轮换。
 
 本版固定计算因果 Flash Attention 前向。
 
 | 项目 | 实现 |
 | --- | --- |
-| 输入与输出 | BF16 `Q/K/V/O`，物理形状 `[B,S,128]`，逻辑形状 `[B,1,S,128]` |
-| 分块 | `Br=Bc=D=128`，`B>0`、`S>0` 且 `S%128==0` |
+| 输入与输出 | BF16 `Q/K/V/O`，形状 `[B,N,S,128]` |
+| 分块 | `Br=Bc=D=128`，`B>0`、`N>0`、`S>0`；`S` 无需按 128 对齐 |
 | 内部精度 | Cube 使用 BF16 输入和 FP32 累加；Softmax 状态、`alpha` 和 `OAcc` 使用 FP32；`P` 为 BF16 |
 | 并行方式 | 一个 Mix 组包含 `1 AIC + 2 AIV`；一个 `task` 处理一个 Query 分块，两路 AIV 各处理 64 行 |
 | 因果模式 | Q 与 K/V 等长、同起点，固定使用包含对角线的标准下三角掩码 |
-| 未覆盖能力 | 尾块、非方形 Q/KV、多 Head、多种 HeadDim、滑动窗口、KV Cache、dropout 和反向计算 |
+| 未覆盖能力 | 非方形 Q/KV、Q/K/V 的 Head 数不一致（GQA/MQA）、同一批次中每条序列长度不同的 varlen 输入、多种 HeadDim、滑动窗口、KV Cache、dropout 和反向计算 |
 
 本版不使用 GM workspace，所有中间结果都在片上交接。
 
+Host 按 `ceil(S/128)` 建立 task。尾块的 `Q/K/V` 只读取有效行并在 L1 补 0；Softmax 只遍历有效 Key 行，压缩 Vector 的固定展开段之后再处理不足展开长度的剩余行。两路 AIV 只写回有效 Query 行，`R=5` 的轮换规则不变。
+
 ## task、item、阶段与 epoch
 
-一个 `task` 表示一个 Query 分块（Q tile）的完整计算。
+一个 `task` 表示某个 `(b,n)` 下一个 Query 分块（Q tile）的完整计算。
+
+不同 `(b,n)` 之间没有数据依赖。Host 将 `B×N` 展平为独立序列维，再按 Q tile 分配 task。
 
 这个 `task` 每发射一个 Key/Value 分块，就形成一个 `item=(i,j)`。其中 `i` 是 Query 分块编号，`j` 是 Key/Value 分块编号；每个 `item` 依次经过 C1、V1、C2 和 V2。
 
@@ -51,7 +55,7 @@ OAcc_new = alpha_j × OAcc + P_j × V_j
 
 `epoch` 表示滚动调度循环的一次推进，只描述每颗核心的发射顺序。AIC 与 AIV 的完成时刻由各自 Pipe 和 CrossCore 依赖决定。
 
-## R=5 的滚动调度
+## R=5：首个 C2 前发射五个 C1
 
 `R=5` 表示同一 `item` 的 C1 与 V2 相隔 5 个 `epoch`。对至少有 5 个有效 `item` 的 task，首个 C2 发射前会有 5 个 C1 进入流水；较短 task 只发射实际存在的 C1：
 
@@ -225,11 +229,11 @@ AIC.drain_final_s_and_odelta_free_flags()
 
 ![v11 真机核内流水](../../images/pipe_trace/falite_v11_pipe.png)
 
-截图直接取自完整 PipeTimeline trace 的 `[36.456, 76.456]` μs。与 v10 对照可观察第五代 C1/V1 对等待空隙的影响；两张图使用相同的 40 μs 窗口宽度和泳道集合。
+截图直接取自完整 PipeTimeline trace 的 `[36.456, 76.456]` μs。与 v10 相比，两张图的连续忙区和空隙已经很接近，没有明显等待可由第五轮提前发射覆盖；两张图使用相同的 40 μs 窗口宽度和泳道集合。
 
-## 局限与可扩展方向
+## 结果与后续方向
 
-五代滚动额外占用 64 KiB L1，长序列耗时变化约为 0.5%，继续增加代际深度的收益已经很小。L0C 也已用满 256 KiB。更合适的扩展方向包括尾块、非方形 Q/KV、运行时掩码和更多 Head/HeadDim，也可以研究如何减少对角 tile 上半区的无效矩阵计算。
+第五轮提前发射额外占用 64 KiB L1，长序列耗时只变化约 0.5%；L0C 也已用满 256 KiB。继续增大 `R` 已没有明确收益。后续可以支持非方形 Q/KV、varlen、运行时掩码、GQA/MQA 和更多 HeadDim，也可以研究如何减少对角 tile 上半区以及尾块补齐区域的无效矩阵计算。
 
 ## 精度与性能
 
@@ -250,12 +254,12 @@ AIC.drain_final_s_and_odelta_free_flags()
 abs(float(npu_bf16) - golden_fp32) <= 0.004 + 0.004 * abs(golden_fp32)
 ```
 
-v11 已通过 `--size 1 131072` 回归。构建和验证命令如下：
+v11 已通过 `--size 1 1 131072`、非整块 `--size 1 1 705` 和多 Head 尾块 `--size 2 3 129` 回归。构建和验证命令如下：
 
 ```bash
 cmake -S . -B build -DNPU_ARCH=dav-3510
 cmake --build build --target falite_v11 -j
-./build/Samples/2_Performance/flash_attn_lite_story/falite_v11 --core-num 1 --size 1 768
+./build/Samples/2_Performance/flash_attn_lite_story/falite_v11 --core-num 1 --size 1 1 641
 ```
 
-`S=768` 包含 6 个 Query tile，可覆盖 R=5 的填充、排空和首次代际槽回卷。
+`S=641` 包含 6 个 Query tile，最后一个 tile 只有 1 行，可覆盖 R=5 的填充、排空、首次代际槽回卷和序列尾块。

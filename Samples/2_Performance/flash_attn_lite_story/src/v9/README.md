@@ -1,4 +1,4 @@
-# FALite v9：在三代滚动下压缩 Vector 计算
+# FALite v9：在 R=3 下缩短 Vector 计算
 
 ## 本版内容
 
@@ -8,18 +8,22 @@ FALite v9 采用 `R=3,L0C=4` 的连续滚动配置，并缩短 AIV 上的 Online
 
 | 项目 | 实现 |
 | --- | --- |
-| 输入与输出 | BF16 `Q/K/V/O`，物理形状 `[B,S,128]`，逻辑形状 `[B,1,S,128]` |
-| 分块 | `Br=Bc=D=128`，`B>0`、`S>0` 且 `S%128==0` |
+| 输入与输出 | BF16 `Q/K/V/O`，形状 `[B,N,S,128]` |
+| 分块 | `Br=Bc=D=128`，`B>0`、`N>0`、`S>0`；`S` 无需按 128 对齐 |
 | 内部精度 | Cube 使用 BF16 输入和 FP32 累加；Softmax 状态、`alpha` 和 `OAcc` 使用 FP32；`P` 为 BF16 |
 | 并行方式 | 一个 Mix 组包含 `1 AIC + 2 AIV`；一个 `task` 处理一个 128 行 Query 分块，两路 AIV 各处理 64 行 |
 | 因果模式 | Q 与 K/V 等长、同起点，固定使用包含对角线的标准下三角掩码 |
-| 未覆盖能力 | 尾块、非方形 Q/KV、多 Head、多种 HeadDim、滑动窗口、KV Cache、dropout 和反向计算 |
+| 未覆盖能力 | 非方形 Q/KV、Q/K/V 的 Head 数不一致（GQA/MQA）、同一批次中每条序列长度不同的 varlen 输入、多种 HeadDim、滑动窗口、KV Cache、dropout 和反向计算 |
 
 本版不使用 GM workspace，`S/P/DeltaO` 都在片上完成交接。
 
+Host 按 `ceil(S/128)` 建立 task。尾块的 `Q/K/V` 只读取有效行并在 L1 补 0；Softmax 只遍历有效 Key 行，压缩 Vector 的固定展开段之后再处理不足展开长度的剩余行。两路 AIV 只写回有效 Query 行，`R=3` 的轮换规则不变。
+
 ## task、item、阶段与 epoch
 
-一个 `task` 表示一个 Query 分块（Q tile）的完整计算。
+一个 `task` 表示某个 `(b,n)` 下一个 Query 分块（Q tile）的完整计算。
+
+不同 `(b,n)` 之间没有数据依赖。Host 将 `B×N` 展平为独立序列维，再按 Q tile 分配 task。
 
 这个 `task` 每发射一个 Key/Value 分块，就形成一个 `item=(i,j)`。其中 `i` 是 Query 分块编号，`j` 是 Key/Value 分块编号；每个 `item` 依次经过 C1、V1、C2 和 V2。
 
@@ -51,7 +55,7 @@ OAcc_new = alpha_j × OAcc + P_j × V_j
 
 `epoch` 表示滚动调度循环的一次推进，只表示每颗核心上的发射顺序。AIC 与 AIV 通过 CrossCore 信号在 S、P 和 DeltaO 的消费点对齐。
 
-## R=3 的滚动调度
+## R=3：首个 C2 前发射三个 C1
 
 `R` 表示同一 `item` 的 C1 与 V2 相隔的 `epoch` 数。对有效 `item` 数不少于 `R` 的 task，它也表示首个 C2 之前已经发射的 C1 数量；较短 task 只发射实际存在的 C1。v9 取 `R=3`：
 
@@ -80,7 +84,7 @@ V2(j): epoch = j + 3
 
 ![v9 三代滚动与压缩 Vector 流水示意图](../../images/pipeline/falite_v9_pipeline.png)
 
-上半图按 `epoch` 展示填充和稳态发射顺序；下半图抽出同一个 `item=j`，分别画出 `S`、`P`、`DeltaO` 的 CrossCore 扇出或聚合。红色虚框表示等待，跨泳道箭头表示 ready 方向；反向 free、Mutex 回卷和尾部排空按图内说明省略。色块宽度不表示真实耗时。
+上半图按 `epoch` 展示填充和稳态发射顺序；下半图抽出同一个 `item=j`，分别画出 `S`、`P`、`DeltaO` 的 CrossCore 分发或汇合。红色虚框表示等待，跨泳道箭头表示 ready 方向；反向 free、Mutex 槽位轮换和尾部排空按图内说明省略。色块宽度不表示真实耗时，Vector 改写发生在 V1/V2 内部，耗时变化见后文 PipeTimeline。
 
 ## 因果掩码
 
@@ -201,7 +205,7 @@ for task in tasks_of_this_mix_group:
 AIC.drain_final_s_and_odelta_free_flags()
 ```
 
-## 从 v8 到 v9
+## 压缩 Vector 分支怎样比较
 
 | 项目 | v8 | v9 |
 | --- | --- | --- |
@@ -225,11 +229,11 @@ v8→v9 同时改变 R 和 Vector，不能把两版性能差全部归因于其�
 
 ![v9 真机核内流水](../../images/pipe_trace/falite_v9_pipe.png)
 
-截图直接取自完整 PipeTimeline trace 的 `[41.778, 81.778]` μs。它展示压缩 VECTOR 后 `R=3` 的实际忙闲区间，并与 v10 保持相同的核号、泳道集合和窗口宽度。
+截图直接取自完整 PipeTimeline trace 的 `[41.778, 81.778]` μs。VECTOR 工作块比 v8 更短，但 `R=3` 仍未完全盖住等待；图片与 v10 使用相同的核号、泳道集合和窗口宽度。
 
-## 局限与下一方向
+## 流水问题与下一步
 
-压缩 Vector 减少了单个 V1/V2 的工作，但 R=3 只保留三代独立 `item`。AIC 仍可能在第四代 C1 进入前等待较早 P，[v10](../v10/README.md) 在保持压缩 Vector 和四槽 L0C 不变的条件下把 R 增至 4，用于直接判断滚动距离是否仍是限制。
+改写 Vector 后，每个 V1/V2 更短，但 `R=3` 仍未完全盖住等待。v9→v10 的直接对照显示，增至 `R=4` 后耗时下降 19.79%。[v10](../v10/README.md) 保持 Vector 写法和四槽 L0C 不变，只增加一轮提前发射，用来判断这部分收益。
 
 ## 精度与性能
 
@@ -250,12 +254,12 @@ v9→v10 只改变 R 及其派生代际槽，v10 耗时下降 19.79%。这说明
 abs(float(npu_bf16) - golden_fp32) <= 0.004 + 0.004 * abs(golden_fp32)
 ```
 
-v9 已通过 `--size 1 131072` 回归。构建和验证命令如下：
+v9 已通过 `--size 1 1 131072`、非整块 `--size 1 1 705` 和三行余数 `--size 1 1 707` 回归。构建和验证命令如下：
 
 ```bash
 cmake -S . -B build -DNPU_ARCH=dav-3510
 cmake --build build --target falite_v9 -j
-./build/Samples/2_Performance/flash_attn_lite_story/falite_v9 --core-num 1 --size 1 512
+./build/Samples/2_Performance/flash_attn_lite_story/falite_v9 --core-num 1 --size 1 1 387
 ```
 
-`S=512` 包含 4 个 Query tile，可覆盖 R=3 的填充、排空和首次代际槽回卷。
+`S=387` 包含 4 个 Query tile，最后一个 tile 有 3 行，可覆盖 R=3 的填充、排空、首次代际槽回卷以及压缩 Vector 的余数循环。
