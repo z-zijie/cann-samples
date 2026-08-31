@@ -72,6 +72,11 @@ private:
     uint16_t elementCountListTail[4];
     uint32_t listSortedNums[4];
     LocalTensor<float> tmpUbInputs[4];
+
+    // 核内流水同步 mutex（ISASI），取代原 SetFlag/WaitFlag
+    uint8_t sortMte3Mte2Mutex_;   // MTE3 -> 下一轮 MTE2
+    uint8_t sortMte2VMutex_;      // MTE2 -> V
+    uint8_t sortVMte3Mutex_;      // V -> MTE3
 };
 
 __aicore__ inline void MoeMrgsortOut::ClearCache()
@@ -124,9 +129,8 @@ __aicore__ inline void MoeMrgsortOut::UpdateMrgParam()
 __aicore__ inline void MoeMrgsortOut::CopyIn()
 {
     this->remainListNum = 0;
-    event_t eventIdMte3ToMte2 = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE3_MTE2));
-    SetFlag<HardEvent::MTE3_MTE2>(eventIdMte3ToMte2);
-    WaitFlag<HardEvent::MTE3_MTE2>(eventIdMte3ToMte2);
+    SyncMte3ToMte2(sortMte3Mte2Mutex_); // 局部 MTE3->MTE2 fence（等价原 HardEvent MTE3_MTE2 的 SetWaitFlag）
+    AscendC::Mutex::Lock<PIPE_MTE2>(sortMte2VMutex_);    // 拷贝前先锁（环形平衡：等上一轮 V 消费完输入）
     for (int64_t i = 0, j = 0; i < listNum; i++) {
         lengths[i] = Min(param->oneLoopMaxElements, listRemainElements[i]);
         if (lengths[i] > 0) {
@@ -138,13 +142,13 @@ __aicore__ inline void MoeMrgsortOut::CopyIn()
             j++;
         }
     }
+    AscendC::Mutex::Unlock<PIPE_MTE2>(sortMte2VMutex_); // producer 侧：DataCopy 之后，通知 V 输入就绪
 }
 
 __aicore__ inline void MoeMrgsortOut::MrgsortCompute()
 {
-    event_t eventIdMte2ToV = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE2_V));
-    SetFlag<HardEvent::MTE2_V>(eventIdMte2ToV);
-    WaitFlag<HardEvent::MTE2_V>(eventIdMte2ToV);
+    AscendC::Mutex::Lock<PIPE_V>(sortMte2VMutex_); // V 等 MTE2 数据就绪（原 MTE2_V）
+    AscendC::Mutex::Lock<PIPE_V>(sortVMte3Mutex_); // V 等上一轮 MTE3 写完输出（护 ubOutput 的 WAR）
     if (this->remainListNum == MERGE_LIST_TWO) {
         MrgSortSrcList sortListTail = MrgSortSrcList(tmpUbInputs[0], tmpUbInputs[1], tmpUbInputs[0], tmpUbInputs[0]);
         MrgSort<float, true>(this->tempBuffer, sortListTail, elementCountListTail, listSortedNums, validBitTail, 1);
@@ -161,6 +165,7 @@ __aicore__ inline void MoeMrgsortOut::MrgsortCompute()
                  Align(GetSortLen<float>(elementCountListTail[0]), sizeof(float)));
         listSortedNums[0] = elementCountListTail[0];
     }
+    AscendC::Mutex::Unlock<PIPE_V>(sortMte2VMutex_); // 输入消费完（环平衡，下一轮 MTE2 才能覆盖输入）
 }
 
 __aicore__ inline void MoeMrgsortOut::UpdateSortInfo()
@@ -185,6 +190,7 @@ __aicore__ inline void MoeMrgsortOut::Extract()
     AscendC::Extract(this->ubOutput1, this->ubOutput2, this->tempBuffer, Ceil(curLoopSortedNum, ONE_REPEAT_SORT_NUM));
     Muls(this->ubOutput1, this->ubOutput1, (float)-1, Align(curLoopSortedNum, sizeof(float)));
     Cast(this->ubOutputInt1, this->ubOutput1, RoundMode::CAST_ROUND, Align(curLoopSortedNum, sizeof(float)));
+    AscendC::Mutex::Unlock<PIPE_V>(sortVMte3Mutex_); // 输出就绪（原 V_MTE3 producer 侧）：须在 Extract 的 V 指令之后
 }
 
 __aicore__ inline void MoeMrgsortOut::CopyOut()
@@ -192,11 +198,10 @@ __aicore__ inline void MoeMrgsortOut::CopyOut()
     DataCopyParams intriParams;
     intriParams.blockCount = 1;
     intriParams.blockLen = curLoopSortedNum * sizeof(int32_t);
-    event_t eventIdVToMte3 = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_MTE3));
-    SetFlag<HardEvent::V_MTE3>(eventIdVToMte3);
-    WaitFlag<HardEvent::V_MTE3>(eventIdVToMte3);
+    AscendC::Mutex::Lock<PIPE_MTE3>(sortVMte3Mutex_); // MTE3 等 V 输出就绪（原 V_MTE3 consumer 侧）
     DataCopyPad(this->gmOutput1[outOffset], this->ubOutputInt1, intriParams);
     DataCopyPad(this->gmOutput2[outOffset], this->ubOutputInt2, intriParams);
+    AscendC::Mutex::Unlock<PIPE_MTE3>(sortVMte3Mutex_);
 
     outOffset += curLoopSortedNum;
 }
@@ -205,6 +210,11 @@ __aicore__ inline void MoeMrgsortOut::Init(MoeMrgsortParam *param, TPipe *tPipe)
 {
     this->param = param;
     this->allRemainElements = 0;
+
+    sortMte3Mte2Mutex_ = AscendC::AllocMutexID();
+    sortMte2VMutex_ = AscendC::AllocMutexID();
+    sortVMte3Mutex_ = AscendC::AllocMutexID();
+
     for (int64_t i = 0; i < listNum; i++) {
         offsets[i] = GetSortOffset<float>(param->perListElements * i);
         if (i == listNum - 1) {
@@ -226,6 +236,17 @@ __aicore__ inline void MoeMrgsortOut::Process()
         Extract();
         CopyOut();
     }
+
+    // 尾部 drain：按每条边的 consumer 侧真实排空，随后释放
+    // sortMte3Mte2Mutex_ 已改为 CopyIn 内局部 MTE3->MTE2 fence，不跨迭代持锁，无需 drain
+    AscendC::Mutex::Lock<PIPE_V>(sortMte2VMutex_);
+    AscendC::Mutex::Unlock<PIPE_V>(sortMte2VMutex_);
+    AscendC::Mutex::Lock<PIPE_MTE3>(sortVMte3Mutex_);
+    AscendC::Mutex::Unlock<PIPE_MTE3>(sortVMte3Mutex_);
+    AscendC::ReleaseMutexID(sortMte3Mte2Mutex_);
+    AscendC::ReleaseMutexID(sortMte2VMutex_);
+    AscendC::ReleaseMutexID(sortVMte3Mutex_);
+
     ClearCache();
 }
 #endif

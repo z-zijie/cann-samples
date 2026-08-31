@@ -67,12 +67,43 @@ __aicore__ inline int64_t AlignBytes(int64_t elementNum, int64_t bytes)
     return (elementNum * bytes + BLOCK_BYTES - 1) / BLOCK_BYTES * BLOCK_BYTES;
 }
 
-template <HardEvent event>
-__aicore__ inline void SetWaitFlag(HardEvent evt)
+// 孤立单点 fence（等价于原 SetWaitFlag 单点 fence）：附近没有可自然包住的
+// producer/consumer 流水指令，故保留空 Lock/Unlock 对表达 PIPE_A -> PIPE_B 的先后关系——
+// producer 侧 Lock/Unlock 让 A 管道在此点前的指令完成后释放，consumer 侧 Lock/Unlock 让 B 管道等待该释放。
+// 注意：此类二进制锁在「目标管道先到、源尚未执行」时存在漏等窗口，须在 950 真机重点验证时序；
+// 若异常应回退为原 SetFlag/WaitFlag 并列入豁免清单，或补预置相位。
+// 能自然包住真实流水指令的位置（如 CopyX 的 DataCopyPad、Compute 的 Duplicate 等），
+// 已在各 .asc 调用点就地 Lock/真实指令/Unlock，不再走这里的 helper。
+__aicore__ inline void SyncMte3ToMte2(uint8_t mutex)
 {
-    event_t eventId = static_cast<event_t>(GetTPipePtr()->FetchEventID(evt));
-    SetFlag<event>(eventId);
-    WaitFlag<event>(eventId);
+    AscendC::Mutex::Lock<PIPE_MTE3>(mutex);
+    AscendC::Mutex::Unlock<PIPE_MTE3>(mutex);
+    AscendC::Mutex::Lock<PIPE_MTE2>(mutex);
+    AscendC::Mutex::Unlock<PIPE_MTE2>(mutex);
+}
+
+__aicore__ inline void SyncMte3ToS(uint8_t mutex)
+{
+    AscendC::Mutex::Lock<PIPE_MTE3>(mutex);
+    AscendC::Mutex::Unlock<PIPE_MTE3>(mutex);
+    AscendC::Mutex::Lock<PIPE_S>(mutex);
+    AscendC::Mutex::Unlock<PIPE_S>(mutex);
+}
+
+__aicore__ inline void SyncSToMte2(uint8_t mutex)
+{
+    AscendC::Mutex::Lock<PIPE_S>(mutex);
+    AscendC::Mutex::Unlock<PIPE_S>(mutex);
+    AscendC::Mutex::Lock<PIPE_MTE2>(mutex);
+    AscendC::Mutex::Unlock<PIPE_MTE2>(mutex);
+}
+
+__aicore__ inline void SyncMte2ToS(uint8_t mutex)
+{
+    AscendC::Mutex::Lock<PIPE_MTE2>(mutex);
+    AscendC::Mutex::Unlock<PIPE_MTE2>(mutex);
+    AscendC::Mutex::Lock<PIPE_S>(mutex);
+    AscendC::Mutex::Unlock<PIPE_S>(mutex);
 }
 
 __simd_vf__ inline void SortVf(__ubuf__ float *inUbAddr, int64_t expertStart, uint32_t sreg, uint16_t repeatTimes)
