@@ -28,8 +28,13 @@
 #include "../tile/copy_scale_l1_to_l0b.h"
 #include "../tile/tile_mmad_mx.h"
 #include "../utils/constant.h"
+#include "mutex_id.h"
 
 namespace Block {
+
+// ISASI Mutex ID 分段见 mutex_id.h（共享 helper，避免聚合编译单元内重定义）。
+// 权重 L1 缓冲用 [0,4)，scale L1 事件用 [4,8)，L0 事件用 [0,2)->[8,10)。
+// 本文件 L0C 由 mmadParams.unitFlag 硬件同步，无 M<->FIX 软件边，故不需 L0CMutex。
 
 template <
     uint64_t L1_BUF_NUM_, class ATypeTuple_, class LayoutATuple_, class BTypeTuple_, class LayoutBTuple_, class CType_,
@@ -89,15 +94,6 @@ public:
 
     __aicore__ inline ~BlockMmad()
     {
-        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(SCALE_A_EVENT_0);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(SCALE_A_EVENT_1);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(SCALE_B_EVENT_0);
-        AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(SCALE_B_EVENT_1);
-        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(L0_EVENT_0);
-        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(L0_EVENT_1);
-        for (uint16_t index = 0; index < L1_BUFFER_NUM; ++index) {
-            AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(static_cast<AscendC::TEventID>(index));
-        }
         AscendC::SetMMLayoutTransform(false);
     }
 
@@ -176,16 +172,24 @@ private:
             auto tensorScaleBL1 = AscendC::Te::MakeTensor(
                 AscendC::Te::MakeMemPtr<AscendC::Te::Location::L1, ScaleBType>(scaleBL1Offset), layoutScaleBL1);
             if (scaleWindowIter == 0) {
-                AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(ScaleAEvent(scaleABufIdx));
-                AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(ScaleBEvent(scaleBBufIdx));
+                // scale GM->L1(MTE2<->MTE1) 复用窗口开始：等上一轮该 scale L1 被 MTE1 读完。
+                AscendC::Mutex::Lock<PIPE_MTE2>(L1Mutex(ScaleAEvent(scaleABufIdx)));
+                AscendC::Mutex::Lock<PIPE_MTE2>(L1Mutex(ScaleBEvent(scaleBBufIdx)));
                 CopyMxScaleGmToL1(
                     tensorScaleA, tensorScaleB, tensorScaleAL1, tensorScaleBL1, scaleKOffset, scaleWindowCols);
+                // scale GM->L1 写完：MTE2 释放，MTE1 占用该 scale L1（覆盖整个复用窗口）。
+                AscendC::Mutex::Unlock<PIPE_MTE2>(L1Mutex(ScaleAEvent(scaleABufIdx)));
+                AscendC::Mutex::Lock<PIPE_MTE1>(L1Mutex(ScaleAEvent(scaleABufIdx)));
+                AscendC::Mutex::Unlock<PIPE_MTE2>(L1Mutex(ScaleBEvent(scaleBBufIdx)));
+                AscendC::Mutex::Lock<PIPE_MTE1>(L1Mutex(ScaleBEvent(scaleBBufIdx)));
             }
-            AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(static_cast<AscendC::TEventID>(l1BufIdx));
+            // 权重 A GM->L1(MTE2<->MTE1) 复用窗口开始：等上一轮该 L1 被 MTE1 读完。
+            AscendC::Mutex::Lock<PIPE_MTE2>(L1Mutex(static_cast<uint16_t>(l1BufIdx)));
             CopyAGmToL1(tensorA, tensorAL1, kL1Offset, kL1Len);
             WaitConvertedWeightReady();
-            AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(0);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(0);
+            // A GM->L1 写完：MTE2 释放，MTE1 占用该 L1（覆盖整段 L1->L0 搬运）。
+            AscendC::Mutex::Unlock<PIPE_MTE2>(L1Mutex(static_cast<uint16_t>(l1BufIdx)));
+            AscendC::Mutex::Lock<PIPE_MTE1>(L1Mutex(static_cast<uint16_t>(l1BufIdx)));
             IterateMatmul(
                 kLoopIdx, tensorL0C, tensorAL1, tensorBL1, tensorScaleAL1, tensorScaleBL1, kL1Len,
                 scaleWindowIter * kL1Size_);
@@ -202,14 +206,8 @@ private:
         for (uint16_t index = 0; index < L1_BUFFER_NUM; ++index) {
             // Seed one release token per L1 weight slot for the AIV converter.
             ReleaseWeightBufferToVector();
-            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(static_cast<AscendC::TEventID>(index));
         }
-        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(SCALE_A_EVENT_0);
-        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(SCALE_A_EVENT_1);
-        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(SCALE_B_EVENT_0);
-        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(SCALE_B_EVENT_1);
-        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(L0_EVENT_0);
-        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(L0_EVENT_1);
+        // ISASI: mutex 初始未锁，首轮 Lock 即过，原 scale/L0/权重 L1 预置 SetFlag 已删除。
     }
 
     __aicore__ inline void InitL1BufferOffsets()
@@ -315,7 +313,8 @@ private:
             uint64_t realL0K = Min(kL1Len - kL0Offset, kL0Size_);
             uint64_t l0BufIdx = l0BufIdx_ & 1U;
             uint64_t l0Offset = l0BufIdx * HALF_L0_SIZE;
-            AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(static_cast<AscendC::TEventID>(l0BufIdx));
+            // L0(MTE1<->M) 生命周期：MTE1 侧等该 L0 buffer 被 M 用完。
+            AscendC::Mutex::Lock<PIPE_MTE1>(L0Mutex(static_cast<uint16_t>(l0BufIdx)));
 
             auto layoutAL0 =
                 AscendC::Te::MakeFrameLayout<AscendC::Te::NZLayoutPtn, AscendC::Std::Int<C0_SIZE>>(mL1Len_, realL0K);
@@ -329,8 +328,9 @@ private:
             CopyBL1ToL0(tensorBL0, tensorBL1, kL0Offset, realL0K);
             CopyScaleL1ToL0(tensorScaleAL1, tensorScaleBL1, kOffsetInScaleWindow + kL0Offset, realL0K, l0Offset);
 
-            AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(static_cast<AscendC::TEventID>(l0BufIdx));
-            AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(static_cast<AscendC::TEventID>(l0BufIdx));
+            // L1->L0 搬运完成：MTE1 释放，M 占用该 L0 做 Mmad。
+            AscendC::Mutex::Unlock<PIPE_MTE1>(L0Mutex(static_cast<uint16_t>(l0BufIdx)));
+            AscendC::Mutex::Lock<PIPE_M>(L0Mutex(static_cast<uint16_t>(l0BufIdx)));
 
             AscendC::Te::MmadParams mmadParams;
             mmadParams.m = static_cast<uint16_t>(mL1Len_);
@@ -344,7 +344,8 @@ private:
                     .with(mmadParams),
                 tensorL0C, tensorAL0, tensorBL0);
 
-            AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(static_cast<AscendC::TEventID>(l0BufIdx));
+            // Mmad 完成：M 释放该 L0，MTE1 可载下一轮。
+            AscendC::Mutex::Unlock<PIPE_M>(L0Mutex(static_cast<uint16_t>(l0BufIdx)));
             l0BufIdx_ ^= 1U;
         }
     }
@@ -411,12 +412,14 @@ private:
     {
         // Weight L1 slots are released every K-L1 tile; scale slots are released only after their window ends.
         ReleaseWeightBufferToVector();
-        AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(static_cast<AscendC::TEventID>(l1BufIdx));
+        // 权重 A L1 全部 L1->L0 完成：MTE1 释放该 L1。
+        AscendC::Mutex::Unlock<PIPE_MTE1>(L1Mutex(static_cast<uint16_t>(l1BufIdx)));
         l1BufIdx_ = (l1BufIdx + 1U) & L1_BUFFER_MASK;
         if (releaseScaleBuffer) {
-            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(ScaleAEvent(scaleABufIdx));
+            // scale 复用窗口结束：MTE1 释放该 scale L1。
+            AscendC::Mutex::Unlock<PIPE_MTE1>(L1Mutex(ScaleAEvent(scaleABufIdx)));
             scaleABufIdx_ = scaleABufIdx ^ 1U;
-            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(ScaleBEvent(scaleBBufIdx));
+            AscendC::Mutex::Unlock<PIPE_MTE1>(L1Mutex(ScaleBEvent(scaleBBufIdx)));
             scaleBBufIdx_ = scaleBBufIdx ^ 1U;
         }
     }

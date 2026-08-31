@@ -26,6 +26,12 @@
 namespace Block {
 using namespace AscendC;
 
+// ISASI Mutex ID 分段：每类生命周期占用独立 ID 段，避免不同事件复用同一 mutex。
+// L1(MTE2<->MTE1): [0,8) | L0(MTE1<->M): [8,16) | L0C(M<->FIX): [16,24)
+__aicore__ inline uint8_t L1Mutex(uint16_t id)  { return static_cast<uint8_t>(id); }
+__aicore__ inline uint8_t L0Mutex(uint16_t id)  { return static_cast<uint8_t>(id + 8); }
+__aicore__ inline uint8_t L0CMutex(uint16_t id) { return static_cast<uint8_t>(id + 16); }
+
 template <class AType_, class BType_, class CType_>
 class BlockMmadMx {
 public:
@@ -67,23 +73,12 @@ public:
 
     __aicore__ inline BlockMmadMx()
     {
-        #pragma unroll
-        for (uint8_t i = 0; i < MTE1_MTE2_EVENT_ID_NUM; ++i) {
-            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(i);
-        }
-        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(ZERO_FLAG);
-        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(FIRST_FLAG);
+        // ISASI: mutex 初始未锁，首轮 Lock 即过，无需预置（原预置 SetFlag 已删除）。
         AscendC::SetMMLayoutTransform(true);
     }
 
     __aicore__ inline ~BlockMmadMx()
     {
-        #pragma unroll
-        for (uint8_t i = 0; i < MTE1_MTE2_EVENT_ID_NUM; ++i) {
-            AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(i);
-        }
-        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(ZERO_FLAG);
-        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(FIRST_FLAG);
         AscendC::SetMMLayoutTransform(false);
     }
 
@@ -131,6 +126,9 @@ public:
         auto layoutL0C = AscendC::Te::MakeFrameLayout<AscendC::Te::NZLayoutPtn, AscendC::Std::Int<L0C_C0>>(curM, curN);
         auto tensorL0C = AscendC::Te::MakeTensor(AscendC::Te::MakeMemPtr<AscendC::Te::Location::L0C, float>(l0cOffset), layoutL0C);
 
+        // L0C(M<->FIX) 生命周期：M 侧在全部 Mmad 前占用 L0C（对应原 FIX_M 消费侧）。
+        AscendC::Mutex::Lock<PIPE_M>(L0CMutex(0));
+
         for (uint64_t iter0 = 0; iter0 < kL1Iter_; ++iter0) {
             uint64_t l1BufId = abL1LoopCnt_ & (l1BufNum_ - 1);
             uint64_t scaleL1BufId = scaleLoopCnt_ & 1;
@@ -141,7 +139,8 @@ public:
 
             // Scale GM -> L1 (refreshed once per scale reuse window)
             if (iter0 % (scaleKL1_ / kL1_) == 0) {
-                AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(SCALE_BUFFER_FLAG_0 + scaleL1BufId);
+                // scale-L1(MTE2<->MTE1) 复用窗口开始：等上一轮该 scale L1 buffer 被 MTE1 读完。
+                AscendC::Mutex::Lock<PIPE_MTE2>(L1Mutex(SCALE_BUFFER_FLAG_0 + scaleL1BufId));
                 uint64_t curScaleKL1 = scaleKL1_;
                 if (kL1Offset + curScaleKL1 > k_) {
                     curScaleKL1 = k_ - kL1Offset;
@@ -166,10 +165,13 @@ public:
                     AscendC::Te::MakeShape(
                         CeilDiv(curScaleKL1, MXFP_DIVISOR_SIZE_LOCAL) * MXFP_MULTI_BASE_SIZE_LOCAL, curN));
                 AscendC::Te::Copy(CopyScaleGM2L1, tensorScaleBL1, gmBlockScaleB);
+                // scale GM->L1 写完：MTE2 释放，MTE1 占用（覆盖整个复用窗口的 scale L1->L0 读）。
+                AscendC::Mutex::Unlock<PIPE_MTE2>(L1Mutex(SCALE_BUFFER_FLAG_0 + scaleL1BufId));
+                AscendC::Mutex::Lock<PIPE_MTE1>(L1Mutex(SCALE_BUFFER_FLAG_0 + scaleL1BufId));
             }
 
             // A/B GM -> L1
-            AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(l1BufId);
+            AscendC::Mutex::Lock<PIPE_MTE2>(L1Mutex(l1BufId));
             auto copyGM2L1 = AscendC::Te::MakeCopy(AscendC::Te::CopyGM2L1{});
 
             auto layoutAL1 = MakeLayoutAL1{}(curM, curGmAKL1);
@@ -184,8 +186,9 @@ public:
             auto gmBlockB = gmB.Slice(AscendC::Te::MakeCoord(kL1Offset, 0), AscendC::Te::MakeShape(curGmBKL1, curN));
             AscendC::Te::Copy(copyGM2L1, tensorBL1, gmBlockB);
 
-            AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(l1BufId);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(l1BufId);
+            // A/B GM->L1 写完：MTE2 释放，MTE1 占用该 L1 tile（覆盖整段 L1->L0 搬运）。
+            AscendC::Mutex::Unlock<PIPE_MTE2>(L1Mutex(l1BufId));
+            AscendC::Mutex::Lock<PIPE_MTE1>(L1Mutex(l1BufId));
 
             // L0 iterations
             uint64_t kL0Iter = CeilDiv(curGmBKL1, baseK_);
@@ -193,7 +196,8 @@ public:
                 auto kL0Offset = iter1 * baseK_;
                 auto curKL0 = (kL0Offset + baseK_ > curPadKL1) ? (curPadKL1 - kL0Offset) : baseK_;
                 uint64_t l0Offset = HALF_L0_SIZE * (l0PingPong_ & 0x1);
-                AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0PingPong_ & 0x1);
+                // L0(MTE1<->M) 生命周期：MTE1 侧等该 L0 ping-pong 槽被 M 用完。
+                AscendC::Mutex::Lock<PIPE_MTE1>(L0Mutex(l0PingPong_ & 0x1));
 
                 // A: L1 -> L0A
                 auto CopyL12L0A = AscendC::Te::MakeCopy(AscendC::Te::CopyL12L0A{});
@@ -241,10 +245,11 @@ public:
                 auto CopyL12L0MxScaleB = AscendC::Te::MakeCopy(::Tile::CopyL12L0MxScaleB3510{});
                 CopyL12L0MxScaleB.Call(tensorScaleBL0, tensorBlockScaleBL1, AscendC::Te::MakeCoord(kL0Offset, 0));
 
-                AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(l0PingPong_ & 0x1);
-                AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(l0PingPong_ & 0x1);
+                // L1->L0 搬运完成：MTE1 释放，M 占用该 L0 槽做 Mmad。
+                AscendC::Mutex::Unlock<PIPE_MTE1>(L0Mutex(l0PingPong_ & 0x1));
+                AscendC::Mutex::Lock<PIPE_M>(L0Mutex(l0PingPong_ & 0x1));
 
-                // MMAD (unitFlag = 0, sync with fixpipe via SetFlag/WaitFlag)
+                // MMAD (L0C sync via ISASI Mutex on M/FIX pipes)
                 bool mmadCmatrixInitVal = (iter0 == 0 && iter1 == 0);
 AscendC::Te::MmadParams mmadParams;
 mmadParams.m = static_cast<uint16_t>(curM);
@@ -258,29 +263,33 @@ AscendC::Te::Mmad(
         .with(mmadParams),
                     tensorL0C, tensorAL0, tensorBL0);
 
-                AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0PingPong_ & 0x1);
+                // Mmad 完成：M 释放该 L0 槽，MTE1 可载下一轮。
+                AscendC::Mutex::Unlock<PIPE_M>(L0Mutex(l0PingPong_ & 0x1));
                 l0PingPong_++;
             }
 
-            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(l1BufId);
+            // A/B L1 tile 全部 L1->L0 完成：MTE1 释放该 L1 tile。
+            AscendC::Mutex::Unlock<PIPE_MTE1>(L1Mutex(l1BufId));
             if ((iter0 + 1) % (scaleKL1_ / kL1_) == 0 || iter0 == kL1Iter_ - 1) {
-                AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(SCALE_BUFFER_FLAG_0 + scaleL1BufId);
+                // scale-L1 复用窗口结束：MTE1 释放该 scale L1 buffer。
+                AscendC::Mutex::Unlock<PIPE_MTE1>(L1Mutex(SCALE_BUFFER_FLAG_0 + scaleL1BufId));
                 scaleLoopCnt_++;
             }
             abL1LoopCnt_++;
         }
 
-        // Wait for Cube (Mad) to finish before fixpipe CopyOut
-        AscendC::SetFlag<AscendC::HardEvent::M_FIX>(0);
-        AscendC::WaitFlag<AscendC::HardEvent::M_FIX>(0);
+        // L0C(M<->FIX)：全部 Mmad 完成，M 释放 L0C；FIX 占用后做 fixpipe CopyOut。
+        AscendC::Mutex::Unlock<PIPE_M>(L0CMutex(0));
+        AscendC::Mutex::Lock<PIPE_FIX>(L0CMutex(0));
 
         // L0C -> GM (unitFlag = 0)
         auto CopyL0C2GM = AscendC::Te::MakeCopy(AscendC::Te::CopyL0C2GM{});
         AscendC::Te::Copy(CopyL0C2GM.with(AscendC::Te::FixpipeParams{0}), gmC, tensorL0C);
 
-        // Wait for fixpipe to finish before next Cube iteration
-        AscendC::SetFlag<AscendC::HardEvent::FIX_M>(0);
-        AscendC::WaitFlag<AscendC::HardEvent::FIX_M>(0);
+        // fixpipe 完成：FIX 释放 L0C；M 侧 drain 等待，保证下一次调用 Mmad 前 L0C 可覆盖。
+        AscendC::Mutex::Unlock<PIPE_FIX>(L0CMutex(0));
+        AscendC::Mutex::Lock<PIPE_M>(L0CMutex(0));
+        AscendC::Mutex::Unlock<PIPE_M>(L0CMutex(0));
 
         if (enableL0cPingPong_) {
             l0cPingPong_++;

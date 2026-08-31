@@ -84,15 +84,29 @@ public:
                                 AscendC::CeilAlign(kUbSize_, MXFP_DIVISOR_SIZE);
         weightInBaseOffset_ = vecWeightOutLenBytes_;
         singleWeightInLenBytes_ = vecWeightInLenBytes_ / L1_BUFFER_NUM;
+        // ISASI: UB 双 ring（V<->MTE2、V<->MTE3）每槽各一把 mutex，构造 Alloc / 析构 Release。
+#pragma unroll
+        for (uint8_t index = 0; index < static_cast<uint8_t>(L1_BUFFER_NUM); ++index) {
+            mte2VMutex_[index] = AscendC::AllocMutexID();
+            mte3VMutex_[index] = AscendC::AllocMutexID();
+        }
     }
 
     __aicore__ inline ~WeightQuantMatmulMxfp8Fp4BlockPrologue()
     {
         // Drain outstanding vector copies before releasing the final AIC/AIV handshakes.
+        // consumer 侧 Lock/Unlock 排空双 ring 生命周期锁（等价原尾部 WaitFlag）。
         int64_t buffNum = Min(idx_ + 1, static_cast<int64_t>(L1_BUFFER_NUM));
         for (int64_t index = 0; index < buffNum; ++index) {
-            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(index);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(index);
+            AscendC::Mutex::Lock<PIPE_MTE2>(mte2VMutex_[index]);
+            AscendC::Mutex::Unlock<PIPE_MTE2>(mte2VMutex_[index]);
+            AscendC::Mutex::Lock<PIPE_V>(mte3VMutex_[index]);
+            AscendC::Mutex::Unlock<PIPE_V>(mte3VMutex_[index]);
+        }
+#pragma unroll
+        for (int8_t index = 0; index < static_cast<int8_t>(L1_BUFFER_NUM); ++index) {
+            AscendC::ReleaseMutexID(mte2VMutex_[index]);
+            AscendC::ReleaseMutexID(mte3VMutex_[index]);
         }
 #pragma unroll
         for (int8_t index = 0; index < static_cast<int8_t>(L1_BUFFER_NUM); ++index) {
@@ -198,25 +212,28 @@ private:
     {
         idx_ += 1;
         ubBufIdx_ = static_cast<uint64_t>(idx_) & L1_BUFFER_MASK;
-        if (idx_ >= static_cast<int64_t>(L1_BUFFER_NUM)) {
-            AscendC::WaitFlag<AscendC::HardEvent::V_MTE2>(ubBufIdx_);
-        }
+        // V->MTE2 ring：MTE2 侧等该 4bit-UB 槽被 V 读完后复用（mutex 初始未锁，首轮直过）。
+        AscendC::Mutex::Lock<PIPE_MTE2>(mte2VMutex_[ubBufIdx_]);
         auto weight4BitTensor = MakeWeight4BitTensor();
         CopyPackedWeightGmToUb(gmWeightTensor, weight4BitTensor);
-        AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(ubBufIdx_);
-        if (idx_ >= static_cast<int64_t>(L1_BUFFER_NUM)) {
-            AscendC::WaitFlag<AscendC::HardEvent::MTE3_V>(ubBufIdx_);
-        }
-        AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(ubBufIdx_);
+        // 4bit GM->UB 写完：MTE2 释放该槽。
+        AscendC::Mutex::Unlock<PIPE_MTE2>(mte2VMutex_[ubBufIdx_]);
+        // V->MTE3 ring：V 侧等该 8bit-UB 槽被 MTE3 搬走后复用（mutex 初始未锁，首轮直过）。
+        AscendC::Mutex::Lock<PIPE_V>(mte3VMutex_[ubBufIdx_]);
+        // V 侧等 4bit-UB 写完后读取。
+        AscendC::Mutex::Lock<PIPE_V>(mte2VMutex_[ubBufIdx_]);
         auto weight8BitTensor = MakeWeight8BitTensor();
         ::Tile::ShiftW4ToW8<OutType, InType>(weight4BitTensor, weight8BitTensor);
-        AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(ubBufIdx_);
-        AscendC::SetFlag<AscendC::HardEvent::V_MTE2>(ubBufIdx_);
-        AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(ubBufIdx_);
+        // ShiftW4ToW8 完成：V 释放 8bit 写侧（供 MTE3 搬运）与 4bit 读侧（供 MTE2 复用）。
+        AscendC::Mutex::Unlock<PIPE_V>(mte3VMutex_[ubBufIdx_]);
+        AscendC::Mutex::Unlock<PIPE_V>(mte2VMutex_[ubBufIdx_]);
+        // MTE3 侧等 8bit-UB 写完后搬运至 L1。
+        AscendC::Mutex::Lock<PIPE_MTE3>(mte3VMutex_[ubBufIdx_]);
         auto l1Tensor = MakeL1WeightTensor(l1Offset);
         auto copyUB2L1 = AscendC::Te::MakeCopy(::Tile::CopyUB2L1Weight{});
         AscendC::Te::Copy(copyUB2L1, l1Tensor, weight8BitTensor);
-        AscendC::SetFlag<AscendC::HardEvent::MTE3_V>(ubBufIdx_);
+        // UB->L1 搬运完成：MTE3 释放该 8bit 槽供 V 复用。
+        AscendC::Mutex::Unlock<PIPE_MTE3>(mte3VMutex_[ubBufIdx_]);
     }
 
     __aicore__ inline auto MakeWeight4BitTensor()
@@ -278,6 +295,8 @@ private:
     uint64_t ubBufIdx_{0};
     uint64_t l1BufIdx_{0};
     int64_t idx_{-1};
+    uint8_t mte2VMutex_[L1_BUFFER_NUM] = {0};
+    uint8_t mte3VMutex_[L1_BUFFER_NUM] = {0};
     uint64_t nL1Offset_{0};
     uint64_t kL1Offset_{0};
 

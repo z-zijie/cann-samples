@@ -107,9 +107,14 @@ public:
         workspaceGlobal_.SetGlobalBuffer(reinterpret_cast<__gm__ WorkspaceType*>(params.workspaceGmAddr));
         ICachePreLoad(NUM_TWO);
         // Ensure cube to pair with vector, add sync flag in dp+sk scene
+        // ISASI: MTE3<->MTE2 紧邻单发用函数级局部 mutex 保守表达，Init 末 Release。
         if (!checkIsSkScene) {
-            AscendC::SetFlag<AscendC::HardEvent::MTE3_MTE2>(ZERO_FLAG);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE3_MTE2>(ZERO_FLAG);
+            uint8_t syncMutex = AscendC::AllocMutexID();
+            AscendC::Mutex::Lock<PIPE_MTE3>(syncMutex);
+            AscendC::Mutex::Unlock<PIPE_MTE3>(syncMutex);
+            AscendC::Mutex::Lock<PIPE_MTE2>(syncMutex);
+            AscendC::Mutex::Unlock<PIPE_MTE2>(syncMutex);
+            AscendC::ReleaseMutexID(syncMutex);
         }
     }
 
@@ -193,6 +198,8 @@ public:
     {
         UpdateAivBasicIndex();
         UpdateAivBasicBlock();
+        // ISASI: UB 单发边（MTE2<->V、V<->MTE3）用函数级局部 mutex 保守表达，operator() 末 Release。
+        uint8_t ubMutex = AscendC::AllocMutexID();
         for (uint64_t index = 0; index < aivMte2Num_; ++index) {
             UpdateAivParams(index);
             LocalTensor<float> ubAddTensor{AscendC::TPosition::VECIN, 0, AscendC::TOTAL_UB_SIZE};
@@ -201,16 +208,20 @@ public:
                 static_cast<uint32_t>(copyGm2UbParams_.burstLen * sizeof(float)),
                 static_cast<uint32_t>(copyGm2UbParams_.srcGap * sizeof(float)), 0, 0};
             if (copyGm2UbParams_.mBurst == 0) {
+                AscendC::ReleaseMutexID(ubMutex);
                 return;
             }
+            // MTE2->V：MTE2 侧包 DataCopyPad，V 侧包 Add。
+            AscendC::Mutex::Lock<PIPE_MTE2>(ubMutex);
             DataCopyPad<float>(
                 ubAddTensor, workspaceGlobal_[copyGm2UbParams_.offsetWorkspaceGM], dataCopyExtParams, {false, 0, 0, 0});
-            AscendC::SetFlag<AscendC::HardEvent::MTE2_V>(ZERO_FLAG);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE2_V>(ZERO_FLAG);
+            AscendC::Mutex::Unlock<PIPE_MTE2>(ubMutex);
 
+            AscendC::Mutex::Lock<PIPE_V>(ubMutex);
             for (uint64_t i = 1; i < copyGm2UbParams_.kCnt; ++i) {
                 Add(ubAddTensor, ubAddTensor, ubAddTensor[i * copyGm2UbParams_.burstLen], copyGm2UbParams_.burstLen);
             }
+            AscendC::Mutex::Unlock<PIPE_V>(ubMutex);
 
             DataCopyExtParams ub2gmExtParams{
                 static_cast<uint16_t>(copyUb2GmParams_.mLength),
@@ -219,11 +230,15 @@ public:
                 static_cast<uint32_t>(copyUb2GmParams_.dstGap * sizeof(OutType)), 0};
 
             LocalTensor<OutType> ubCastDst{AscendC::TPosition::VECIN, 0, AscendC::TOTAL_UB_SIZE};
+            // V->MTE3：V 侧包 Cast，MTE3 侧包 DataCopyPad。
+            AscendC::Mutex::Lock<PIPE_V>(ubMutex);
             Cast(ubCastDst, ubAddTensor, RoundMode::CAST_RINT, copyGm2UbParams_.burstLen);
-            AscendC::SetFlag<AscendC::HardEvent::V_MTE3>(ZERO_FLAG);
-            AscendC::WaitFlag<AscendC::HardEvent::V_MTE3>(ZERO_FLAG);
+            AscendC::Mutex::Unlock<PIPE_V>(ubMutex);
+            AscendC::Mutex::Lock<PIPE_MTE3>(ubMutex);
             DataCopyPad<OutType, PaddingMode::Compact>(cGlobal_[copyUb2GmParams_.offsetCGm], ubCastDst, ub2gmExtParams);
+            AscendC::Mutex::Unlock<PIPE_MTE3>(ubMutex);
         }
+        AscendC::ReleaseMutexID(ubMutex);
     }
 };
 } // namespace Block

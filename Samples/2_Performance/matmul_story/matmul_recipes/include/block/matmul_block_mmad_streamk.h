@@ -19,6 +19,7 @@
 #include "include/tensor_api/tensor.h"
 #include "../policy/dispatch_policy.h"
 #include "../utils/constant.h"
+#include "mutex_id.h"
 
 namespace Block {
 using namespace AscendC;
@@ -98,23 +99,11 @@ public:
         bL1OneBuffer_ = nL1_ * kL1_;
         l0PingPong_ = 0;
         abL1LoopCnt_ = 0;
-// Set a synchronized variable inside a for loop
-#pragma unroll
-        for (uint8_t i = 0; i < MTE1_MTE2_EVENT_ID_NUM; ++i) {
-            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(i);
-        }
-        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(ZERO_FLAG);
-        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(FIRST_FLAG);
+        // ISASI: mutex 初始未锁，首轮 Lock 即过，原预置 SetFlag 已删除。
     }
 
     __aicore__ inline ~BlockMmad()
     {
-#pragma unroll
-        for (uint8_t i = 0; i < MTE1_MTE2_EVENT_ID_NUM; ++i) {
-            AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(i);
-        }
-        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(ZERO_FLAG);
-        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(FIRST_FLAG);
     }
 
     template <typename TensorC, typename TensorA, typename TensorB, typename TensorWorkSpace>
@@ -138,7 +127,8 @@ public:
             // Switch on pingpong, now only support double buffer in streamk
             uint64_t l1BufId = abL1LoopCnt_ & (L1_BUFFER_NUM - 1);
             uint64_t offsetAL1 = aL1OneBuffer_ * l1BufId * sizeof(TypeA);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(l1BufId);
+            // A GM->L1(MTE2<->MTE1) 复用窗口开始：等上一轮该 A-L1 被 MTE1 读完。
+            AscendC::Mutex::Lock<PIPE_MTE2>(L1Mutex(l1BufId));
             uint64_t offsetBL1 = (bL1Init_ + bL1OneBuffer_ * l1BufId) * sizeof(TypeB);
             // A GM->L1
             auto layoutAL1 = MakeLayoutAL1{}(static_cast<int64_t>(curML1), static_cast<int64_t>(curKL1));
@@ -149,10 +139,12 @@ public:
             // Copy AL1
             AscendC::Te::Copy(copyGM2L1, tensorAL1, gmTileA);
 
-            AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(l1BufId);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(l1BufId);
+            // A GM->L1 写完：MTE2 释放，MTE1 占用该 A-L1（覆盖整段 L1->L0 搬运）。
+            AscendC::Mutex::Unlock<PIPE_MTE2>(L1Mutex(l1BufId));
+            AscendC::Mutex::Lock<PIPE_MTE1>(L1Mutex(l1BufId));
 
-            AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(l1BufId + L1_EVENT_ID_OFFSET);
+            // B GM->L1(MTE2<->MTE1) 复用窗口开始：等上一轮该 B-L1 被 MTE1 读完。
+            AscendC::Mutex::Lock<PIPE_MTE2>(L1Mutex(l1BufId + L1_EVENT_ID_OFFSET));
             // B GM->L1
             auto layoutBL1 = MakeLayoutBL1{}(static_cast<int64_t>(curKL1), static_cast<int64_t>(curNL1));
             auto tensorBL1 = AscendC::Te::MakeTensor(
@@ -160,14 +152,16 @@ public:
             auto gmTileB = gmB.Slice(AscendC::Te::MakeCoord(iter0 * kL1_, 0), AscendC::Te::MakeShape(curKL1, curNL1));
             // Copy BL1
             AscendC::Te::Copy(copyGM2L1, tensorBL1, gmTileB);
-            AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(l1BufId + L1_EVENT_ID_OFFSET);
+            // B GM->L1 写完：MTE2 释放该 B-L1（MTE1 占用延后到首个 L0 切片前）。
+            AscendC::Mutex::Unlock<PIPE_MTE2>(L1Mutex(l1BufId + L1_EVENT_ID_OFFSET));
 
             // Loop of k in L0
             uint64_t kL0Iter = (curKL1 + baseK_ - 1) / baseK_;
             for (uint64_t iter1 = 0; iter1 < kL0Iter; ++iter1) {
                 uint64_t curK0 = (iter1 + 1 == kL0Iter) ? (curKL1 - iter1 * baseK_) : baseK_;
                 uint64_t l0Offset = HALF_L0_SIZE * (l0PingPong_ & 0x1);
-                AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0PingPong_ & 0x1);
+                // L0(MTE1<->M) 生命周期：MTE1 侧等该 L0 buffer 被 M 用完。
+                AscendC::Mutex::Lock<PIPE_MTE1>(L0Mutex(l0PingPong_ & 0x1));
                 // A L1->L0
                 auto copyL12L0A = AscendC::Te::MakeCopy(AscendC::Te::CopyL12L0A{});
                 auto copyL12L0B = AscendC::Te::MakeCopy(AscendC::Te::CopyL12L0B{});
@@ -181,7 +175,8 @@ public:
                 AscendC::Te::Copy(copyL12L0A, tensorAL0, tensorBlockAL1);
 
                 if (iter1 == 0) {
-                    AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(l1BufId + L1_EVENT_ID_OFFSET);
+                    // B GM->L1 已完成：MTE1 占用该 B-L1（覆盖整段 L1->L0 搬运）。
+                    AscendC::Mutex::Lock<PIPE_MTE1>(L1Mutex(l1BufId + L1_EVENT_ID_OFFSET));
                 }
                 // B L1->L0
                 auto layoutBL0 =
@@ -193,8 +188,9 @@ public:
                     tensorBL1.Slice(AscendC::Te::MakeCoord(iter1 * baseK_, 0), AscendC::Te::MakeShape(curK0, curNL1));
                 AscendC::Te::Copy(copyL12L0B, tensorBL0, tensorBlockBL1);
 
-                AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(l0PingPong_ & 0x1);
-                AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(l0PingPong_ & 0x1);
+                // L1->L0 搬运完成：MTE1 释放，M 占用该 L0 做 Mmad。
+                AscendC::Mutex::Unlock<PIPE_MTE1>(L0Mutex(l0PingPong_ & 0x1));
+                AscendC::Mutex::Lock<PIPE_M>(L0Mutex(l0PingPong_ & 0x1));
 
                 // Original mmad parameters
                 uint8_t unitFlag =
@@ -207,7 +203,8 @@ public:
                         .with(mmadParams),
                     tensorL0C, tensorAL0, tensorBL0);
 
-                AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0PingPong_ & 0x1);
+                // Mmad 完成：M 释放该 L0，MTE1 可载下一轮。
+                AscendC::Mutex::Unlock<PIPE_M>(L0Mutex(l0PingPong_ & 0x1));
                 l0PingPong_++;
             }
             if (iter0 + 1 == curKL1Iter) {
@@ -220,8 +217,9 @@ public:
                     AscendC::Te::Copy(CopyL0C2GM.with(AscendC::Te::FixpipeParams(FINAL_ACCUMULATION)), gmC, tensorL0C);
                 }
             }
-            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(l1BufId);
-            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(l1BufId + L1_EVENT_ID_OFFSET);
+            // A/B L1 全部 L1->L0 完成：MTE1 释放该 A-L1 / B-L1。
+            AscendC::Mutex::Unlock<PIPE_MTE1>(L1Mutex(l1BufId));
+            AscendC::Mutex::Unlock<PIPE_MTE1>(L1Mutex(l1BufId + L1_EVENT_ID_OFFSET));
             abL1LoopCnt_++;
         }
     }

@@ -24,6 +24,7 @@
 #include "../tile/copy_scale_l1_to_l0a.h"
 #include "../tile/copy_scale_l1_to_l0b.h"
 #include "../tile/pad_mx_kl1.h"
+#include "mutex_id.h"
 
 template <uint64_t FULL_LOAD_MODE_, uint64_t STAGES_>
 struct QuantMatmulMxKTailStepwiseCopyout {
@@ -135,27 +136,12 @@ public:
 
     __aicore__ inline BlockMmad()
     {
-// Prime all producer/consumer events so the first iteration can enter
-// the pipelined copy-and-compute loop without special-case branches.
-#pragma unroll
-        for (uint8_t i = 0; i < MTE1_MTE2_EVENT_ID_NUM_MX; ++i) {
-            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(i);
-        }
-        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(ZERO_FLAG);
-        AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(FIRST_FLAG);
+        // ISASI: mutex 初始未锁，首轮 Lock 即过，无需预置（原预置 SetFlag 已删除）。
         AscendC::SetMMLayoutTransform(true);
     }
 
     __aicore__ inline ~BlockMmad()
     {
-// Drain every in-flight transfer before leaving so later blocks do not
-// observe stale event state from the previous pipeline instance.
-#pragma unroll
-        for (uint8_t i = 0; i < MTE1_MTE2_EVENT_ID_NUM_MX; ++i) {
-            AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(i);
-        }
-        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(ZERO_FLAG);
-        AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(FIRST_FLAG);
         AscendC::SetMMLayoutTransform(false);
     }
 
@@ -228,7 +214,8 @@ public:
             if (scaleWindowIter == 0) {
                 // Scale fragments are refreshed only when the current K chunk
                 // enters a new scale reuse window.
-                AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(SCALE_BUFFER_FLAG_0 + scaleL1BufId);
+                // scale-L1(MTE2<->MTE1) 复用窗口开始：等上一轮该 scale L1 buffer 被 MTE1 读完。
+                AscendC::Mutex::Lock<PIPE_MTE2>(L1Mutex(SCALE_BUFFER_FLAG_0 + scaleL1BufId));
 
                 uint64_t curScaleKL1 = scaleKL1_;
                 if (kL1Offset + curScaleKL1 > k_) {
@@ -257,9 +244,13 @@ public:
                     AscendC::Te::MakeCoord(kL1Offset / MXFP_GROUP_SIZE, 0),
                     AscendC::Te::MakeShape(CeilDiv(curScaleKL1, MXFP_DIVISOR_SIZE) * MXFP_MULTI_BASE_SIZE, curN));
                 AscendC::Te::Copy(CopyScaleGM2L1, tensorScaleBL1, gmBlockScaleB);
+                // scale GM->L1 写完：MTE2 释放，MTE1 占用（覆盖整个复用窗口的 scale L1->L0 读）。
+                AscendC::Mutex::Unlock<PIPE_MTE2>(L1Mutex(SCALE_BUFFER_FLAG_0 + scaleL1BufId));
+                AscendC::Mutex::Lock<PIPE_MTE1>(L1Mutex(SCALE_BUFFER_FLAG_0 + scaleL1BufId));
             }
 
-            AscendC::WaitFlag<AscendC::HardEvent::MTE1_MTE2>(l1BufId);
+            // A/B GM->L1 复用窗口开始：等上一轮该 L1 tile 被 MTE1 读完。
+            AscendC::Mutex::Lock<PIPE_MTE2>(L1Mutex(l1BufId));
             auto copyGM2L1 = AscendC::Te::MakeCopy(AscendC::Te::CopyGM2L1{});
             auto layoutAL1 = MakeLayoutAL1{}(curM, curPadKL1);
             auto tensorAL1 = AscendC::Te::MakeTensor(
@@ -275,8 +266,9 @@ public:
             ::Tile::PadMxKBL1::PadZero(tensorBL1, gmBlockB);
             AscendC::Te::Copy(copyGM2L1, tensorBL1, gmBlockB);
 
-            AscendC::SetFlag<AscendC::HardEvent::MTE2_MTE1>(l1BufId);
-            AscendC::WaitFlag<AscendC::HardEvent::MTE2_MTE1>(l1BufId);
+            // A/B GM->L1 写完：MTE2 释放，MTE1 占用该 L1 tile（覆盖整段 L1->L0 搬运）。
+            AscendC::Mutex::Unlock<PIPE_MTE2>(L1Mutex(l1BufId));
+            AscendC::Mutex::Lock<PIPE_MTE1>(L1Mutex(l1BufId));
 
             uint64_t kL0Iter = CeilDiv(curGmBKL1, baseK_);
             // Use the same N partition for first-KL1 initialization and K-tail stepwise copyout.
@@ -307,7 +299,8 @@ public:
                     bool isFinalAccumulation = (iter0 + 1 == kL1Iter_) && (iter1 + 1 == kL0Iter);
                     uint64_t l0BufId = l0BufferIndex_ & 0x1;
                     uint64_t l0Offset = HALF_L0_SIZE * l0BufId;
-                    AscendC::WaitFlag<AscendC::HardEvent::M_MTE1>(l0BufId);
+                    // L0(MTE1<->M) 生命周期：MTE1 侧等该 L0 ping-pong 槽被 M 用完。
+                    AscendC::Mutex::Lock<PIPE_MTE1>(L0Mutex(l0BufId));
 
                     auto CopyL12L0A = AscendC::Te::MakeCopy(AscendC::Te::CopyL12L0A{});
                     auto CopyL12L0B = AscendC::Te::MakeCopy(AscendC::Te::CopyL12L0B{});
@@ -348,8 +341,9 @@ public:
                     CopyL12L0MxScaleB3510.Call(
                         tensorScaleBL0, tensorBlockScaleBL1, AscendC::Te::MakeCoord(kL0Offset, 0));
 
-                    AscendC::SetFlag<AscendC::HardEvent::MTE1_M>(l0BufId);
-                    AscendC::WaitFlag<AscendC::HardEvent::MTE1_M>(l0BufId);
+                    // L1->L0 搬运完成：MTE1 释放，M 占用该 L0 槽做 Mmad。
+                    AscendC::Mutex::Unlock<PIPE_MTE1>(L0Mutex(l0BufId));
+                    AscendC::Mutex::Lock<PIPE_M>(L0Mutex(l0BufId));
                     uint8_t mmadUnitFlag = isFinalAccumulation ? FINAL_ACCUMULATION : NON_FINAL_ACCUMULATION;
                     bool mmadCmatrixInitVal = (iter0 == 0 && iter1 == 0);
                     auto tensorBlockL0C = tensorL0C.Slice(
@@ -372,16 +366,19 @@ public:
                         AscendC::Te::Copy(
                             CopyL0C2GM.with(AscendC::Te::FixpipeParams{FINAL_ACCUMULATION}), gmCBlock, tensorBlockL0C);
                     }
-                    AscendC::SetFlag<AscendC::HardEvent::M_MTE1>(l0BufId);
+                    // Mmad 完成：M 释放该 L0 槽，MTE1 可载下一轮。
+                    AscendC::Mutex::Unlock<PIPE_M>(L0Mutex(l0BufId));
                     l0BufferIndex_++;
                 }
             }
 
             // Release the current L1 slot only after every L0 slice derived
             // from it has completed its MMAD accumulation.
-            AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(l1BufId);
+            // A/B L1 tile 全部 L1->L0 完成：MTE1 释放该 L1 tile。
+            AscendC::Mutex::Unlock<PIPE_MTE1>(L1Mutex(l1BufId));
             if (scaleWindowIter + 1 == scaleL1Window_ || iter0 == kL1Iter_ - 1) {
-                AscendC::SetFlag<AscendC::HardEvent::MTE1_MTE2>(SCALE_BUFFER_FLAG_0 + scaleL1BufId);
+                // scale-L1 复用窗口结束：MTE1 释放该 scale L1 buffer。
+                AscendC::Mutex::Unlock<PIPE_MTE1>(L1Mutex(SCALE_BUFFER_FLAG_0 + scaleL1BufId));
                 scaleLoopCnt_++;
                 scaleWindowIter = 0;
             } else {
