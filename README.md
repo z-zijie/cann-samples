@@ -1,7 +1,7 @@
 <h1 align="center">CANN-SAMPLES</h1>
 
 <p align="center">
-  昇腾 CANN 算子领域的实战样例仓库<br>
+  昇腾 CANN 样例仓库<br>
   提供高性能实现示例与体系化调优知识库，从入门概念到极致性能，覆盖 MatMul、MoE、Attention 等核心算子的完整优化链路
 </p>
 
@@ -26,7 +26,7 @@
 
 ## 🚀概述
 
-`cann-samples` 是 [CANN](https://hiascend.com/software/cann)（Compute Architecture for Neural Networks）算子领域的实战样例仓库，提供高性能实现示例与体系化调优知识库。
+`cann-samples` 是 [CANN](https://hiascend.com/software/cann)（Compute Architecture for Neural Networks）实战样例仓库，提供高性能实现示例与体系化调优知识库。
 
 本仓已集成代码仓库智能体，点击 [![Zread](https://img.shields.io/badge/Zread-Ask_AI-_.svg?style=flat&color=0052D9&labelColor=000000&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB3aWR0aD0iMTYiIGhlaWdodD0iMTYiIHZpZXdCb3g9IjAgMCAxNiAxNiIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTQuOTYxNTYgMS42MDAxSDIuMjQxNTZDMS44ODgxIDEuNjAwMSAxLjYwMTU2IDEuODg2NjQgMS42MDE1NiAyLjI0MDFWNC45NjAxQzEuNjAxNTYgNS4zMTM1NiAxLjg4ODEgNS42MDAxIDIuMjQxNTYgNS42MDAxSDQuOTYxNTZDNS4zMTUwMiA1LjYwMDEgNS42MDE1NiA1LjMxMzU2IDUuNjAxNTYgNC45NjAxVjIuMjQwMUM1LjYwMTU2IDEuODg2NjQgNS4zMTUwMiAxLjYwMDEgNC45NjE1NiAxLjYwMDFaIiBmaWxsPSIjZmZmIi8%2BCjxwYXRoIGQ9Ik00Ljk2MTU2IDEwLjM5OTlIMi4yNDE1NkMxLjg4ODEgMTAuMzk5OSAxLjYwMTU2IDEwLjY4NjQgMS42MDE1NiAxMS4wMzk5VjEzLjc1OTlDMS42MDE1NiAxNC4xMTM0IDEuODg4MSAxNC4zOTk5IDIuMjQxNTYgMTQuMzk5OUg0Ljk2MTU2QzUuMzE1MDIgMTQuMzk5OSA1LjYwMTU2IDE0LjExMzQgNS42MDE1NiAxMy43NTk5VjExLjAzOTlDNS42MDE1NiAxMC42ODY0IDUuMzE1MDIgMTAuMzk5OSA0Ljk2MTU2IDEwLjM5OTlaIiBmaWxsPSIjZmZmIi8%2BCjxwYXRoIGQ9Ik0xMy43NTg0IDEuNjAwMUgxMS4wMzg0QzEwLjY4NSAxLjYwMDEgMTAuMzk4NCAxLjg4NjY0IDEwLjM5ODQgMi4yNDAxVjQuOTYwMUMxMC4zOTg0IDUuMzEzNTYgMTAuNjg1IDUuNjAwMSAxMS4wMzg0IDUuNjAwMUgxMy43NTg0QzE0LjExMTkgNS42MDAxIDE0LjM5ODQgNS4zMTM1NiAxNC4zOTg0IDQuOTYwMVYyLjI0MDFDMTQuMzk4NCAxLjg4NjY0IDE0LjExMTkgMS42MDAxIDEzLjc1ODQgMS42MDAxWiIgZmlsbD0iI2ZmZiIvPgo8cGF0aCBkPSJNNCAxMkwxMiA0TDQgMTJaIiBmaWxsPSIjZmZmIi8%2BCjxwYXRoIGQ9Ik00IDEyTDEyIDQiIHN0cm9rZT0iI2ZmZiIgc3Ryb2tlLXdpZHRoPSIxLjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgo8L3N2Zz4K&logoColor=ffffff)](https://zread.ai/hicann/cann-samples) 徽章，进入其专属页面，开启在线智能代码学习与知识问答体验！
 
@@ -237,6 +237,12 @@ python3 scripts/check_env.py
 ```
 ├── Samples                                  # 样例目录
 │   ├── 0_Introduction                       # 入门样例
+│   │   ├── 01_simd_cpp_api                  # SIMD C++ API 入门样例
+│   │   ├── 02_simd_c_api                    # SIMD C API 入门样例
+│   │   ├── 03_simt_api                      # SIMT API 入门样例
+│   │   ├── 04_aicpu                         # AI CPU 算子入门样例
+│   │   ├── 05_simd_simt_hybrid              # SIMD/SIMT 混合编程入门样例
+│   │   └── 99_system                        # CANN组件样例
 │   ├── 1_Features                           # 功能特性样例
 │   │   ├── memory_optimization              # 访存优化方法
 │   │   ├── instruction_optimization         # 指令优化方法
