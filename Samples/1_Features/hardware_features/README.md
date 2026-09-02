@@ -19,3 +19,6 @@
 
 ### [mem_bandwidth](./mem_bandwidth)
 测量 NPU 的访存带宽，覆盖纯读、读写拷贝、读+计算+写三种数据流，统一采用 `TPipe + TQue` 多 buffer 流水范式，通过成对扫描 UB tile 大小与 buffer 数，观察带宽随搬运粒度与缓冲深度的变化。带宽由 `msprof` 采集 `Task Duration` 换算。
+
+### [pcie_through](./pcie_through)
+演示 PCIe Through 特性：以 GatherV2 算子为例，通过 `aclrtMallocHost` + `aclrtHostRegisterV2` 将 Host 内存映射到 Device 地址空间，算子自动感知并选择 PCIe 安全的 SIMD Tiling 路径，省去 H2D/D2H 显式拷贝。
