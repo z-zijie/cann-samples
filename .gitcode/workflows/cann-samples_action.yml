@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
   pull_request_comment:
     types: [created]
-    branches: [ '*' ]
+    branches: [ '**' ]
     comments: [ '^(?:\/)?compile*' ]
   pr_comment:
     types: [ created ]
@@ -47,7 +47,7 @@ stages:
             run: |
               echo "Compile_Ascend_X86: ${{ steps.revise_image.outputs.Compile_Ascend_X86  }}"
         if: "${{ default() }}"
-        runs-on: [dedicate-hosted, x64, small]
+        runs-on: [self-hosted, arch=x64, spec=small]
         container:
           image: swr.cn-north-4.myhuaweicloud.com/ci_cann/ubuntu20.04.05_x86:k8s_v1.1006
       JOB_pre:
