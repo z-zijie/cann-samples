@@ -710,8 +710,14 @@ __aicore__ inline void FABlockVecInfer<TEMPLATE_ARGS>::Bmm2FDOut(LocalTensor<T> 
     if constexpr (BaseClass::splitD){
         dSizeAligned64 = constInfo.dBasicBlock;
     }
-    SetFlag<HardEvent::V_MTE3>(this->vToMte3Id[runInfo.taskIdMod2]);
-    WaitFlag<HardEvent::V_MTE3>(this->vToMte3Id[runInfo.taskIdMod2]);
+    {
+        uint32_t vToMte3MutexId = AscendC::AllocMutexID();  // V_MTE3 自排空：V 写 vec2ResUb → MTE3 搬出
+        AscendC::Mutex::Lock<PIPE_V>(vToMte3MutexId);
+        AscendC::Mutex::Unlock<PIPE_V>(vToMte3MutexId);
+        AscendC::Mutex::Lock<PIPE_MTE3>(vToMte3MutexId);
+        AscendC::Mutex::Unlock<PIPE_MTE3>(vToMte3MutexId);
+        AscendC::ReleaseMutexID(vToMte3MutexId);
+    }
     attenOut = vec2ResUb;
 
     DataCopyExtParams dataCopyParams;

@@ -128,9 +128,8 @@ public:
     __aicore__ inline void Init() {
         if ASCEND_IS_AIC {
             if constexpr (syncType == SyncType::INNER_CORE_SYNC) {
-                p2cEventId_ = GetTPipePtr()->AllocEventID<BufferInfo<bufferType>::EventP2C>(); // 确保只能被调用一次
-                c2pEventId_ = GetTPipePtr()->AllocEventID<BufferInfo<bufferType>::EventC2P>();
-                SetFlag<BufferInfo<bufferType>::EventC2P>(c2pEventId_);
+                // L1/L0A/L0B/L0C 统一使用 ISASI Mutex（初始未锁，无需预置 token）
+                mutexId_ = AscendC::AllocMutexID();
             }
         }
     }
@@ -138,9 +137,8 @@ public:
     __aicore__ inline void UnInit() {
         if ASCEND_IS_AIC {
             if constexpr (syncType == SyncType::INNER_CORE_SYNC) {
-                WaitFlag<BufferInfo<bufferType>::EventC2P>(c2pEventId_);
-                GetTPipePtr()->ReleaseEventID<BufferInfo<bufferType>::EventP2C>(p2cEventId_); // 确保只能被调用一次
-                GetTPipePtr()->ReleaseEventID<BufferInfo<bufferType>::EventC2P>(c2pEventId_);
+                // L1/L0A/L0B/L0C 统一释放 MutexID
+                AscendC::ReleaseMutexID(mutexId_);
             }
         }
     }
@@ -149,10 +147,27 @@ public:
     __aicore__ inline void Wait() {
         if ASCEND_IS_AIC {
             if constexpr (syncType == SyncType::INNER_CORE_SYNC) {
+                // L1: Wait<P2C>→Lock<PIPE_MTE1>, Wait<C2P>→Lock<PIPE_MTE2>
+                // L0A/L0B: Wait<P2C>→Lock<PIPE_M>, Wait<C2P>→Lock<PIPE_MTE1>
+                // L0C: Wait<P2C>→Lock<PIPE_FIX>, Wait<C2P>→Lock<PIPE_M>
                 if constexpr (EventType == BufferInfo<bufferType>::EventP2C) {
-                    WaitFlag<BufferInfo<bufferType>::EventP2C>(p2cEventId_); // 消费者等待生产者完成生产
+                    // 消费者读前上锁（Lock<消费者 PIPE>）
+                    if constexpr (bufferType == BufferType::L1) {
+                        AscendC::Mutex::Lock<PIPE_MTE1>(mutexId_);
+                    } else if constexpr (bufferType == BufferType::L0C) {
+                        AscendC::Mutex::Lock<PIPE_FIX>(mutexId_);
+                    } else {
+                        AscendC::Mutex::Lock<PIPE_M>(mutexId_);
+                    }
                 } else {
-                    WaitFlag<BufferInfo<bufferType>::EventC2P>(c2pEventId_); // 生产者等待消费者完成消费
+                    // 生产者写前上锁（Lock<生产者 PIPE>）
+                    if constexpr (bufferType == BufferType::L1) {
+                        AscendC::Mutex::Lock<PIPE_MTE2>(mutexId_);
+                    } else if constexpr (bufferType == BufferType::L0C) {
+                        AscendC::Mutex::Lock<PIPE_M>(mutexId_);
+                    } else {
+                        AscendC::Mutex::Lock<PIPE_MTE1>(mutexId_);
+                    }
                 }
             }
         }
@@ -162,29 +177,28 @@ public:
     __aicore__ inline void Set() {
         if ASCEND_IS_AIC {
             if constexpr (syncType == SyncType::INNER_CORE_SYNC) {
+                // L1: Set<P2C>→Unlock<PIPE_MTE2>, Set<C2P>→Unlock<PIPE_MTE1>
+                // L0A/L0B: Set<P2C>→Unlock<PIPE_MTE1>, Set<C2P>→Unlock<PIPE_M>
+                // L0C: Set<P2C>→Unlock<PIPE_M>, Set<C2P>→Unlock<PIPE_FIX>
                 if constexpr (EventType == BufferInfo<bufferType>::EventP2C) {
-                    SetFlag<BufferInfo<bufferType>::EventP2C>(p2cEventId_); // 生产者通知消费者已完成生产
+                    // 生产者写完解锁（Unlock<生产者 PIPE>）
+                    if constexpr (bufferType == BufferType::L1) {
+                        AscendC::Mutex::Unlock<PIPE_MTE2>(mutexId_);
+                    } else if constexpr (bufferType == BufferType::L0C) {
+                        AscendC::Mutex::Unlock<PIPE_M>(mutexId_);
+                    } else {
+                        AscendC::Mutex::Unlock<PIPE_MTE1>(mutexId_);
+                    }
                 } else {
-                    SetFlag<BufferInfo<bufferType>::EventC2P>(c2pEventId_); // 消费者通知生产者已完成消费
+                    // 消费者读完解锁（Unlock<消费者 PIPE>）
+                    if constexpr (bufferType == BufferType::L1) {
+                        AscendC::Mutex::Unlock<PIPE_MTE1>(mutexId_);
+                    } else if constexpr (bufferType == BufferType::L0C) {
+                        AscendC::Mutex::Unlock<PIPE_FIX>(mutexId_);
+                    } else {
+                        AscendC::Mutex::Unlock<PIPE_M>(mutexId_);
+                    }
                 }
-            }
-        }
-    }
-
-    __aicore__ inline void SetEventID() {
-        if ASCEND_IS_AIC {
-            p2cEventId_ = GetTPipePtr()->AllocEventID<BufferInfo<bufferType>::EventP2C>(); // 确保只能被调用一次
-            c2pEventId_ = GetTPipePtr()->AllocEventID<BufferInfo<bufferType>::EventC2P>();
-        }
-    }
-
-    template<HardEvent EventType>
-    __aicore__ inline TEventID GetEventID() {
-        if ASCEND_IS_AIC {
-            if constexpr (EventType == BufferInfo<bufferType>::EventP2C) {
-                return p2cEventId_; // 生产者通知消费者已完成生产
-            } else {
-                return c2pEventId_; // 消费者通知生产者已完成消费
             }
         }
     }
@@ -257,8 +271,7 @@ public:
 private:
     TensorType tensor_;
     uint32_t size_;
-    TEventID p2cEventId_;
-    TEventID c2pEventId_;
+    uint32_t mutexId_;       // L1/L0A/L0B/L0C ISASI Mutex ID（每物理 buffer 一把，拷贝共享）
     uint32_t id0_;      // 用作正向同步：生产者通知消费者，或者消费者等待生产者；
     uint32_t id1_;      // 用作反向同步：消费者通知生产者，或者生产者等待消费者；
 };

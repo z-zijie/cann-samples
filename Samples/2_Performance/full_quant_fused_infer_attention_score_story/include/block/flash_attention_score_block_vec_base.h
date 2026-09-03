@@ -131,8 +131,7 @@ public:
     TQue<QuePosition::VECIN, 1> attenMaskInQue[2];
     TQue<QuePosition::VECIN, 1> pseInQue;
     TBuf<> stage2OutBuf;
-    TEventID mte3ToVId[2]; // 存放MTE3_V的eventId, 2份表示可能存在pingpong
-    TEventID vToMte3Id[2]; // 存放V_MTE3的eventId, 2份表示可能存在pingpong
+    // vToMte3Id 已全部改为 V_MTE3 自排空局部 Mutex（每站点 AllocMutexID/ReleaseMutexID），成员移除
     TBuf<> softmaxMaxBuf[3];
     TBuf<> softmaxSumBuf[3];
     TBuf<> softmaxExpBuf[3];
@@ -148,6 +147,7 @@ public:
     AttenMaskInfo *attenMaskInfoPtr;
     T negativeFloatScalar;
     T positiveFloatScalar;
+    uint32_t mte3ToVMutex[2];  // MTE3_V 跨阶段同步 Mutex ID，2份支持pingpong
     // Bmm2阶段subblock在Gm上的偏移
     int64_t bmm2SubBlockOffset = 0;
     int64_t vec2SubBlockOffset = 0;
@@ -389,9 +389,12 @@ TEMPLATES_DEF_BASE_NO_DEFAULT
 __aicore__ inline bool FABlockVecBase<TEMPLATE_BASE_ARGS>::SoftmaxInvalidLineCheck(
     LocalTensor<T> &maxUb, uint32_t negativeIntScalar, SoftMaxShapeInfo &softmaxShapeInfo)
 {
-    event_t eventIdVToS = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_S));
-    SetFlag<HardEvent::V_S>(eventIdVToS);
-    WaitFlag<HardEvent::V_S>(eventIdVToS);
+    uint32_t vToSMutexId = AscendC::AllocMutexID();  // V_S 自排空：V 写 max → S 读 max
+    AscendC::Mutex::Lock<PIPE_V>(vToSMutexId);
+    AscendC::Mutex::Unlock<PIPE_V>(vToSMutexId);
+    AscendC::Mutex::Lock<PIPE_S>(vToSMutexId);
+    AscendC::Mutex::Unlock<PIPE_S>(vToSMutexId);
+    AscendC::ReleaseMutexID(vToSMutexId);
     bool isUpdateNeedCheck = false;
     SetMaskCount();
     SetVectorMask<float, MaskMode::COUNTER>(0, softmaxShapeInfo.srcK);
@@ -436,9 +439,12 @@ __aicore__ inline void FABlockVecBase<TEMPLATE_BASE_ARGS>::BroadCastAndCopyOut(
     // Copy sum to gm
     LocalTensor<float> sumTensor = softmaxSumBuf[runInfo.multiCoreIdxMod3].template Get<float>();
     if constexpr (useNz) {
-        event_t v2Mte3Id = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_MTE3));
-        SetFlag<HardEvent::V_MTE3>(v2Mte3Id);
-        WaitFlag<HardEvent::V_MTE3>(v2Mte3Id);
+        uint32_t v2Mte3MutexId = AscendC::AllocMutexID();  // V_MTE3 自排空：V 写 sum → MTE3 搬出
+        AscendC::Mutex::Lock<PIPE_V>(v2Mte3MutexId);
+        AscendC::Mutex::Unlock<PIPE_V>(v2Mte3MutexId);
+        AscendC::Mutex::Lock<PIPE_MTE3>(v2Mte3MutexId);
+        AscendC::Mutex::Unlock<PIPE_MTE3>(v2Mte3MutexId);
+        AscendC::ReleaseMutexID(v2Mte3MutexId);
         DataCopy(sumGm[gmOffset], sumTensor, calculateSize);
     } else {
         LocalTensor<float> sumOutTensor = sumBrdcst.template AllocTensor<float>();
@@ -518,7 +524,6 @@ __aicore__ inline void FABlockVecBase<TEMPLATE_BASE_ARGS>::MlaBoolCopyInRegbase(
     padParams.leftPadding = 0;
     padParams.paddingValue = 1;
     padParams.rightPadding = 0;
-    auto mte2ToV = GetTPipePtr()->AllocEventID<HardEvent::MTE2_V>();
     if ((hasRope && (dTemplateType == DTemplateType::Aligned576)) &&
         (constInfo.layoutType != static_cast<uint32_t>(LayOutTypeEnum::LAYOUT_BNSD))) {
         intriParams.blockCount = 1;
@@ -533,8 +538,14 @@ __aicore__ inline void FABlockVecBase<TEMPLATE_BASE_ARGS>::MlaBoolCopyInRegbase(
         } else {
             DataCopyPad(dstTensor, srcTensor[srcOffset], intriParams, padParams);
         }
-        SetFlag<HardEvent::MTE2_V>(mte2ToV);
-        WaitFlag<HardEvent::MTE2_V>(mte2ToV);
+        {
+            uint32_t mte2ToVMutexId = AscendC::AllocMutexID();  // MTE2_V 自排空：MTE2 搬入 → V 使用
+            AscendC::Mutex::Lock<PIPE_MTE2>(mte2ToVMutexId);
+            AscendC::Mutex::Unlock<PIPE_MTE2>(mte2ToVMutexId);
+            AscendC::Mutex::Lock<PIPE_V>(mte2ToVMutexId);
+            AscendC::Mutex::Unlock<PIPE_V>(mte2ToVMutexId);
+            AscendC::ReleaseMutexID(mte2ToVMutexId);
+        }
         return;
     } else if ((hasRope && (dTemplateType == DTemplateType::Aligned576)) &&
                (constInfo.layoutType == static_cast<uint32_t>(LayOutTypeEnum::LAYOUT_BNSD))) {
@@ -550,8 +561,14 @@ __aicore__ inline void FABlockVecBase<TEMPLATE_BASE_ARGS>::MlaBoolCopyInRegbase(
                 srcTensor[srcOffset], intriParams, padParams);
         }
 
-        SetFlag<HardEvent::MTE2_V>(mte2ToV);
-        WaitFlag<HardEvent::MTE2_V>(mte2ToV);
+        {
+            uint32_t mte2ToVMutexId = AscendC::AllocMutexID();  // MTE2_V 自排空：MTE2 搬入 → V 使用
+            AscendC::Mutex::Lock<PIPE_MTE2>(mte2ToVMutexId);
+            AscendC::Mutex::Unlock<PIPE_MTE2>(mte2ToVMutexId);
+            AscendC::Mutex::Lock<PIPE_V>(mte2ToVMutexId);
+            AscendC::Mutex::Unlock<PIPE_V>(mte2ToVMutexId);
+            AscendC::ReleaseMutexID(mte2ToVMutexId);
+        }
 
         for (int64_t i = 1; (i + 1) * s1OfMla <= neededSouterSize; i++) {
             DataCopy(dstTensor[s1OfMla * i * s2BaseSize], dstTensor, s1OfMla * s2BaseSize);
@@ -621,7 +638,7 @@ __aicore__ inline void FABlockVecBase<TEMPLATE_BASE_ARGS>::ProcessVec2OnUb(
     }
     LocalTensor<T> vec2ResUb = this->stage2OutBuf.template Get<T>();
     LocalTensor<T> mmRes = bmm2ResBuf.template GetTensor<T>();
-    WaitFlag<HardEvent::MTE3_V>(mte3ToVId[0]);
+    AscendC::Mutex::Lock<PIPE_V>(mte3ToVMutex[0]);
     if (unlikely(runInfo.s2LoopCount == 0)) {
         DataCopy(vec2ResUb, mmRes, vec2CalcSize);
     } else {
@@ -701,15 +718,20 @@ __aicore__ inline void FABlockVecBase<TEMPLATE_BASE_ARGS>::ProcessVec2OnUb(
         }
     }
     bmm2ResBuf.SetCrossCore();
-    if (runInfo.s2LoopCount == runInfo.s2LoopLimit) {
-        if (unlikely(runInfo.s2LoopCount == 0)) {
-            LocalTensor<float> sumUb = this->softmaxSumBuf[runInfo.multiCoreIdxMod3].template Get<float>();
-            LastDivNew<T, INPUT_T, OUTPUT_T, dTemplateAlign64, isMlaFullQuant>(
-                vec2ResUb, vec2ResUb, sumUb, runInfo.vec2S1RealSize, (uint16_t)dTemplateAlign64, deSCaleVValue);
-        }
-        GetDerived()->CopyOutAttentionOut(runInfo, constInfo, vec2ResUb, 0, vec2CalcSize);
+    if (runInfo.s2LoopCount == runInfo.s2LoopLimit && unlikely(runInfo.s2LoopCount == 0)) {
+        LocalTensor<float> sumUb = this->softmaxSumBuf[runInfo.multiCoreIdxMod3].template Get<float>();
+        LastDivNew<T, INPUT_T, OUTPUT_T, dTemplateAlign64, isMlaFullQuant>(
+            vec2ResUb, vec2ResUb, sumUb, runInfo.vec2S1RealSize, (uint16_t)dTemplateAlign64, deSCaleVValue);
     }
-    SetFlag<HardEvent::MTE3_V>(mte3ToVId[0]);
+    // V 写完（含末轮 LastDiv）后 Unlock<PIPE_V>；随后 MTE3 侧独立 Lock→copy→Unlock，
+    // 构成顺序 V↔MTE3 环（原 HardEvent::MTE3_V），不把 PIPE_V 持有到 copy 结束
+    AscendC::Mutex::Unlock<PIPE_V>(mte3ToVMutex[0]);
+    if (runInfo.s2LoopCount == runInfo.s2LoopLimit) {
+        // MTE3 侧：读出 vec2ResUb 前 Lock，读完 Unlock
+        AscendC::Mutex::Lock<PIPE_MTE3>(mte3ToVMutex[0]);
+        GetDerived()->CopyOutAttentionOut(runInfo, constInfo, vec2ResUb, 0, vec2CalcSize);
+        AscendC::Mutex::Unlock<PIPE_MTE3>(mte3ToVMutex[0]);
+    }
 }
 
 TEMPLATES_DEF_BASE_NO_DEFAULT
@@ -717,12 +739,15 @@ __aicore__ inline void FABlockVecBase<TEMPLATE_BASE_ARGS>::ProcessVec2NoGlobalUp
     ConstInfo<isInfer, hasRope> &constInfo, Buffer<BufferType::UB, SyncType::CROSS_CORE_SYNC_BOTH> &bmm2ResBuf,
     int64_t vec2CalcSize) {
     LocalTensor<INPUT_T> vec2ResUb = this->stage2OutBuf.template Get<INPUT_T>()[runInfo.taskIdMod2 * vec2CalcSize];
-    WaitFlag<HardEvent::MTE3_V>(mte3ToVId[runInfo.taskIdMod2]);
+    AscendC::Mutex::Lock<PIPE_V>(mte3ToVMutex[runInfo.taskIdMod2]);
     LocalTensor<float> sumUb = this->softmaxSumBuf[runInfo.multiCoreIdxMod3].template Get<float>();
     DivCast<T, INPUT_T, dTemplateAlign64>(vec2ResUb, bmm2ResBuf.template GetTensor<T>(), sumUb, runInfo.vec2S1RealSize);
     bmm2ResBuf.SetCrossCore();
+    // V 写完（DivCast）后 Unlock<PIPE_V>；随后 MTE3 侧独立 Lock→copy→Unlock，构成顺序 V↔MTE3 环
+    AscendC::Mutex::Unlock<PIPE_V>(mte3ToVMutex[runInfo.taskIdMod2]);
+    AscendC::Mutex::Lock<PIPE_MTE3>(mte3ToVMutex[runInfo.taskIdMod2]);
     Bmm2DataCopyOut(runInfo, constInfo, vec2ResUb, 0);
-    SetFlag<HardEvent::MTE3_V>(mte3ToVId[runInfo.taskIdMod2]);
+    AscendC::Mutex::Unlock<PIPE_MTE3>(mte3ToVMutex[runInfo.taskIdMod2]);
 }
 
 TEMPLATES_DEF_BASE_NO_DEFAULT
@@ -732,12 +757,16 @@ __aicore__ inline void FABlockVecBase<TEMPLATE_BASE_ARGS>::ProcessVec2DSplit(
     runInfo.vec2S1BaseSize = 8192 / constInfo.dBasicBlock;
     int64_t vec2LoopLimit = CeilDiv(runInfo.halfS1RealSize, runInfo.vec2S1BaseSize);
     LocalTensor<T> vec2ResUb = this->stage2OutBuf.template Get<T>();
-    WaitFlag<HardEvent::MTE3_V>(mte3ToVId[0]);
+    // 顺序 V↔MTE3 环（原 HardEvent::MTE3_V 跨调用 WAR）：
+    // Lock<PIPE_V> 等上一次调用 MTE3 读完 vec2ResUb 后才放行本次 V 写（入口 WaitFlag 语义，gate 后续 V 指令）；
+    // 随即 Unlock<PIPE_V>→Lock<PIPE_MTE3> 把 token 交给 MTE3 侧，使 MTE3 临界区覆盖循环内全部读点
+    //（末轮 CopyOutAttentionOut 与非末轮 vec2ResGm 回写），循环后 Unlock<PIPE_MTE3> 释放，
+    // 令下一次调用 Lock<PIPE_V> 等待本次 MTE3 读完。循环内逐 slice 的 V→MTE3 RAW 由各自 self-drain 覆盖。
+    AscendC::Mutex::Lock<PIPE_V>(mte3ToVMutex[0]);
+    AscendC::Mutex::Unlock<PIPE_V>(mte3ToVMutex[0]);
+    AscendC::Mutex::Lock<PIPE_MTE3>(mte3ToVMutex[0]);
     LocalTensor<T> bmm2Ub = mm2InBuf.template Get<T>();
 
-    event_t mte2ToV = static_cast<event_t>(tPipe->FetchEventID(HardEvent::MTE2_V));
-    event_t vToMte2 = static_cast<event_t>(tPipe->FetchEventID(HardEvent::V_MTE2));
-    event_t mte3ToMte2 = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::MTE3_MTE2));
     float deSCaleVValue;
     if constexpr (isFp8) {
         deSCaleVValue = this->deScaleVGm.GetValue(runInfo.deScaleKvOffset);
@@ -751,8 +780,14 @@ __aicore__ inline void FABlockVecBase<TEMPLATE_BASE_ARGS>::ProcessVec2DSplit(
         int64_t vec2CalcSize = runInfo.vec2S1RealSize * constInfo.dBasicBlock;
         // Gm地址偏移是按照实际DSize实现的，虽然我们设置了KC=192
         int64_t mm2ResInnerOffset = vec2S1Idx * runInfo.vec2S1BaseSize * dTemplateAlign64;
-        SetFlag<HardEvent::V_MTE2>(vToMte2);
-        WaitFlag<HardEvent::V_MTE2>(vToMte2);
+        {
+            uint32_t vToMte2MutexId = AscendC::AllocMutexID();  // V_MTE2 自排空：V 用完 bmm2Ub → MTE2 覆写
+            AscendC::Mutex::Lock<PIPE_V>(vToMte2MutexId);
+            AscendC::Mutex::Unlock<PIPE_V>(vToMte2MutexId);
+            AscendC::Mutex::Lock<PIPE_MTE2>(vToMte2MutexId);
+            AscendC::Mutex::Unlock<PIPE_MTE2>(vToMte2MutexId);
+            AscendC::ReleaseMutexID(vToMte2MutexId);
+        }
         if (constInfo.dSizeV == dTemplateAlign64) {
             if constexpr (useDn || isMlaFullQuant) {
                 DataCopy(bmm2Ub, mmRes[bmm2SubBlockOffset + mm2ResInnerOffset], vec2CalcSize);
@@ -778,16 +813,28 @@ __aicore__ inline void FABlockVecBase<TEMPLATE_BASE_ARGS>::ProcessVec2DSplit(
         // 经过了跳读，UB上每行是按照dTemplateAlign64对齐的
         int64_t vec2ResInnerOffset = vec2S1Idx * runInfo.vec2S1BaseSize * constInfo.dBasicBlock;
         if (vec2LoopLimit > 1) {
-            SetFlag<HardEvent::MTE3_MTE2>(mte3ToMte2);
-            WaitFlag<HardEvent::MTE3_MTE2>(mte3ToMte2);
+            {
+                uint32_t mte3ToMte2MutexId = AscendC::AllocMutexID();  // MTE3_MTE2 自排空：MTE3 上轮回写 → MTE2 本轮读
+                AscendC::Mutex::Lock<PIPE_MTE3>(mte3ToMte2MutexId);
+                AscendC::Mutex::Unlock<PIPE_MTE3>(mte3ToMte2MutexId);
+                AscendC::Mutex::Lock<PIPE_MTE2>(mte3ToMte2MutexId);
+                AscendC::Mutex::Unlock<PIPE_MTE2>(mte3ToMte2MutexId);
+                AscendC::ReleaseMutexID(mte3ToMte2MutexId);
+            }
             if constexpr (useDn || isMlaFullQuant) {
                 DataCopy(vec2ResUb, this->vec2ResGm[runInfo.multiCoreIdxMod3][vec2SubBlockOffset + vec2ResInnerOffset], vec2CalcSize);
             } else {
                 DataCopy(vec2ResUb, this->vec2ResGm[runInfo.multiCoreIdxMod3][constInfo.subBlockIdx * (runInfo.s1RealSize - runInfo.halfS1RealSize) * constInfo.dBasicBlock + vec2ResInnerOffset], vec2CalcSize);
             }
         }
-        SetFlag<HardEvent::MTE2_V>(mte2ToV);
-        WaitFlag<HardEvent::MTE2_V>(mte2ToV);
+        {
+            uint32_t mte2ToVMutexId = AscendC::AllocMutexID();  // MTE2_V 自排空：MTE2 搬入 bmm2Ub → V 计算
+            AscendC::Mutex::Lock<PIPE_MTE2>(mte2ToVMutexId);
+            AscendC::Mutex::Unlock<PIPE_MTE2>(mte2ToVMutexId);
+            AscendC::Mutex::Lock<PIPE_V>(mte2ToVMutexId);
+            AscendC::Mutex::Unlock<PIPE_V>(mte2ToVMutexId);
+            AscendC::ReleaseMutexID(mte2ToVMutexId);
+        }
         if (unlikely(runInfo.s2LoopCount == 0)) {
             DataCopy(vec2ResUb, bmm2Ub, vec2CalcSize);
         } else {
@@ -853,16 +900,24 @@ __aicore__ inline void FABlockVecBase<TEMPLATE_BASE_ARGS>::ProcessVec2DSplit(
             }
             GetDerived()->CopyOutAttentionOut(runInfo, constInfo, vec2ResUb, vec2S1Idx, vec2CalcSize);
         } else if (vec2LoopLimit > 1) {
-            SetFlag<HardEvent::V_MTE3>(vToMte3Id[0]);
-            WaitFlag<HardEvent::V_MTE3>(vToMte3Id[0]);
+            {
+                uint32_t vToMte3MutexId = AscendC::AllocMutexID();  // V_MTE3 自排空：V 写 vec2ResUb → MTE3 回写 GM
+                AscendC::Mutex::Lock<PIPE_V>(vToMte3MutexId);
+                AscendC::Mutex::Unlock<PIPE_V>(vToMte3MutexId);
+                AscendC::Mutex::Lock<PIPE_MTE3>(vToMte3MutexId);
+                AscendC::Mutex::Unlock<PIPE_MTE3>(vToMte3MutexId);
+                AscendC::ReleaseMutexID(vToMte3MutexId);
+            }
             if constexpr (useDn || isMlaFullQuant) {
                 DataCopy(this->vec2ResGm[runInfo.multiCoreIdxMod3][vec2SubBlockOffset + vec2ResInnerOffset], vec2ResUb, vec2CalcSize);
             } else {
                 DataCopy(this->vec2ResGm[runInfo.multiCoreIdxMod3][constInfo.subBlockIdx * (runInfo.s1RealSize - runInfo.halfS1RealSize) * constInfo.dBasicBlock + vec2ResInnerOffset], vec2ResUb, vec2CalcSize);
-            }   
+            }
         }
     }
-    SetFlag<HardEvent::MTE3_V>(mte3ToVId[0]);
+    // MTE3 临界区闭合：Unlock<PIPE_MTE3> 程序序在最后一个 MTE3 读点之后，与循环前 Lock<PIPE_MTE3> 配对，
+    // 令下一次调用 Lock<PIPE_V> 等待本次 MTE3 读完 vec2ResUb（原 HardEvent::MTE3_V 跨调用 WAR）
+    AscendC::Mutex::Unlock<PIPE_MTE3>(mte3ToVMutex[0]);
 }
 
 TEMPLATES_DEF_BASE_NO_DEFAULT
@@ -881,12 +936,16 @@ __aicore__ inline void FABlockVecBase<TEMPLATE_BASE_ARGS>::ProcessVec2(
         runInfo.vec2S1BaseSize = 8192 / dTemplateAlign64;
         int64_t vec2LoopLimit = CeilDiv(runInfo.halfS1RealSize, runInfo.vec2S1BaseSize);
         LocalTensor<T> vec2ResUb = this->stage2OutBuf.template Get<T>();
-        WaitFlag<HardEvent::MTE3_V>(mte3ToVId[0]);
+        // 顺序 V↔MTE3 环（原 HardEvent::MTE3_V 跨调用 WAR）：
+        // Lock<PIPE_V> 等上一次调用 MTE3 读完 vec2ResUb 后放行本次 V 写（入口 WaitFlag 语义，gate 后续 V 指令）；
+        // 随即 Unlock<PIPE_V>→Lock<PIPE_MTE3> 把 token 交给 MTE3 侧，使 MTE3 临界区覆盖循环内末轮全部 CopyOutAttentionOut 读点，
+        // 循环后 Unlock<PIPE_MTE3> 释放，令下一次调用 Lock<PIPE_V> 等待本次 MTE3 读完。
+        AscendC::Mutex::Lock<PIPE_V>(mte3ToVMutex[0]);
+        AscendC::Mutex::Unlock<PIPE_V>(mte3ToVMutex[0]);
+        AscendC::Mutex::Lock<PIPE_MTE3>(mte3ToVMutex[0]);
         LocalTensor<T> bmm2Ub = mm2InBuf.template Get<T>();
         GlobalTensor<T> mmRes = bmm2ResBuf.template GetTensor<T>();
 
-        event_t mte2ToV = static_cast<event_t>(tPipe->FetchEventID(HardEvent::MTE2_V));
-        event_t vToMte2 = static_cast<event_t>(tPipe->FetchEventID(HardEvent::V_MTE2));
         float deSCaleVValue;
         if constexpr (isFp8) {
             deSCaleVValue = this->deScaleVGm.GetValue(runInfo.deScaleKvOffset);
@@ -900,8 +959,14 @@ __aicore__ inline void FABlockVecBase<TEMPLATE_BASE_ARGS>::ProcessVec2(
             int64_t vec2CalcSize = runInfo.vec2S1RealSize * dTemplateAlign64;
             // Gm地址偏移是按照实际DSize实现的，虽然我们设置了KC=192
             int64_t mm2ResInnerOffset = vec2S1Idx * runInfo.vec2S1BaseSize * constInfo.dSizeV;
-            SetFlag<HardEvent::V_MTE2>(vToMte2);
-            WaitFlag<HardEvent::V_MTE2>(vToMte2);
+            {
+                uint32_t vToMte2MutexId = AscendC::AllocMutexID();  // V_MTE2 自排空：V 用完 bmm2Ub → MTE2 覆写
+                AscendC::Mutex::Lock<PIPE_V>(vToMte2MutexId);
+                AscendC::Mutex::Unlock<PIPE_V>(vToMte2MutexId);
+                AscendC::Mutex::Lock<PIPE_MTE2>(vToMte2MutexId);
+                AscendC::Mutex::Unlock<PIPE_MTE2>(vToMte2MutexId);
+                AscendC::ReleaseMutexID(vToMte2MutexId);
+            }
             if (constInfo.dSizeV == dTemplateAlign64) {
                 if constexpr (useDn || isMlaFullQuant) {
                     DataCopy(bmm2Ub, mmRes[bmm2SubBlockOffset + mm2ResInnerOffset], vec2CalcSize);
@@ -923,8 +988,14 @@ __aicore__ inline void FABlockVecBase<TEMPLATE_BASE_ARGS>::ProcessVec2(
                             dataCopyParams, dataCopyPadParams);
                 }
             }
-            SetFlag<HardEvent::MTE2_V>(mte2ToV);
-            WaitFlag<HardEvent::MTE2_V>(mte2ToV);
+            {
+                uint32_t mte2ToVMutexId = AscendC::AllocMutexID();  // MTE2_V 自排空：MTE2 搬入 bmm2Ub → V 计算
+                AscendC::Mutex::Lock<PIPE_MTE2>(mte2ToVMutexId);
+                AscendC::Mutex::Unlock<PIPE_MTE2>(mte2ToVMutexId);
+                AscendC::Mutex::Lock<PIPE_V>(mte2ToVMutexId);
+                AscendC::Mutex::Unlock<PIPE_V>(mte2ToVMutexId);
+                AscendC::ReleaseMutexID(mte2ToVMutexId);
+            }
             // 经过了跳读，UB上每行是按照dTemplateAlign64对齐的
             LocalTensor vec2ResInner = vec2ResUb[vec2S1Idx * runInfo.vec2S1BaseSize * dTemplateAlign64];
 
@@ -994,8 +1065,14 @@ __aicore__ inline void FABlockVecBase<TEMPLATE_BASE_ARGS>::ProcessVec2(
                 GetDerived()->CopyOutAttentionOut(runInfo, constInfo, vec2ResInner, vec2S1Idx, vec2CalcSize);
             }
         }
-        SetFlag<HardEvent::MTE3_V>(mte3ToVId[0]);
+        // MTE3 临界区闭合：Unlock<PIPE_MTE3> 程序序在最后一个 CopyOutAttentionOut 之后，与循环前 Lock<PIPE_MTE3> 配对，
+        // 令下一次调用 Lock<PIPE_V> 等待本次 MTE3 读完 vec2ResUb（原 HardEvent::MTE3_V 跨调用 WAR）
+        AscendC::Mutex::Unlock<PIPE_MTE3>(mte3ToVMutex[0]);
     }
+
+    // Pattern D: mte3ToVMutex 跨阶段同步资源由外层 ProcessVec2 统一释放
+    // 第 1053-1054 行已统一释放,此处删除重复调用避免双重释放
+
     return;
 }
 
@@ -1014,9 +1091,12 @@ __aicore__ inline void FABlockVecBase<TEMPLATE_BASE_ARGS>::RowInvalid(LocalTenso
         }
         int64_t vec2MaxBufOffset = ComputeOffsetForSoftmax(runInfo, vec2S1Idx);
         LocalTensor<float> maxTensor = softmaxMaxBuf[runInfo.multiCoreIdxMod3].template Get<float>()[vec2MaxBufOffset];
-        event_t eventIdVToS = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::V_S));
-        SetFlag<HardEvent::V_S>(eventIdVToS);
-        WaitFlag<HardEvent::V_S>(eventIdVToS);
+        uint32_t vToSMutexId = AscendC::AllocMutexID();  // V_S 自排空：V 写 max → S 读 max
+        AscendC::Mutex::Lock<PIPE_V>(vToSMutexId);
+        AscendC::Mutex::Unlock<PIPE_V>(vToSMutexId);
+        AscendC::Mutex::Lock<PIPE_S>(vToSMutexId);
+        AscendC::Mutex::Unlock<PIPE_S>(vToSMutexId);
+        AscendC::ReleaseMutexID(vToSMutexId);
         bool isRowInvalidNeedUpdate = false;
         for (uint32_t i = 0; i < runInfo.vec2S1RealSize; i++) {
             float maxValue = maxTensor.GetValue(i);
@@ -1163,12 +1243,24 @@ __aicore__ inline void FABlockVecBase<TEMPLATE_BASE_ARGS>::Bmm2DataCopyOut(
             GetDerived()->PostQuant(constInfo, runInfo, attenOut, vec2ResUb, vec2S1Idx, dSizeAligned64);
             RowInvalid(vec2ResUb, vec2S1Idx, runInfo, constInfo, dSizeAligned64);
         }
-        SetFlag<HardEvent::V_MTE3>(vToMte3Id[0]);
-        WaitFlag<HardEvent::V_MTE3>(vToMte3Id[0]);
+        {
+            uint32_t vToMte3MutexId = AscendC::AllocMutexID();  // V_MTE3 自排空：V 写 attenOut → MTE3 搬出
+            AscendC::Mutex::Lock<PIPE_V>(vToMte3MutexId);
+            AscendC::Mutex::Unlock<PIPE_V>(vToMte3MutexId);
+            AscendC::Mutex::Lock<PIPE_MTE3>(vToMte3MutexId);
+            AscendC::Mutex::Unlock<PIPE_MTE3>(vToMte3MutexId);
+            AscendC::ReleaseMutexID(vToMte3MutexId);
+        }
     } else {
         if constexpr (!POST_QUANT) {
-            SetFlag<HardEvent::V_MTE3>(vToMte3Id[runInfo.taskIdMod2]);
-            WaitFlag<HardEvent::V_MTE3>(vToMte3Id[runInfo.taskIdMod2]);
+            {
+                uint32_t vToMte3MutexId = AscendC::AllocMutexID();  // V_MTE3 自排空：V 写 vec2ResUb → MTE3 搬出
+                AscendC::Mutex::Lock<PIPE_V>(vToMte3MutexId);
+                AscendC::Mutex::Unlock<PIPE_V>(vToMte3MutexId);
+                AscendC::Mutex::Lock<PIPE_MTE3>(vToMte3MutexId);
+                AscendC::Mutex::Unlock<PIPE_MTE3>(vToMte3MutexId);
+                AscendC::ReleaseMutexID(vToMte3MutexId);
+            }
             attenOut = vec2ResUb;
         }   
     }
@@ -1427,13 +1519,11 @@ __aicore__ inline void FABlockVecBase<TEMPLATE_BASE_ARGS>::InitLocalBuffer(TPipe
 
     GetDerived()->InitUniqueLocalBuffer(constInfo);
 
-    mte3ToVId[0] = GetTPipePtr()->AllocEventID<HardEvent::MTE3_V>();
-    mte3ToVId[1] = GetTPipePtr()->AllocEventID<HardEvent::MTE3_V>();
-
-    vToMte3Id[0] = GetTPipePtr()->AllocEventID<HardEvent::V_MTE3>();
-    vToMte3Id[1] = GetTPipePtr()->AllocEventID<HardEvent::V_MTE3>();
-    SetFlag<HardEvent::MTE3_V>(mte3ToVId[0]);
-    SetFlag<HardEvent::MTE3_V>(mte3ToVId[1]);
+    mte3ToVMutex[0] = AscendC::AllocMutexID();
+    mte3ToVMutex[1] = AscendC::AllocMutexID();
+    // Pattern D: MTE3→V 跨阶段同步，初始状态无需预置 token
+    // 循环中：V Lock<PIPE_V> → MTE3 Unlock<PIPE_MTE3>
+    // 第一次迭代前 Mutex 处于未锁定状态，V 的 Lock<PIPE_V> 可直接通过
 }
 
 

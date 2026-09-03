@@ -272,6 +272,19 @@ __aicore__ inline void FlashAttentionScoreKernelInfer<CubeBlockType, VecBlockTyp
             this->vecBlock.FlashDecodeCompute(this->constInfo, this->keyGm, this->actualSeqKvlenAddr);
         }
     }
+
+    // 释放 vecBlock 中跨阶段同步 Mutex 资源
+    // mte3ToVMutex[0] 和 mte3ToVMutex[1] 在 InitLocalBuffer 中分配，用于 MTE3→V 跨阶段同步（Pattern D）
+    if ASCEND_IS_AIV {
+        AscendC::ReleaseMutexID(this->vecBlock.mte3ToVMutex[0]);
+        AscendC::ReleaseMutexID(this->vecBlock.mte3ToVMutex[1]);
+    }
+
+    // 释放 cubeBlock 中 Q 常驻 L1 同步 Mutex 资源
+    // qMutex 在 InitLocalBuffer 中分配，与 Q L1 buffer 同生命周期，跨 s2LoopCount 多轮复用
+    if ASCEND_IS_AIC {
+        AscendC::ReleaseMutexID(this->cubeBlock.qMutex);
+    }
 }
 
 // =========================================== private functions ===========================================

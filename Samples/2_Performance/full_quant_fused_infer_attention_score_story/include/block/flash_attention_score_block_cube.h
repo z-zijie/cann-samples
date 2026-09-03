@@ -172,6 +172,10 @@ public:
     __aicore__ inline void InitDequantParams(__gm__ uint8_t *deqScaleQ,
         __gm__ uint8_t *deqScaleK, __gm__ uint8_t *deqScaleV);
 
+    // Q 常驻 L1，跨 s2LoopCount 多轮复用；qMutex 需与 Q L1 buffer 同生命周期，
+    // 在 InitLocalBuffer 分配一次，kernel Process 收尾统一 Release，禁止在 IterateBmm1* 内局部分配
+    uint32_t qMutex;
+
 private:
     __aicore__ inline void InitLocalBuffer();
     __aicore__ inline void InitGmTensor(CVSharedParams<isInfer, isPa> *sharedParams, __gm__ int64_t *actualSeqQlenAddr,
@@ -379,6 +383,8 @@ __aicore__ inline void FABlockCube<TEMPLATE_ARGS>::InitLocalBuffer() {
             mmL0CBuffers.Init(l0cBufferManager, (L0C_SIZE / NUM_2) * KB_TO_BYTES);
         }
     }
+    // Q 常驻 L1，qMutex 与 Q L1 buffer 同生命周期，此处分配一次，Process 收尾统一 Release
+    qMutex = AscendC::AllocMutexID();
 }
 
 /* 初始化GmTensor,设置shape信息并计算strides */
@@ -886,11 +892,12 @@ __aicore__ inline void FABlockCube<TEMPLATE_ARGS>::IterateBmm1NdL0Split(
 {
     Buffer<BufferType::L1> mm1A;
     Buffer<BufferType::L1> mm1B;
+    // qMutex 已改为常驻成员，在 InitLocalBuffer 分配、Process 收尾统一 Release，此处不再局部分配
     // 左矩阵复用 ,s2的第一次循环加载左矩阵
     // 加载左矩阵到L1 当前使用全载方式
     if (unlikely(runInfo.s2LoopCount == 0)) { // sOuter循环第一个基本快：搬运0
         mm1A = l1QBuffers.Get();
-        mm1A.Wait<HardEvent::MTE1_MTE2>(); // 占用
+        AscendC::Mutex::Lock<PIPE_MTE2>(qMutex); // 占用
         LocalTensor<INPUT_T> mm1ATensor = mm1A.GetTensor<INPUT_T>();
 
         if constexpr (isInfer){
@@ -922,13 +929,11 @@ __aicore__ inline void FABlockCube<TEMPLATE_ARGS>::IterateBmm1NdL0Split(
             uint64_t gmRopeOffset = this->queryRopeGm.offsetCalculator.GetOffset(runInfo.boIdx, runInfo.n2oIdx,
                 runInfo.goIdx, coordInfo[runInfo.taskIdMod3].s1Coord, 0);
             CopyToL1Nd2Nz<INPUT_T>(mm1ATensor[dstNzC0Stride * constInfo.dSize],
-                this->queryRopeGm.gmTensor[gmRopeOffset], runInfo.s1RealSize, constInfo.dSizeRope, constInfo.mm1RopeKa); 
+                this->queryRopeGm.gmTensor[gmRopeOffset], runInfo.s1RealSize, constInfo.dSizeRope, constInfo.mm1RopeKa);
         }
-        mm1A.Set<HardEvent::MTE2_MTE1>(); // 通知
+        AscendC::Mutex::Unlock<PIPE_MTE2>(qMutex); // 通知
     } else { // 非s2的第一次循环直接复用Q
         mm1A = l1QBuffers.GetPre();
-        // 左矩阵复用时，sinner循环内不需要MTE2同步等待
-        mm1A.Set<HardEvent::MTE2_MTE1>(); // 通知 // 是否可以省略
     }
     // 加载当前轮的右矩阵到L1
     mm1B = l1KBuffers.Get();
@@ -997,12 +1002,14 @@ __aicore__ inline void FABlockCube<TEMPLATE_ARGS>::IterateBmm1NdL0Split(
             uint64_t gmRopeOffset = this->keyRopeGm.offsetCalculator.GetOffset(runInfo.boIdx,
                 runInfo.n2oIdx, coordInfo[runInfo.taskIdMod3].s2Coord, 0);
             CopyToL1Nd2Nz<INPUT_T>(mm1BTensor[dstNzC0Stride * constInfo.dSize], this->keyRopeGm.gmTensor[gmRopeOffset],
-                runInfo.s2RealSize, constInfo.dSizeRope, constInfo.mm1RopeKb); 
+                runInfo.s2RealSize, constInfo.dSizeRope, constInfo.mm1RopeKb);
         }
     }
     mm1B.Set<HardEvent::MTE2_MTE1>(); // 通知
 
-    mm1A.Wait<HardEvent::MTE2_MTE1>(); // 等待L1A
+    if (unlikely(runInfo.s2LoopCount == 0)) {
+        AscendC::Mutex::Lock<PIPE_MTE1>(qMutex); // 等待L1A
+    }
     mm1B.Wait<HardEvent::MTE2_MTE1>(); // 等待L1B
 
     Buffer<BufferType::L0C> mm1ResL0C = mmL0CBuffers.Get();
@@ -1037,9 +1044,10 @@ __aicore__ inline void FABlockCube<TEMPLATE_ARGS>::IterateBmm1NdL0Split(
         }
     }
     if (unlikely(runInfo.s2LoopCount == runInfo.s2LoopLimit)) {
-        mm1A.Set<HardEvent::MTE1_MTE2>();
+        AscendC::Mutex::Unlock<PIPE_MTE1>(qMutex);
     }
     mm1B.Set<HardEvent::MTE1_MTE2>(); // 释放L1B
+    // qMutex 为常驻成员，由 kernel Process 收尾统一 Release，此处不再局部释放
     mm1ResL0C.Set<HardEvent::M_FIX>(); // 通知
     mm1ResL0C.Wait<HardEvent::M_FIX>(); // 等待L0C
 
@@ -1075,11 +1083,12 @@ __aicore__ inline void FABlockCube<TEMPLATE_ARGS>::IterateBmm1DnSplitK(
 {
     Buffer<BufferType::L1> mm1A;
     Buffer<BufferType::L1> mm1B;
+    // qMutex 已改为常驻成员，在 InitLocalBuffer 分配、Process 收尾统一 Release，此处不再局部分配
     // 右矩阵复用，S2的第一次循环加载右矩阵
     // 加载右矩阵到L1 ,当前使用全载方式
     if (unlikely(runInfo.s2LoopCount == 0)) { // sOuter循环第一个基本快：搬运0
         mm1B = l1QBuffers.Get();
-        mm1B.Wait<HardEvent::MTE1_MTE2>(); // 占用
+        AscendC::Mutex::Lock<PIPE_MTE2>(qMutex); // 占用
         LocalTensor<INPUT_T> mm1BTensor = mm1B.GetTensor<INPUT_T>();
         uint64_t gmOffset = this->queryGm.offsetCalculator.GetOffset(runInfo.boIdx, runInfo.n2oIdx, runInfo.goIdx,
             coordInfo[runInfo.taskIdMod3].s1Coord, 0);
@@ -1095,11 +1104,9 @@ __aicore__ inline void FABlockCube<TEMPLATE_ARGS>::IterateBmm1DnSplitK(
             CopyToL1Nd2Nz<INPUT_T>(mm1BTensor, this->queryGm.gmTensor[gmOffset], runInfo.s1RealSize, constInfo.dSize,
                 constInfo.mm1Ka);
         }
-        mm1B.Set<HardEvent::MTE2_MTE1>(); // 通知
+        AscendC::Mutex::Unlock<PIPE_MTE2>(qMutex); // 通知
     } else { // 非s2的第一次循环直接复用Q
         mm1B = l1QBuffers.GetPre();
-        // 左矩阵复用时，sinner循环内不需要MTE2同步等待
-        mm1B.Set<HardEvent::MTE2_MTE1>(); // 通知 // 是否可以省略
     }
 
     // 加载当前轮的左矩阵到L1
@@ -1136,7 +1143,9 @@ __aicore__ inline void FABlockCube<TEMPLATE_ARGS>::IterateBmm1DnSplitK(
     mm1A.Set<HardEvent::MTE2_MTE1>(); // 通知
 
     mm1A.Wait<HardEvent::MTE2_MTE1>(); // 等待L1A
-    mm1B.Wait<HardEvent::MTE2_MTE1>(); // 等待L1B
+    if (unlikely(runInfo.s2LoopCount == 0)) {
+        AscendC::Mutex::Lock<PIPE_MTE1>(qMutex); // 等待L1B
+    }
 
     Buffer<BufferType::L0C> mm1ResL0C = mmL0CBuffers.Get();
     mm1ResL0C.Wait<HardEvent::FIX_M>(); // 占用
@@ -1155,7 +1164,7 @@ __aicore__ inline void FABlockCube<TEMPLATE_ARGS>::IterateBmm1DnSplitK(
         param);
 
     if (unlikely(runInfo.s2LoopCount == runInfo.s2LoopLimit)) {
-        mm1B.Set<HardEvent::MTE1_MTE2>(); // 释放L1Q
+        AscendC::Mutex::Unlock<PIPE_MTE1>(qMutex); // 释放L1Q
     }
     mm1A.Set<HardEvent::MTE1_MTE2>(); // 释放L1K
 
@@ -1177,6 +1186,7 @@ __aicore__ inline void FABlockCube<TEMPLATE_ARGS>::IterateBmm1DnSplitK(
 
     mm1ResL0C.Set<HardEvent::FIX_M>(); // 释放L0C
     outputBuf.SetCrossCore();
+    // qMutex 为常驻成员，由 kernel Process 收尾统一 Release，此处不再局部释放
 }
 
 TEMPLATES_DEF_NO_DEFAULT
@@ -1184,6 +1194,7 @@ __aicore__ inline void FABlockCube<TEMPLATE_ARGS>::IterateBmm1Nz(
     Buffer<BufferType::UB, SyncType::CROSS_CORE_SYNC_BOTH> &outputBuf, RunInfo<isInfer> &runInfo,
     ConstInfo<isInfer, hasRope> &constInfo)
 {
+    // qMutex 已改为常驻成员，在 InitLocalBuffer 分配、Process 收尾统一 Release，此处不再局部分配
     // 计算key的offset
     Buffer<BufferType::L1> mm1A;
     Buffer<BufferType::L1> mm1B;
@@ -1191,18 +1202,17 @@ __aicore__ inline void FABlockCube<TEMPLATE_ARGS>::IterateBmm1Nz(
     // 加载左矩阵到L1 ,当前使用全载方式
     if (unlikely(runInfo.s2LoopCount == 0)) { // sOuter循环第一个基本块：搬运Q
         mm1A = l1QBuffers.Get();
-        mm1A.Wait<HardEvent::MTE1_MTE2>(); // 占用L1A
+        AscendC::Mutex::Lock<PIPE_MTE2>(qMutex); // 占用L1A
         LocalTensor<INPUT_T> mm1ATensor = mm1A.GetTensor<INPUT_T>();
 
         uint64_t gmOffset = this->queryGm.offsetCalculator.GetOffset(runInfo.boIdx, runInfo.n2oIdx, runInfo.goIdx,
             coordInfo[runInfo.taskIdMod3].s1Coord, 0);
         CopyToL1Nd2Nz<INPUT_T>(mm1ATensor, this->queryGm.gmTensor[gmOffset], runInfo.s1RealSize, constInfo.dSize,
             constInfo.mm1Ka);
-        mm1A.Set<HardEvent::MTE2_MTE1>(); // 通知
+        AscendC::Mutex::Unlock<PIPE_MTE2>(qMutex); // 通知
     } else { // 非S2的第一次循环直接复用Q
         mm1A = l1QBuffers.GetPre();
         // 左矩阵复用时，sinner循环内不需要MTE2同步等待
-        mm1A.Set<HardEvent::MTE2_MTE1>(); // 通知
     }
 
     // 加载当前轮的右矩阵到L1
@@ -1227,7 +1237,9 @@ __aicore__ inline void FABlockCube<TEMPLATE_ARGS>::IterateBmm1Nz(
     mm1B.Set<HardEvent::MTE2_MTE1>(); // 通知
 
     mm1A.Wait<HardEvent::MTE2_MTE1>(); // 等待L1A
-    mm1B.Wait<HardEvent::MTE2_MTE1>(); // 等待L1B
+    if (unlikely(runInfo.s2LoopCount == 0)) {
+        AscendC::Mutex::Lock<PIPE_MTE1>(qMutex); // 等待L1B
+    }
 
 
     float deScaleValueTile1 = 1.0f;
@@ -1279,7 +1291,7 @@ __aicore__ inline void FABlockCube<TEMPLATE_ARGS>::IterateBmm1Nz(
 
         if (n == (nLoop - 1)) {
             if (unlikely(runInfo.s2LoopCount == runInfo.s2LoopLimit)) {
-                mm1A.Set<HardEvent::MTE1_MTE2>(); // 释放L1A
+                AscendC::Mutex::Unlock<PIPE_MTE1>(qMutex); // 释放L1A
             }
             mm1B.Set<HardEvent::MTE1_MTE2>(); // 释放L1B
         }
@@ -1333,6 +1345,7 @@ __aicore__ inline void FABlockCube<TEMPLATE_ARGS>::IterateBmm1Nz(
         mm1ResL0C.Set<HardEvent::FIX_M>(); // 释放L0C
     }
     outputBuf.SetCrossCore();
+    // qMutex 为常驻成员，由 kernel Process 收尾统一 Release，此处不再局部释放
 }
 
 TEMPLATES_DEF_NO_DEFAULT
@@ -1429,6 +1442,7 @@ __aicore__ inline void FABlockCube<TEMPLATE_ARGS>::IterateBmm1Nd(
     Buffer<BufferType::UB, SyncType::CROSS_CORE_SYNC_BOTH> &outputBuf, RunInfo<isInfer> &runInfo,
     ConstInfo<isInfer, hasRope> &constInfo)
 {
+    // qMutex 已改为常驻成员，在 InitLocalBuffer 分配、Process 收尾统一 Release，此处不再局部分配
     // 计算key的offset
     Buffer<BufferType::L1> mm1A;
     Buffer<BufferType::L1> mm1B;
@@ -1436,7 +1450,7 @@ __aicore__ inline void FABlockCube<TEMPLATE_ARGS>::IterateBmm1Nd(
     // 加载左矩阵到L1 ,当前使用全载方式
     if (unlikely(runInfo.s2LoopCount == 0)) { // sOuter循环第一个基本块：搬运Q
         mm1A = l1QBuffers.Get();
-        mm1A.Wait<HardEvent::MTE1_MTE2>(); // 占用L1A
+        AscendC::Mutex::Lock<PIPE_MTE2>(qMutex); // 占用L1A
         LocalTensor<INPUT_T> mm1ATensor = mm1A.GetTensor<INPUT_T>();
 
         if constexpr (isInfer) {
@@ -1461,12 +1475,11 @@ __aicore__ inline void FABlockCube<TEMPLATE_ARGS>::IterateBmm1Nd(
             CopyToL1Nd2Nz<INPUT_T>(mm1ATensor, this->queryGm.gmTensor[gmOffset], runInfo.s1RealSize, constInfo.dSize,
                 constInfo.mm1Ka);
         }
-        
-        mm1A.Set<HardEvent::MTE2_MTE1>(); // 通知
+
+        AscendC::Mutex::Unlock<PIPE_MTE2>(qMutex); // 通知
     } else { // 非S2的第一次循环直接复用Q
         mm1A = l1QBuffers.GetPre();
         // 左矩阵复用时，sinner循环内不需要MTE2同步等待
-        mm1A.Set<HardEvent::MTE2_MTE1>(); // 通知
     }
 
     // 加载当前轮的右矩阵到L1
@@ -1521,7 +1534,9 @@ __aicore__ inline void FABlockCube<TEMPLATE_ARGS>::IterateBmm1Nd(
     }
     mm1B.Set<HardEvent::MTE2_MTE1>(); // 通知
 
-    mm1A.Wait<HardEvent::MTE2_MTE1>(); // 等待L1A
+    if (unlikely(runInfo.s2LoopCount == 0)) {
+        AscendC::Mutex::Lock<PIPE_MTE1>(qMutex); // 等待L1A
+    }
     mm1B.Wait<HardEvent::MTE2_MTE1>(); // 等待L1B
 
     Buffer<BufferType::L0C> mm1ResL0C = mmL0CBuffers.Get();
@@ -1538,7 +1553,7 @@ __aicore__ inline void FABlockCube<TEMPLATE_ARGS>::IterateBmm1Nd(
         mm1ResL0C.GetTensor<T>(),
         param);
     if (unlikely(runInfo.s2LoopCount == runInfo.s2LoopLimit)) {
-        mm1A.Set<HardEvent::MTE1_MTE2>(); // 释放L1A
+        AscendC::Mutex::Unlock<PIPE_MTE1>(qMutex); // 释放L1A
     }
 
     mm1B.Set<HardEvent::MTE1_MTE2>(); // 释放L1B
@@ -1560,7 +1575,7 @@ __aicore__ inline void FABlockCube<TEMPLATE_ARGS>::IterateBmm1Nd(
 
     if constexpr (isInfer) {
         bool isS1Odd = (constInfo.s1Size % 2) != 0; // GS1合轴时，若s1为奇数且开启双目标模式，扩展M维度对齐g，避免计算中间块
-        if (IsGS1Merge(constInfo) && isS1Odd) { 
+        if (IsGS1Merge(constInfo) && isS1Odd) {
             fixpipeParams.mSize = runInfo.s1RealSize + constInfo.gSize;
         }
     }
@@ -1568,14 +1583,16 @@ __aicore__ inline void FABlockCube<TEMPLATE_ARGS>::IterateBmm1Nd(
     Fixpipe<T, T, PFA_CFG_ROW_MAJOR_UB>(outputBuf.template GetTensor<T>(), mm1ResL0C.GetTensor<T>(), fixpipeParams); // 将matmul结果从L0C搬运到UB
     mm1ResL0C.Set<HardEvent::FIX_M>(); // 释放L0C
     outputBuf.SetCrossCore();
+    // qMutex 为常驻成员，由 kernel Process 收尾统一 Release，此处不再局部释放
 }
 
 /* 针对S1Base=128, S2Base = 128, D > 256场景，L1层面切K，且左矩阵单Buffer+驻留，右矩阵每次重新搬运。*/
 TEMPLATES_DEF_NO_DEFAULT
 __aicore__ inline void FABlockCube<TEMPLATE_ARGS>::IterateBmm1NdL1SplitK(
     Buffer<BufferType::UB, SyncType::CROSS_CORE_SYNC_BOTH> &outputBuf, RunInfo<isInfer> &runInfo,
-    ConstInfo<isInfer, hasRope> &constInfo) 
+    ConstInfo<isInfer, hasRope> &constInfo)
 {
+    // qMutex 已改为常驻成员，在 InitLocalBuffer 分配、Process 收尾统一 Release，此处不再局部分配
     constexpr uint32_t baseK = l1BaseD;
     uint32_t kLoops = (constInfo.dSize + baseK - 1) / baseK; // 尾块处理
     Buffer<BufferType::L0C> mm1ResL0C = mmL0CBuffers.Get();
@@ -1585,7 +1602,7 @@ __aicore__ inline void FABlockCube<TEMPLATE_ARGS>::IterateBmm1NdL1SplitK(
     uint64_t l1BaseKOffset = baseK * dstNzC0Stride;
     mm1A = l1QBuffers.Get();
     if (unlikely(runInfo.s2LoopCount == 0)) {
-        mm1A.Wait<HardEvent::MTE1_MTE2>();
+        AscendC::Mutex::Lock<PIPE_MTE2>(qMutex);
     }
     uint64_t gmOffset = this->queryGm.offsetCalculator.GetOffset(runInfo.boIdx, runInfo.n2oIdx, runInfo.goIdx,
         coordInfo[runInfo.taskIdMod3].s1Coord, 0);
@@ -1635,11 +1652,10 @@ __aicore__ inline void FABlockCube<TEMPLATE_ARGS>::IterateBmm1NdL1SplitK(
                     runInfo.s1RealSize, realK, constInfo.mm1Ka);
             }
 
-            mm1A.Set<HardEvent::MTE2_MTE1>(); // 通知
+            AscendC::Mutex::Unlock<PIPE_MTE2>(qMutex); // 通知
         } else { // 非s2的第一次循环直接复用Q
             mm1A = l1QBuffers.GetPre();
             // 左矩阵复用时，sinner循环内不需要MTE2同步等待
-            mm1A.Set<HardEvent::MTE2_MTE1>();
         }
         // 加载当前轮的右矩阵到L1
         mm1B = l1KBuffers.Get();
@@ -1683,7 +1699,9 @@ __aicore__ inline void FABlockCube<TEMPLATE_ARGS>::IterateBmm1NdL1SplitK(
             }
         }
         mm1B.Set<HardEvent::MTE2_MTE1>(); // 通知
-        mm1A.Wait<HardEvent::MTE2_MTE1>(); // 等待L1A
+        if (unlikely(runInfo.s2LoopCount == 0)) {
+            AscendC::Mutex::Lock<PIPE_MTE1>(qMutex); // 等待L1A
+        }
         mm1B.Wait<HardEvent::MTE2_MTE1>(); // 等待L1B
 
         MMParam param = {(uint32_t)runInfo.s1RealSize,
@@ -1705,7 +1723,7 @@ __aicore__ inline void FABlockCube<TEMPLATE_ARGS>::IterateBmm1NdL1SplitK(
         mm1B.Set<HardEvent::MTE1_MTE2>(); // 释放L1B
     }
     if (unlikely(runInfo.s2LoopCount == runInfo.s2LoopLimit)) {
-        mm1A.Set<HardEvent::MTE1_MTE2>();
+        AscendC::Mutex::Unlock<PIPE_MTE1>(qMutex);
     }
     mm1ResL0C.Set<HardEvent::M_FIX>(); // 通知
     outputBuf.WaitCrossCore();
@@ -1731,6 +1749,7 @@ __aicore__ inline void FABlockCube<TEMPLATE_ARGS>::IterateBmm1NdL1SplitK(
     Fixpipe<T, T, PFA_CFG_ROW_MAJOR_UB>(outputBuf.template GetTensor<T>(), mm1ResL0C.GetTensor<T>(), fixpipeParams); // 将matmul结果从L0C搬运到UB
     mm1ResL0C.Set<HardEvent::FIX_M>(); // 释放
     outputBuf.SetCrossCore();
+    // qMutex 为常驻成员，由 kernel Process 收尾统一 Release，此处不再局部释放
 }
 
 TEMPLATES_DEF_NO_DEFAULT
@@ -1738,13 +1757,14 @@ __aicore__ inline void FABlockCube<TEMPLATE_ARGS>::IterateBmm1Dn(
     Buffer<BufferType::UB, SyncType::CROSS_CORE_SYNC_BOTH> &outputBuf, RunInfo<isInfer> &runInfo,
     ConstInfo<isInfer, hasRope> &constInfo)
 {
+    // qMutex 已改为常驻成员，在 InitLocalBuffer 分配、Process 收尾统一 Release，此处不再局部分配
     Buffer<BufferType::L1> mm1A;
     Buffer<BufferType::L1> mm1B;
     // 右矩阵复用，S2的第一次循环加载右矩阵
     // 加载右矩阵到L1 ,当前使用全载方式
     if (unlikely(runInfo.s2LoopCount == 0)) { // sOuter循环第一个基本块：搬运Q
         mm1B = l1QBuffers.Get();
-        mm1B.Wait<HardEvent::MTE1_MTE2>(); // 占用L1A
+        AscendC::Mutex::Lock<PIPE_MTE2>(qMutex); // 占用L1A
         LocalTensor<INPUT_T> mm1BTensor = mm1B.GetTensor<INPUT_T>();
         uint64_t gmOffset = this->queryGm.offsetCalculator.GetOffset(runInfo.boIdx, runInfo.n2oIdx, runInfo.goIdx, 
                     coordInfo[runInfo.taskIdMod3].s1Coord, 0);	
@@ -1760,11 +1780,10 @@ __aicore__ inline void FABlockCube<TEMPLATE_ARGS>::IterateBmm1Dn(
             CopyToL1Nd2Nz<INPUT_T>(mm1BTensor, this->queryGm.gmTensor[gmOffset], runInfo.s1RealSize, constInfo.dSize,
                 constInfo.mm1Ka);
         }
-        mm1B.Set<HardEvent::MTE2_MTE1>(); // 通知
+        AscendC::Mutex::Unlock<PIPE_MTE2>(qMutex); // 通知
     } else { // 非S2的第一次循环直接复用Q
         mm1B = l1QBuffers.GetPre();
         // 左矩阵复用时，sinner循环内不需要MTE2同步等待
-        mm1B.Set<HardEvent::MTE2_MTE1>(); // 通知
     }
     // 加载当前轮的左矩阵到L1
     // 计算key的offset
@@ -1801,7 +1820,9 @@ __aicore__ inline void FABlockCube<TEMPLATE_ARGS>::IterateBmm1Dn(
     mm1A.Set<HardEvent::MTE2_MTE1>(); // 通知
 
     mm1A.Wait<HardEvent::MTE2_MTE1>(); // 等待L1K
-    mm1B.Wait<HardEvent::MTE2_MTE1>(); // 等待L1Q
+    if (unlikely(runInfo.s2LoopCount == 0)) {
+        AscendC::Mutex::Lock<PIPE_MTE1>(qMutex); // 等待L1Q
+    }
 
     Buffer<BufferType::L0C> mm1ResL0C = mmL0CBuffers.Get();
     mm1ResL0C.Wait<HardEvent::FIX_M>(); // 占用
@@ -1818,7 +1839,7 @@ __aicore__ inline void FABlockCube<TEMPLATE_ARGS>::IterateBmm1Dn(
         param);
 
     if (unlikely(runInfo.s2LoopCount == runInfo.s2LoopLimit)) {
-        mm1B.Set<HardEvent::MTE1_MTE2>(); // 释放L1Q
+        AscendC::Mutex::Unlock<PIPE_MTE1>(qMutex); // 释放L1Q
     }
     mm1A.Set<HardEvent::MTE1_MTE2>(); // 释放L1K
 
@@ -1844,6 +1865,7 @@ __aicore__ inline void FABlockCube<TEMPLATE_ARGS>::IterateBmm1Dn(
     Fixpipe<T, T, PFA_CFG_ROW_MAJOR_UB>(outputBuf.template GetTensor<T>(), mm1ResL0C.GetTensor<T>(), fixpipeParams); // 将matmul结果从L0C搬运到UB
     mm1ResL0C.Set<HardEvent::FIX_M>(); // 释放L0C
     outputBuf.SetCrossCore();
+    // qMutex 为常驻成员，由 kernel Process 收尾统一 Release，此处不再局部释放
 }
 
 /* 针对MLA的bmm1*/
@@ -1852,6 +1874,7 @@ __aicore__ inline void FABlockCube<TEMPLATE_ARGS>::IterateBmm1MLAFullQuant(
     Buffer<BufferType::UB, SyncType::CROSS_CORE_SYNC_BOTH> &outputBuf, RunInfo<isInfer> &runInfo,
     ConstInfo<isInfer, hasRope> &constInfo)
 {
+    // qMutex 已改为常驻成员，在 InitLocalBuffer 分配、Process 收尾统一 Release，此处不再局部分配
     uint32_t dTypeRATIO = sizeof(bfloat16_t)/sizeof(INPUT_T);
     Buffer<BufferType::L1> mm1A;
     Buffer<BufferType::L1> mm1B;
@@ -1861,19 +1884,18 @@ __aicore__ inline void FABlockCube<TEMPLATE_ARGS>::IterateBmm1MLAFullQuant(
     // 加载左矩阵到L1 当前使用全载方式
     if (unlikely(runInfo.s2LoopCount == 0)) { // sOuter循环第一个基本快：搬运0
         mm1A = l1QBuffers.Get();
-        mm1A.Wait<HardEvent::MTE1_MTE2>(); // 占用，MTE2开始
+        AscendC::Mutex::Lock<PIPE_MTE2>(qMutex); // 占用，MTE2开始
         LocalTensor<INPUT_T> mm1ATensor = mm1A.GetTensor<INPUT_T>();
         CopyToL1Nd2Nz<INPUT_T>(mm1ATensor, this->queryGm.gmTensor[runInfo.queryOffset], runInfo.s1RealSize,
             constInfo.dSize, constInfo.mm1Ka);
 
-        LocalTensor<bfloat16_t> mm1ARopeTensor  = mm1A.GetTensor<bfloat16_t>(offsetQRopeByElement); 
+        LocalTensor<bfloat16_t> mm1ARopeTensor  = mm1A.GetTensor<bfloat16_t>(offsetQRopeByElement);
         CopyToL1Nd2Nz<bfloat16_t>(mm1ARopeTensor,this->queryRopeGm.gmTensor[runInfo.qRopeOffset], runInfo.s1RealSize,
-            constInfo.dSizeRope, constInfo.mm1RopeKa); 
-        mm1A.Set<HardEvent::MTE2_MTE1>(); // 通知
+            constInfo.dSizeRope, constInfo.mm1RopeKa);
+        AscendC::Mutex::Unlock<PIPE_MTE2>(qMutex); // 通知
     } else { // 非s2的第一次循环直接复用Q
         mm1A = l1QBuffers.GetPre();
         // 左矩阵复用时，s2循环内不需要MTE2同步等待
-        mm1A.Set<HardEvent::MTE2_MTE1>(); // 通知 
     }
     // 加载当前轮的右矩阵到L1
     mm1B = l1KBuffers.Get();
@@ -1925,7 +1947,9 @@ __aicore__ inline void FABlockCube<TEMPLATE_ARGS>::IterateBmm1MLAFullQuant(
 
     mm1B.Set<HardEvent::MTE2_MTE1>(); // MTE2结束，通知
 
-    mm1A.Wait<HardEvent::MTE2_MTE1>(); // 等待L1A，MTE1开始，准备Matmul
+    if (unlikely(runInfo.s2LoopCount == 0)) {
+        AscendC::Mutex::Lock<PIPE_MTE1>(qMutex); // 等待L1A，MTE1开始，准备Matmul
+    }
     mm1B.Wait<HardEvent::MTE2_MTE1>(); // 等待L1B
 
     Buffer<BufferType::L0C> mm1ResL0C = mmL0CBuffers.Get();
@@ -1956,9 +1980,9 @@ __aicore__ inline void FABlockCube<TEMPLATE_ARGS>::IterateBmm1MLAFullQuant(
                 mm1A.GetTensor<bfloat16_t>(offsetQRopeByElement), mm1B.GetTensor<bfloat16_t>(offsetKRopeByElement),
                 mmL0ABuffers, mmL0BBuffers,
                 mm1ResL0C.GetTensor<T>(),
-                paramRope);  
+                paramRope);
     if (unlikely(runInfo.s2LoopCount == runInfo.s2LoopLimit)) {
-        mm1A.Set<HardEvent::MTE1_MTE2>(); //S2循环中，Q常驻L1
+        AscendC::Mutex::Unlock<PIPE_MTE1>(qMutex); //S2循环中，Q常驻L1
     }
     mm1B.Set<HardEvent::MTE1_MTE2>(); // 释放L1B
     mm1ResL0C.Set<HardEvent::M_FIX>(); // 通知
@@ -1980,6 +2004,7 @@ __aicore__ inline void FABlockCube<TEMPLATE_ARGS>::IterateBmm1MLAFullQuant(
     Fixpipe<T, T, PFA_CFG_ROW_MAJOR_UB>(outputBuf.template GetTensor<T>(), mm1ResL0C.GetTensor<T>(), fixpipeParams); // 将matmul结果从L0C搬运到UB
     mm1ResL0C.Set<HardEvent::FIX_M>(); // 释放
     outputBuf.SetCrossCore();
+    // qMutex 为常驻成员，由 kernel Process 收尾统一 Release，此处不再局部释放
 }
 
 //MLA全量化新增的bmm2,L1上切N
