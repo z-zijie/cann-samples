@@ -36,7 +36,7 @@ custom_op_in_graph/
 
 将第三方框架中的算子映射为 CANN 算子。本目录包含以下样例：
 
-- **add_plugin.cc**：将 ONNX Add 算子直接映射为 CANN Add 算子（一对一映射），通过 `AutoMappingByOpFn` 自动完成输入输出映射。
+- **add_plugin.cc**：将 ONNX Add 算子映射为 CANN Add 算子（一对一映射），通过 `ParseParamsByOperatorFn` 注册解析回调（由框架自动完成映射）。
 - **addn_plugin.cc**：将 ONNX AddN 算子映射为多个 CANN Add 算子组成的子图（一对多映射 "PartitionedCall"）。通过 `ParseOpToGraphFn` 构建子图，将 AddN(x, y, z) 拆解为 Add(Add(x, y), z)。
 - **leaky_relu_plugin.cc**：将 ONNX LeakyRelu 算子（兼容 ai.onnx::8 ~ 13 多个 opset 版本）映射为 CANN LeakyRelu 算子。通过 `ParseParamsByOperatorFn` 从 ONNX 属性中解析 `alpha` 参数。
 
