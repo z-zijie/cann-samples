@@ -14,25 +14,25 @@ endif()
 
 find_package(Git QUIET)
 
-set(TENSOR_API_PATH "${PROJECT_SOURCE_DIR}/third_party/ops-tensor")
+set(TENSOR_API_PATH "${PROJECT_SOURCE_DIR}/third_party/asc-devkit")
 
 if(NOT EXISTS "${TENSOR_API_PATH}/CMakeLists.txt" AND NOT GIT_FOUND)
     message(FATAL_ERROR
-        "Git is required to initialize third_party/ops-tensor automatically."
+        "Git is required to initialize third_party/asc-devkit automatically."
     )
 endif()
 
 set(TENSOR_API_PREPARE_COMMANDS)
 if(GIT_FOUND)
     list(APPEND TENSOR_API_PREPARE_COMMANDS
-        COMMAND ${GIT_EXECUTABLE} submodule update --init --recursive third_party/ops-tensor
+        COMMAND ${GIT_EXECUTABLE} submodule update --init third_party/asc-devkit
     )
 endif()
 
 add_custom_target(cann_samples_tensor_api_dependencies
     ${TENSOR_API_PREPARE_COMMANDS}
     WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
-    COMMENT "Initializing third_party/ops-tensor"
+    COMMENT "Initializing third_party/asc-devkit"
     VERBATIM
 )
 
@@ -40,14 +40,15 @@ add_library(cann_samples_tensor_api INTERFACE)
 add_library(cann_samples::tensor_api ALIAS cann_samples_tensor_api)
 add_dependencies(cann_samples_tensor_api cann_samples_tensor_api_dependencies)
 
-target_include_directories(cann_samples_tensor_api INTERFACE
+target_include_directories(cann_samples_tensor_api BEFORE INTERFACE
+    "${TENSOR_API_PATH}"
     "${TENSOR_API_PATH}/include"
-    "${TENSOR_API_PATH}/include/tensor_api"
-    "${TENSOR_API_PATH}/include/tensor_api/include"
-    "${ASCEND_DIR}/asc"
 )
 
+# The CANN toolkit also provides Tensor API headers. Prefer the asc-devkit
+# headers for quoted includes so that headers from the two versions are not
+# mixed in the same translation unit.
 target_compile_options(cann_samples_tensor_api INTERFACE
-    "-iquote${TENSOR_API_PATH}/include/tensor_api"
-    "-iquote${TENSOR_API_PATH}/include/tensor_api/include"
+    "-iquote${TENSOR_API_PATH}"
+    "-iquote${TENSOR_API_PATH}/include"
 )

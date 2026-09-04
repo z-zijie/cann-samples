@@ -77,7 +77,7 @@
 
 ### 兼容性声明
 
-cann-samples中矩阵乘类example更新，引入ops-tensor子模块。涉及Tensor API的样例需使用上表中已验证通过的 Toolkit 版本构建，并按下文[ops-tensor子模块与Toolkit约束](#ops-tensor子模块与toolkit约束)初始化子模块、配置环境变量。
+cann-samples中矩阵乘类example更新，引入asc-devkit子模块。涉及Tensor API的样例需使用上表中已验证通过的 Toolkit 版本构建，并按下文[asc-devkit子模块与Toolkit约束](#4-asc-devkit子模块与toolkit约束)初始化子模块、配置环境变量。
 
 toolkit 安装包文件名格式如下：
 
@@ -116,15 +116,15 @@ toolkit 安装包文件名格式如下：
    - git
    - python三方库依赖：通过`pip3 install -r requirements.txt`安装
 
-4. **ops-tensor子模块与Toolkit约束**
+#### 4. asc-devkit子模块与Toolkit约束
 
-   - **仓库与路径**：子模块路径为`third_party/ops-tensor`，对应上游仓库[ops-tensor](https://gitcode.com/cann/ops-tensor)（默认跟踪`master`，见仓库根目录`.gitmodules`）。
+   - **仓库与路径**：子模块路径为`third_party/asc-devkit`，对应上游仓库[asc-devkit](https://gitcode.com/cann/asc-devkit)。Tensor API位于其`include/tensor_api`与`impl/tensor_api`目录。普通执行 `git submodule update --init third_party/asc-devkit` 时，检出的是主仓固定的子模块commit（当前为`ad3d3bf04`，即`v9.0.0-106-gad3d3bf04`），不会自动获取分支最新代码；`.gitmodules`中记录的`branch = feature/tensor_api_from_9.0.0`仅在该分支维护者主动执行`git submodule update --remote`更新依赖指针时生效，普通使用请勿执行`--remote`，以免引入未经本仓适配验证的新版本。
    - **获取源码**：克隆本仓库时建议执行 `git clone --recurse-submodules <仓库 URL>`；若已克隆未带子模块，在仓库根目录执行：
      ```bash
-     git submodule update --init --recursive third_party/ops-tensor
+     git submodule update --init third_party/asc-devkit
      ```
      若未提前初始化子模块，CMake在构建依赖`cann_samples::tensor_api`的目标时也会尝试执行上述子模块更新命令。
-   - **Toolkit要求**：Tensor API相关样例会使用`third_party/ops-tensor/include/tensor_api`以及Toolkit中的Ascend C头文件，因此必须安装完整的CANN Toolkit并先执行`source ${install_path}/ascend-toolkit/set_env.sh`。当前请使用上表中已验证通过的版本构建；Toolkit版本过旧、仅安装Run包或环境变量未生效时，可能出现头文件缺失、符号未定义或编译选项报错。
+   - **Toolkit要求**：Tensor API相关样例会使用`third_party/asc-devkit`下的Tensor API头文件以及Toolkit中的Ascend C头文件，因此必须安装完整的CANN Toolkit并先执行`source ${install_path}/ascend-toolkit/set_env.sh`。当前请使用上表中已验证通过的版本构建；Toolkit版本过旧、仅安装Run包或环境变量未生效时，可能出现头文件缺失、符号未定义或编译选项报错。
    - **NPU架构**：`matmul_story`、`grouped_matmul_story`额外要求`NPU_ARCH=dav-3510`（Ascend 950）；使用`dav-2201`全量配置工程时，这两项样例会被跳过，属预期行为。
 
 ---
@@ -256,7 +256,7 @@ python3 scripts/check_env.py
 │   │   └── simulation-based-vf-profiling     # 基于 cannsim 的 VF 性能分析
 │   └── CMakeLists.txt
 ├── third_party                              # 外部依赖（Git 子模块）
-│   ├── ops-tensor                          # ops-tensor：Ascend C Tensor API 头文件
+│   ├── asc-devkit                          # asc-devkit：Ascend C Tensor API 头文件
 │   ├── shmem                                # 共享内存相关组件
 │   └── ...                                  # 其它第三方依赖
 ├── cmake                                    # 工程编译配置

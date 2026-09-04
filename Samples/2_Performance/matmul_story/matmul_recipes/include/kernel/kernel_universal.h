@@ -15,14 +15,20 @@
 
 #pragma once
 
-#include "blaze/gemm/utils/common_utils.h"
-
 namespace Kernel {
+
+template <typename...>
+struct AlwaysFalse {
+    static constexpr bool value = false;
+};
+
+template <typename... Tp>
+constexpr bool AlwaysFalseV = AlwaysFalse<Tp...>::value;
 
 template <class ProblemShape_, class BlockMmad_, class BlockEpilogue_, class BlockScheduler_, typename Enable_ = void>
 class GemmUniversal {
     static_assert(
-        Blaze::Gemm::always_false_v<BlockEpilogue_> && Blaze::Gemm::always_false_v<BlockMmad_>,
+        AlwaysFalseV<BlockEpilogue_> && AlwaysFalseV<BlockMmad_>,
         "KernelStreamk is not implemented for this BlockEpilogue or BlockMmad");
 };
 
