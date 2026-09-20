@@ -368,7 +368,7 @@ Scenario1 至 Scenario2 的实现代码差异可概括为两处：
 
 ## 编译与运行
 
-在仓库根目录先配置环境与工程（参考根目录 [README.md](../../../README.md)）：
+在仓库根目录先配置环境与工程（参考根目录 [README.md](../../../../README.md)）：
 
 ```bash
 source ${install_path}/cann/set_env.sh
