@@ -111,13 +111,30 @@ inline int CompareHistogram(const std::string& name, const OutType* actual, cons
     return errorCount;
 }
 
-// 释放设备资源
-inline void CleanUpAcl(XType* dx, XType* dMin, XType* dMax, OutType* dOut, aclrtStream stream, int32_t deviceId)
+inline void FreeDeviceMemory(XType*& dx, XType*& dMin, XType*& dMax, OutType*& dOut)
 {
-    aclrtFree(dx);
-    aclrtFree(dMin);
-    aclrtFree(dMax);
-    aclrtFree(dOut);
+    if (dx != nullptr) {
+        aclrtFree(dx);
+        dx = nullptr;
+    }
+    if (dMin != nullptr) {
+        aclrtFree(dMin);
+        dMin = nullptr;
+    }
+    if (dMax != nullptr) {
+        aclrtFree(dMax);
+        dMax = nullptr;
+    }
+    if (dOut != nullptr) {
+        aclrtFree(dOut);
+        dOut = nullptr;
+    }
+}
+
+// 释放设备资源
+inline void CleanUpAcl(XType*& dx, XType*& dMin, XType*& dMax, OutType*& dOut, aclrtStream stream, int32_t deviceId)
+{
+    FreeDeviceMemory(dx, dMin, dMax, dOut);
     aclrtDestroyStream(stream);
     aclrtResetDevice(deviceId);
     aclFinalize();
@@ -144,29 +161,30 @@ inline int LoadHistogramData(std::vector<XType>& x, std::vector<XType>& min, std
 }
 
 // 分配设备内存并拷贝输入数据
-inline aclError AllocAndCopyH2D(const std::vector<XType>& x, const std::vector<XType>& min,
-                                const std::vector<XType>& max, size_t xBytes, size_t scalarBytes,
-                                size_t outputBytes, XType*& dx, XType*& dMin, XType*& dMax, OutType*& dOut)
+inline aclError AllocAndCopyH2D(
+    const std::vector<XType>& x, const std::vector<XType>& min, const std::vector<XType>& max, size_t xBytes,
+    size_t scalarBytes, size_t outputBytes, XType*& dx, XType*& dMin, XType*& dMax, OutType*& dOut)
 {
     aclError ret;
     ret = aclrtMalloc(reinterpret_cast<void**>(&dx), xBytes, ACL_MEM_MALLOC_HUGE_FIRST);
-    CHECK_RET(ret == ACL_SUCCESS, return ret);
+    CHECK_RET(ret == ACL_SUCCESS, FreeDeviceMemory(dx, dMin, dMax, dOut); return ret);
     ret = aclrtMalloc(reinterpret_cast<void**>(&dMin), scalarBytes, ACL_MEM_MALLOC_HUGE_FIRST);
-    CHECK_RET(ret == ACL_SUCCESS, aclrtFree(dx); return ret);
+    CHECK_RET(ret == ACL_SUCCESS, FreeDeviceMemory(dx, dMin, dMax, dOut); return ret);
     ret = aclrtMalloc(reinterpret_cast<void**>(&dMax), scalarBytes, ACL_MEM_MALLOC_HUGE_FIRST);
-    CHECK_RET(ret == ACL_SUCCESS, aclrtFree(dx); aclrtFree(dMin); return ret);
+    CHECK_RET(ret == ACL_SUCCESS, FreeDeviceMemory(dx, dMin, dMax, dOut); return ret);
     ret = aclrtMalloc(reinterpret_cast<void**>(&dOut), outputBytes, ACL_MEM_MALLOC_HUGE_FIRST);
-    CHECK_RET(ret == ACL_SUCCESS, aclrtFree(dx); aclrtFree(dMin); aclrtFree(dMax); return ret);
+    CHECK_RET(ret == ACL_SUCCESS, FreeDeviceMemory(dx, dMin, dMax, dOut); return ret);
 
     std::vector<OutType> zeroOut(BINS, 0);
     ret = aclrtMemcpy(dOut, outputBytes, zeroOut.data(), outputBytes, ACL_MEMCPY_HOST_TO_DEVICE);
-    CHECK_RET(ret == ACL_SUCCESS, return ret);
+    CHECK_RET(ret == ACL_SUCCESS, FreeDeviceMemory(dx, dMin, dMax, dOut); return ret);
 
     ret = aclrtMemcpy(dx, xBytes, x.data(), xBytes, ACL_MEMCPY_HOST_TO_DEVICE);
-    CHECK_RET(ret == ACL_SUCCESS, return ret);
+    CHECK_RET(ret == ACL_SUCCESS, FreeDeviceMemory(dx, dMin, dMax, dOut); return ret);
     ret = aclrtMemcpy(dMin, scalarBytes, min.data(), scalarBytes, ACL_MEMCPY_HOST_TO_DEVICE);
-    CHECK_RET(ret == ACL_SUCCESS, return ret);
+    CHECK_RET(ret == ACL_SUCCESS, FreeDeviceMemory(dx, dMin, dMax, dOut); return ret);
     ret = aclrtMemcpy(dMax, scalarBytes, max.data(), scalarBytes, ACL_MEMCPY_HOST_TO_DEVICE);
+    CHECK_RET(ret == ACL_SUCCESS, FreeDeviceMemory(dx, dMin, dMax, dOut); return ret);
     return ret;
 }
 
