@@ -345,7 +345,7 @@ __aicore__ inline void MoeDistributeCombineShmem<TemplateMC2TypeFunc>::AlltoAllB
     tpipe_->InitBuffer(moeSumQueue_, BUFFER_NUM, hExpandXAlign32Size_);
     tpipe_->InitBuffer(stateBuf_, (flagRcvCount_) * STATE_OFFSET);
     tpipe_->InitBuffer(stateResetBuf_, (flagRcvCount_) * STATE_OFFSET);
-    LocalTensor<float> stateResetTensor_ = stateResetBuf_.Get<float>();
+    stateResetTensor_ = stateResetBuf_.Get<float>();
     Duplicate<float>(stateResetTensor_, (float)0.0, static_cast<uint32_t>(flagRcvCount_ * FLOAT_PER_UB_ALIGN));
     SyncFunc<AscendC::HardEvent::V_MTE3>();
     if constexpr (IsInt8Quant) {
