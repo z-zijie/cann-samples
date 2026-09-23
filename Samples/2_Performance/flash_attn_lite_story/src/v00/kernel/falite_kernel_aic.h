@@ -46,6 +46,8 @@ __aicore__ inline void CopyGmToL1(
     DataCopy(dstL1Local, srcGlobal, p);
 
     if (validRows < tileRows) {
+        // 先完成 ND->NZ 搬运，再清零尾行，避免 MTE2 写写竞争。
+        PipeBarrier<PIPE_MTE2>();
         // ND->NZ 后，同一通道分块内的行连续；逐通道分块清零末尾行。
         InitConstValueParams<T> zeroParams;
         zeroParams.repeatTimes = CeilDiv<uint16_t>(tileCols, C0ElemNum<T>());
